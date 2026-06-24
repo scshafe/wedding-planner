@@ -70,7 +70,7 @@ engineering choices; keep the safety rails firm.
   - Connect trusted recorder → gates → scoring → ledger: scoring a candidate produces a `grade_report` and an `offline_passed`/`offline_rejected` ledger transition with `decided_by: deterministic_selector` (`loop-orchestrator/loop_architecture.md` stage machine).
   - Verify: an integration test runs one candidate through the whole offline path and asserts the chained ledger entry + the `offline_result` payload.
 
-- [ ] **Step 11: A minimal proposer + the offline loop (stub-first).**
+- [x] **Step 11: A minimal proposer + the offline loop (stub-first).**
   - A proposer that emits a schema-valid, hypothesis-first `candidate_change` (`loop-orchestrator/proposer_design.md`); a *scripted/stub* proposer is fine for Phase 1 (the creative model-proposer comes once the gate is trusted). Drive the `propose → score → ledger → learn` loop with the loop-until-dry termination (`loop_architecture.md` "Convergence").
   - Verify: an integration test runs the loop on a trivial corpus, scores a stubbed candidate, ledgers the result, and terminates loop-until-dry; `npm test` green.
 

@@ -44,3 +44,17 @@ export {
   type OfflineSelectionResult,
   type SurpriseCheck,
 } from './pipeline/deterministic_selector'
+
+// Proposer (the one model-authored step) + the offline loop (loop-until-dry)
+export {
+  StubProposer,
+  type Proposer,
+  type ProposerContext,
+  type StubProposerSpec,
+} from './proposer/proposer'
+export {
+  runOfflineLoop,
+  type OfflineLoopConfig,
+  type OfflineLoopSummary,
+  type LoopTerminationReason,
+} from './loop/offline_loop'
