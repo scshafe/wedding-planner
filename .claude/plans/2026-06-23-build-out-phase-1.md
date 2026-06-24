@@ -27,7 +27,7 @@ engineering choices; keep the safety rails firm.
 
 ## Steps
 
-- [ ] **Step 1: Choose the tech stack & project structure (agent decision — own it).**
+- [x] **Step 1: Choose the tech stack & project structure (agent decision — own it).**
   - This is *your* call as the building agent, grounded in the specs and the goal of an agent-operated, schema-contract-driven system. Pick the stack and structure, and **record the decision + rationale** (a short ADR in the repo).
   - Non-binding suggestion (take it or override it): TypeScript + Claude Agent SDK + ajv — the 12 contracts are already JSON Schema, so ajv gives runtime validation and `json-schema-to-typescript` gives static types from the same source, and the Agent SDK (the proposer's substrate, `loop-orchestrator/README.md` "Implementation substrate") is first-class in TS. Python + pydantic is an equally legitimate choice. **Do not stop for human approval — decide, record why, and proceed.**
   - Verify: an ADR recording the choice + rationale exists in the repo.
