@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/scenario.json",
+  "title": "Scenario",
+  "description": "Wires a couple persona + guest personas + injected world events + success criteria into one runnable eval case. A run consumes exactly one scenario and emits one grade report.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "scenario_id",
+    "scenario_type",
+    "description",
+    "focus",
+    "couple_persona_ref",
+    "guest_persona_refs",
+    "world_state",
+    "success_criteria",
+    "graded_axes"
+  ],
+  "properties": {
+    "scenario_id": { "type": "string", "pattern": "^(golden|adversarial)_[a-z0-9_]+$", "description": "Stable id; prefix matches scenario_type." },
+    "scenario_type": { "type": "string", "enum": ["golden", "adversarial"], "description": "golden = known-good regression anchor; adversarial = designed to break the product." },
+    "description": { "type": "string", "description": "One line: the situation and what is being tested." },
+    "focus": {
+      "type": "array",
+      "description": "Which North Star pillar(s) this scenario stresses. Drives coverage tracking.",
+      "items": { "type": "string", "enum": ["couple_effort", "outcome_quality", "guest_experience", "integration_execution", "ux_intuitiveness", "trust_safety", "business_viability"] }
+    },
+    "couple_persona_ref": { "type": "string", "description": "persona_id of the driving couple." },
+    "guest_persona_refs": { "type": "array", "items": { "type": "string" }, "description": "persona_ids of guests participating." },
+    "world_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "description": "The vendor/availability world the run operates against.",
+      "properties": {
+        "mode": { "type": "string", "enum": ["fixture", "live_sandbox"], "description": "'fixture' = deterministic canned inventory (default for the loop); 'live_sandbox' = real integration sandboxes." },
+        "inventory_fixture_ref": { "type": "string", "description": "Path to a vendor inventory fixture when mode=fixture." },
+        "available_integrations": { "type": "array", "items": { "type": "string" }, "description": "Which 3rd-party categories are reachable in this run, e.g. ['venue_booking_api','catering_form','band_email_only']." }
+      }
+    },
+    "world_events": {
+      "type": "array",
+      "description": "Disruptions injected during the run to test recovery. Fired at the named phase.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["event_id", "at_phase", "event_type"],
+        "properties": {
+          "event_id": { "type": "string" },
+          "at_phase": { "type": "string", "enum": ["discovery", "shortlist", "booking", "invitations_sent", "rsvp_window", "final_week", "day_of"], "description": "Lifecycle phase at which the event fires." },
+          "event_type": { "type": "string", "enum": ["vendor_cancellation", "price_increase", "availability_change", "guest_count_change", "budget_cut", "new_constraint", "integration_outage", "guest_dispute"] },
+          "payload": { "type": "object", "description": "Event-specific data, e.g. {category:'catering', days_before: 14}." }
+        }
+      }
+    },
+    "success_criteria": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gates_must_hold", "target_metrics"],
+      "properties": {
+        "gates_must_hold": {
+          "type": "array",
+          "description": "Veto gates that must hold. A breach makes verdict=fail.",
+          "items": { "type": "string", "enum": ["BUDGET.CEILING_EXCEEDED", "CONSTRAINT.HARD_VIOLATED", "COMMS.FALSE_FACT_TO_GUEST", "SPEND.UNAUTHORIZED_COMMIT", "COMMS.SURPRISE_LEAK", "COMMS.MIS_SEGMENTATION", "INTEGRATION.SILENT_FAILURE", "INTEGRATION.DOUBLE_BOOK"] }
+        },
+        "target_metrics": {
+          "type": "array",
+          "description": "Quantitative thresholds expected for a good run.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["metric_code", "direction", "threshold"],
+            "properties": {
+              "metric_code": { "type": "string", "description": "e.g. budget_variance_pct, rsvp_resolution_rate, couple_active_minutes_total, autonomy_rate, qa_accuracy_rate, decision_reversal_rate." },
+              "direction": { "type": "string", "enum": ["max", "min", "lte", "gte", "eq"] },
+              "threshold": { "type": "number" }
+            }
+          }
+        },
+        "golden_expected_outcomes": {
+          "type": "object",
+          "description": "For golden scenarios only: the known-good plan signature (booked categories, on-budget, all guests resolved). Used as a regression anchor.",
+          "additionalProperties": true
+        }
+      }
+    },
+    "graded_axes": {
+      "type": "array",
+      "description": "Which LLM-judge rubrics apply to this scenario.",
+      "items": { "type": "string", "enum": ["vision_match", "comms_quality", "intuitiveness"] }
+    },
+    "notes": { "type": "string", "description": "Free-text context for graders." }
+  }
+}

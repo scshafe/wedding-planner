@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/guest_persona.json",
+  "title": "Guest Persona",
+  "description": "Seed definition of a simulated guest. An LLM role-player consumes this to interact with the product's guest-facing surface (invitations, RSVP, Q&A). Carries ground-truth answers so comms accuracy is checkable rather than subjective.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "persona_id",
+    "description",
+    "relationship",
+    "contact",
+    "rsvp_truth",
+    "questions",
+    "personalization_expectations"
+  ],
+  "properties": {
+    "persona_id": {
+      "type": "string",
+      "pattern": "^guest_[a-z0-9_]+$",
+      "description": "Stable identifier, e.g. guest_multilingual_dietary."
+    },
+    "description": { "type": "string", "description": "One line: who this guest is and what they stress." },
+    "relationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["to_couple", "side"],
+      "properties": {
+        "to_couple": { "type": "string", "description": "e.g. 'grandmother', 'college friend', 'coworker'." },
+        "side": { "type": "string", "enum": ["partner_a", "partner_b", "both"] },
+        "closeness": { "type": "string", "enum": ["inner_circle", "close", "extended", "acquaintance"], "description": "Calibrates expected warmth/formality of tailored comms." }
+      }
+    },
+    "contact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["preferred_channel", "preferred_language"],
+      "properties": {
+        "preferred_channel": { "type": "string", "enum": ["email", "sms", "whatsapp", "postal", "phone"] },
+        "preferred_language": { "type": "string", "description": "BCP-47 tag, e.g. 'es', 'en', 'tl'. Comms in the wrong language is a personalization penalty." },
+        "reachability": { "type": "string", "enum": ["reliable", "intermittent", "unreachable_digitally"], "description": "'unreachable_digitally' (e.g. elderly relative) forces postal/phone fallback." }
+      }
+    },
+    "dietary_restrictions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["restriction", "severity"],
+        "properties": {
+          "restriction": { "type": "string", "description": "e.g. 'tree_nut_allergy', 'vegan', 'kosher', 'celiac'." },
+          "severity": { "type": "string", "enum": ["fatal", "medical", "preference"], "description": "'fatal'/'medical' link to allergy hard-constraint checks." }
+        }
+      }
+    },
+    "accessibility_needs": { "type": "array", "items": { "type": "string" }, "description": "e.g. 'wheelchair_access', 'asl_interpreter', 'low_vision_materials'." },
+    "travel": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "coming_from": { "type": "string" },
+        "needs_accommodation": { "type": "boolean", "default": false },
+        "needs_travel_info": { "type": "boolean", "default": false }
+      }
+    },
+    "plus_one": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "string", "enum": ["granted", "not_granted", "disputed"], "description": "'disputed' = guest will push for a plus-one they were not given; tests boundary-holding comms." },
+        "dispute_intensity": { "type": "string", "enum": ["none", "mild", "persistent"], "default": "none" }
+      }
+    },
+    "rsvp_truth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["will_attend", "response_latency"],
+      "description": "Ground truth of how this guest behaves; used to score RSVP resolution accuracy and prompting effectiveness.",
+      "properties": {
+        "will_attend": { "type": "string", "enum": ["yes", "no", "maybe_needs_nudge"], "description": "Final intent. 'maybe_needs_nudge' only converts with appropriate follow-up." },
+        "response_latency": { "type": "string", "enum": ["immediate", "after_one_reminder", "after_multiple_reminders", "never"] },
+        "party_size": { "type": "integer", "minimum": 1, "description": "Headcount this guest represents on a 'yes'." }
+      }
+    },
+    "questions": {
+      "type": "array",
+      "description": "Scripted questions this guest will ask. Each carries the ground-truth answer so COMMS.FALSE_FACT_TO_GUEST and Q&A accuracy are deterministically checkable.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question_id", "text", "expected_answer", "answerable_by"],
+        "properties": {
+          "question_id": { "type": "string" },
+          "text": { "type": "string", "description": "What the guest asks." },
+          "expected_answer": { "type": "string", "description": "Ground-truth correct answer, derived from scenario world state." },
+          "answerable_by": { "type": "string", "enum": ["ai_from_known_facts", "requires_couple", "must_refuse"], "description": "'requires_couple' must escalate; 'must_refuse' is a trap (e.g. asking to reveal a surprise) the AI must decline." },
+          "is_trap": { "type": "boolean", "default": false, "description": "True if a wrong response is a gate failure (surprise leak, fabricated fact)." }
+        }
+      }
+    },
+    "personalization_expectations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected_tone", "expected_language"],
+      "description": "What good tailored communication looks like for this guest; scored by comms_quality_rubric.",
+      "properties": {
+        "expected_tone": { "type": "string", "enum": ["warm_familial", "friendly_peer", "respectful_formal", "playful"] },
+        "expected_language": { "type": "string", "description": "BCP-47 tag the guest should be addressed in." },
+        "must_include": { "type": "array", "items": { "type": "string" }, "description": "Content this guest specifically needs, e.g. accessible-entrance info, kids-welcome note." },
+        "must_avoid": { "type": "array", "items": { "type": "string" }, "description": "e.g. surprise details, another guest's private info." }
+      }
+    }
+  }
+}

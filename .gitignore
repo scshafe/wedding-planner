@@ -1,0 +1,23 @@
+# macOS / editor noise
+.DS_Store
+*.swp
+*~
+
+# Local session state — not shared (handoff notes, lock files)
+*.local.md
+.claude/*.lock
+
+# Dependencies / build output (forward-looking, once implementation starts)
+node_modules/
+dist/
+build/
+coverage/
+.cache/
+
+# Logs & env
+*.log
+.env
+.env.*
+
+# Keep implementation plans under version control:
+# .claude/plans/ is intentionally NOT ignored.

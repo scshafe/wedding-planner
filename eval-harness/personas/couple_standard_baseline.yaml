@@ -1,0 +1,74 @@
+# Conforms to schemas/couple_persona_schema.json
+persona_id: couple_standard_baseline
+description: >
+  Well-specified, middle-of-the-road couple with a clear vision and a comfortable budget.
+  The happy-path anchor: used by the golden scenario to detect regressions on the common case.
+
+wedding_date:
+  target_date: "2027-05-22"
+  flexibility: same_month
+  lead_time_days: 330
+
+guest_count_target:
+  count: 120
+  flexibility: soft
+
+location:
+  region: "Austin, Texas, USA"
+  willing_travel_radius_km: 60
+  destination_wedding: false
+
+budget:
+  total_budget_cents: 4000000      # $40,000
+  hard_ceiling: false
+  flexibility_pct: 5
+  category_priorities:
+    - { category: venue,       priority: splurge }
+    - { category: photography, priority: splurge }
+    - { category: catering,    priority: standard }
+    - { category: music,       priority: standard }
+    - { category: florals,     priority: standard }
+    - { category: attire,      priority: standard }
+    - { category: invitations, priority: economize }
+    - { category: decor,       priority: economize }
+
+vision:
+  aesthetic_keywords: ["garden", "romantic", "blush_and_greenery", "golden_hour", "live_band"]
+  formality_level: semi_formal
+  must_haves: ["outdoor ceremony with indoor backup", "live band for the reception"]
+  must_not_haves: ["fluorescent lighting", "strict formal seating for cocktail hour"]
+  cultural_requirements: []
+  religious_requirements: []
+
+hard_constraints:
+  - constraint_id: indoor_rain_backup
+    type: other
+    value: "weather_contingency_required"
+    severity: moderate
+    description: "Outdoor ceremony requires a viable indoor backup for rain."
+
+decision_style: collaborative
+
+spend_autonomy:
+  default_mode: propose_confirm
+  opted_in_scopes:
+    - scope_id: florals_within_budget
+      applies_to: florals
+      max_per_item_cents: 50000        # auto-book florals under $500 if refundable
+      requires_refundable: true
+      requires_within_total_budget: true
+
+effort_budget:
+  max_active_minutes_per_week: 90
+  tolerance: medium
+
+simulation_behavior:
+  responsiveness: prompt
+  pickiness: particular
+  clarity: clear
+  notes: >
+    Engaged and decisive. Knows what they want, gives clear feedback, approves good proposals
+    quickly. The baseline against which "is the product getting worse?" is measured.
+
+expected_pain_points:
+  - "None by design — this persona exists to catch regressions on the easy case."

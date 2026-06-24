@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/event_envelope.json",
+  "title": "Telemetry Event Envelope",
+  "description": "The common envelope every telemetry event conforms to, emitted identically by the eval harness (source=eval) and production (source=production). The payload shape depends on event_name; payloads for safety-critical events are defined in event_payloads_schema.json, the rest in event_catalog.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "event_name", "occurred_at", "trace_id", "wedding_id", "phase", "capability", "actor", "source", "payload", "meta"],
+  "properties": {
+    "event_id": { "type": "string", "description": "Unique id for this event. Injected, never ambient — required for deterministic replay." },
+    "event_name": {
+      "type": "string",
+      "pattern": "^[a-z_]+(\\.[a-z_]+)+$",
+      "description": "Dot-delimited event name matching the module/domain path, e.g. 'commitment.executed', 'guest.question.answered'. See event_catalog.md for the full set."
+    },
+    "occurred_at": { "type": "string", "format": "date-time", "description": "ISO 8601 UTC. Injected, never read from an ambient clock." },
+    "trace_id": { "type": "string", "description": "Correlates all events of one run (eval) or one planning session/lifecycle (production)." },
+    "wedding_id": { "type": "string", "description": "The wedding being planned — the aggregate root all metrics group by." },
+    "phase": {
+      "type": "string",
+      "enum": ["discovery", "shortlist", "booking", "invitations_sent", "rsvp_window", "final_week", "day_of", "post"],
+      "description": "Lifecycle phase. See vocabularies.md#phase."
+    },
+    "capability": {
+      "type": "string",
+      "enum": ["venue", "catering", "music", "invitations", "rsvp", "guest_qa", "seating", "comms_personalization", "budget_management", "integration", "orchestration"],
+      "description": "Which product capability emitted the event. Powers the per_capability_scorecard. See vocabularies.md#capability."
+    },
+    "actor": {
+      "type": "string",
+      "enum": ["couple", "guest", "ai", "vendor", "system"],
+      "description": "Who or what triggered the event. See vocabularies.md#actor."
+    },
+    "source": {
+      "type": "string",
+      "enum": ["eval", "production"],
+      "description": "Whether this event came from an eval run or production. The schema is identical for both."
+    },
+    "guest_id": { "type": ["string", "null"], "description": "Present on guest-scoped events. An identifier only — never raw PII." },
+    "payload": {
+      "type": "object",
+      "description": "Event-specific data. Carries identifiers, not raw PII (see README privacy discipline). Safety-critical payloads are constrained in event_payloads_schema.json; others are specified in event_catalog.md and should be materialized as JSON Schema as the product is built."
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version"],
+      "properties": {
+        "schema_version": { "type": "string", "description": "Version of this telemetry contract the event was emitted under." },
+        "harness_version": { "type": ["string", "null"], "description": "Set when source=eval." },
+        "product_version": { "type": ["string", "null"], "description": "Set when source=production (or the product-under-test version in eval)." },
+        "seed": { "type": ["string", "null"], "description": "Run determinism seed; set when source=eval." }
+      }
+    }
+  }
+}

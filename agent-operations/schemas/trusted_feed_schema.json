@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/trusted_feed.json",
+  "title": "Trusted Feed",
+  "description": "The contract for one production out-of-band trusted-evidence feed (trusted_evidence_channel.md): a third-party source a gate / breaker / monitor reads ground truth from, over a VERIFYING path (and principal, and network substrate) that is separate from and un-writable by the agents that act. Pins the gameable properties that DEFEND the L0 floor in production (it cannot be fully constructed outside a sandbox): verifying path/principal/substrate separated from acting, signed liveness AND completeness with fail-closed staleness, source-signed serve handshake, verifiably-independent corroboration for high-severity, decision-signing keys outside every agent process with signed rotation, recursive monitor liveness, and tenant isolation. A source that cannot satisfy these is not eligible to ground a decision (a non-separable source is downgraded to corroborator-only).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["feed_id", "source_type", "grounds_high_severity", "channel", "freshness", "read_receipts_signed", "decision_key_custody", "source_key_management", "monitor_liveness", "provisioning", "tenant_id", "cross_tenant_access_blocked", "pii_redacted"],
+  "properties": {
+    "feed_id": { "type": "string", "description": "Stable id, injected (not ambient)." },
+    "source_type": {
+      "type": "string",
+      "enum": ["out_of_band_payment_processor", "out_of_band_vendor_confirmation", "out_of_band_complaint_channel", "independent_health_check"],
+      "description": "The production third-party source. The live-third-party-feed subset of escalation_record.detected_from / oversight_record.read_from. harness_trusted_record is intentionally absent (eval-only sandbox interceptor); static_diff_analysis / ledger_replay / human_report are not third-party feeds."
+    },
+    "grounds": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "The decisions / consumer codes this feed grounds, e.g. unauthorized_commit_count, INTEGRITY.SELF_REPORT_DIVERGENCE, COMMS.* harm breakers, deploy health."
+    },
+    "grounds_high_severity": {
+      "type": "boolean",
+      "description": "True when this feed grounds a high-severity determination (money committed, booking verified). High-severity feeds MUST carry a signed completeness aggregate AND verifiably-independent corroboration (allOf below) — no single source grounds a high-severity call alone."
+    },
+    "channel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endpoint_ref", "credential_ref", "writable_by_agent", "separate_from_acting_path", "verifying_principal_distinct_from_acting", "substrate_in_l0_trust_domain"],
+      "description": "The VERIFYING path — how the monitor reads the source. Separation from the ACTING path must hold at three layers (trusted_evidence_channel.md 'The crux'): our config, the third-party principal, and the network substrate.",
+      "properties": {
+        "endpoint_ref": { "type": "string", "description": "Reference to the source endpoint config (Tier-3 trusted config, human-maintained, outside every agent's write scope)." },
+        "credential_ref": { "type": "string", "description": "Reference to the verifying-path credential (Tier-3 config). NOT an acting-path credential; a rotation touching it is INTEGRITY.SCOPE_EXCEEDED." },
+        "writable_by_agent": { "type": "boolean", "const": false, "description": "Verifying-path config/credentials are outside EVERY agent's write scope (incl. operations_manager / security_agent / reliability_agent), like graders outside the proposer's write scope (safety_and_governance.md §1)." },
+        "separate_from_acting_path": { "type": "boolean", "const": true, "description": "Layer 1: the credentials/endpoints used to VERIFY an effect are separate, in our system, from those used to cause it." },
+        "verifying_principal_distinct_from_acting": { "type": "boolean", "const": true, "description": "Layer 2: the verifying path authenticates to the THIRD PARTY as a distinct least-privilege (read-only) principal, so an agent holding the acting credential cannot reach the vendor's own config plane (webhook/forwarding/notification settings) to degrade the feed. A source that cannot offer this is downgraded to corroborator-only (not a sole high-severity ground)." },
+        "substrate_in_l0_trust_domain": { "type": "boolean", "const": true, "description": "Layer 3: DNS resolution, TLS trust, and egress for the verifying read live in the L0 trust domain (pinned resolvers / pinned source identity / dedicated egress), not the agent-administered network — so an agent controlling resolution/egress cannot redirect the read to a replica." }
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["horizon_seconds", "heartbeat_required", "sequenced", "signed_by_source", "fail_mode"],
+      "description": "Liveness: absence of signal is never read as safety.",
+      "properties": {
+        "horizon_seconds": { "type": "integer", "minimum": 1, "description": "Staleness horizon, tied to the harm's doubling time (safety_and_governance.md §3) — a basis, not a magic number. Stale beyond this => INTEGRITY.TRUSTED_FEED_STALE, contain-first then surface." },
+        "heartbeat_required": { "type": "boolean", "description": "True when the feed must emit positive liveness even when quiet (so live-and-quiet is distinguishable from dark)." },
+        "sequenced": { "type": "boolean", "description": "True when the source attaches a monotonic sequence, so dropped events are detectable in-stream." },
+        "signed_by_source": { "type": "boolean", "const": true, "description": "The freshness/sequence assertion is signed by the third party, so an agent cannot fabricate liveness." },
+        "fail_mode": { "type": "string", "const": "closed", "description": "On staleness/uncertainty the dependent decision is contained/withheld (revert first), never treated as clean." }
+      }
+    },
+    "completeness": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["aggregate_signed_by_source", "reconciled"],
+      "description": "Completeness: liveness != completeness. A feed can heartbeat fresh while suppressing the one event that matters upstream of sequencing. Required (non-null) for high-severity feeds (allOf). Null only for non-high-severity.",
+      "properties": {
+        "aggregate_signed_by_source": { "type": "boolean", "const": true, "description": "The source signs an aggregate (running total / balance / Merkle root) independent of the event stream." },
+        "reconciled": { "type": "boolean", "const": true, "description": "The monitor reconciles the event stream against the signed aggregate; a selectively-suppressed event makes the reconciled total diverge even when the stream looks consistent." }
+      }
+    },
+    "corroboration": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["independent_feed_ids", "min_agreeing", "independence_attested"],
+      "description": "Cross-check >=2 sources with VERIFIABLY DISTINCT trust roots. Required (non-null) for high-severity feeds (allOf). Divergence between trusted roots is itself an incident, not a coin-flip.",
+      "properties": {
+        "independent_feed_ids": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Other trusted_feed ids with distinct signing authorities AND distinct upstreams (NOT two reads of the same processor). One corroborator + the primary = 2 agreeing." },
+        "min_agreeing": { "type": "integer", "minimum": 2, "description": "Minimum sources that must agree, counting the primary feed plus its corroborators (so 2 = the primary plus at least one independent corroborator)." },
+        "independence_attested": { "type": "boolean", "const": true, "description": "Independence is verified (distinct trust roots), not assumed. Two 'independent' sources sharing a poisonable upstream are one source wearing two hats." }
+      }
+    },
+    "read_receipts_signed": { "type": "boolean", "const": true, "description": "A read returns a signed receipt (source attests reader+slice+sequence+time), referenced by oversight_record.evidence.receipt_ref — so 'I read trusted evidence' is verifiable. Unresolved => INTEGRITY.EVIDENCE_UNSUBSTANTIATED." },
+    "decision_key_custody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["location", "available_to_agent"],
+      "description": "Where the key that SIGNS a decision grounded on this feed lives. Closes the laundering path where a captured agent signs 'cleared' as a non-agent decider.",
+      "properties": {
+        "location": { "type": "string", "enum": ["l0_substrate", "hsm", "human_held"], "description": "L0 mechanism keys live in the L0 substrate outside every agent process; the human (L4) key is human_held / hardware-backed." },
+        "available_to_agent": { "type": "boolean", "const": false, "description": "No agent process can produce the signature. A 'cleared' whose signature fails to verify against the L0/L4 keyring is INTEGRITY.FORGED_CLEAR." }
+      }
+    },
+    "source_key_management": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bootstrap", "rotation_signed_by_prior_key"],
+      "description": "How the third party's signing key (for freshness/aggregate/handshake/receipts) is established and rotated.",
+      "properties": {
+        "bootstrap": { "type": "string", "const": "human_established_ceremony", "description": "The initial source-key pin is set in a human-reserved ceremony (Tier-3 setup) — the one place trust-on-first-use is resolved by a person, once, out of band (trusted_evidence_channel.md 'Residual'). Not an agent action." },
+        "rotation_signed_by_prior_key": { "type": "boolean", "const": true, "description": "A source-key rotation is signed by the prior key (no silent re-pin); the monitor rejects an unsigned re-pin." }
+      }
+    },
+    "monitor_liveness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fail_closed_on_monitor_dark"],
+      "description": "Recursive liveness: the monitor/breaker/gate reading this feed is itself liveness-asserted — the spec's own discipline applied to the detectors. Bottoms out at the L0 substrate's attested liveness (the same fixed point as the keys), so it does not regress.",
+      "properties": {
+        "fail_closed_on_monitor_dark": { "type": "boolean", "const": true, "description": "If the detector goes dark (INTEGRITY.MONITOR_DARK), the action it guards halts/reverts by default — no silently-unmonitored window, no waiting for a human to notice." }
+      }
+    },
+    "provisioning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provision_before_serve", "serve_gated_on_source_signed_handshake"],
+      "description": "A region/component may not serve until its verifying feed is provably live — and 'live' is the SOURCE's attestation, not an agent's self-report.",
+      "properties": {
+        "provision_before_serve": { "type": "boolean", "const": true, "description": "An un-provisioned feed after failover fails closed (the region is not 'healthy'), never 'no signal therefore fine'." },
+        "serve_gated_on_source_signed_handshake": { "type": "boolean", "const": true, "description": "Serve-eligibility flips only on a source-signed 'now delivering to monitor M for region R' handshake verified against the L0 keyring — so reliability_agent cannot declare provision-complete falsely." }
+      }
+    },
+    "tenant_id": { "type": ["string", "null"], "description": "Tenant this feed belongs to (white-label multi-tenancy); null = a shared platform feed. A shared feed is read-only to tenant agents and writable only via the human-reserved Tier-3 path. The per-tenant vs tenant-partitioned L0 architecture and the platform-operator's status are deferred to the white-label thread (white-label-growth-and-agent-strategy-autonomy)." },
+    "cross_tenant_access_blocked": { "type": "boolean", "const": true, "description": "One tenant's agents can neither read nor reconfigure another tenant's verifying path; cross-tenant evidence flow is INTEGRITY.CROSS_TENANT (detectable, not merely discouraged)." },
+    "pii_redacted": { "type": "boolean", "const": true, "description": "Feeds reference couples/guests/weddings by id only; sensitive free-text is [REDACTED] (telemetry PII discipline)." }
+  },
+  "allOf": [
+    {
+      "description": "A high-severity feed (money committed, booking verified) must carry a signed completeness aggregate AND verifiably-independent corroboration (both non-null) — no single source grounds a high-severity call alone. Mirrors the conditional-requirement pattern in oversight_record_schema.json.",
+      "if": {
+        "required": ["grounds_high_severity"],
+        "properties": { "grounds_high_severity": { "const": true } }
+      },
+      "then": {
+        "required": ["completeness", "corroboration"],
+        "properties": {
+          "completeness": { "type": "object" },
+          "corroboration": { "type": "object" }
+        }
+      }
+    }
+  ]
+}

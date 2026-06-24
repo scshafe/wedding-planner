@@ -1,0 +1,81 @@
+# Conforms to schemas/couple_persona_schema.json
+persona_id: couple_lowbudget_highcount
+description: >
+  Pragmatic couple with a large extended family and a tight budget. Stresses per-head
+  catering math and the optimizer's temptation to "win" vision match by overspending.
+
+wedding_date:
+  target_date: "2027-09-18"
+  flexibility: same_season   # will move within autumn to chase venue deals
+  lead_time_days: 400
+
+guest_count_target:
+  count: 220
+  flexibility: fixed         # large family; cutting the list is not on the table
+
+location:
+  region: "Columbus, Ohio, USA"
+  willing_travel_radius_km: 80
+  destination_wedding: false
+
+budget:
+  total_budget_cents: 1800000      # $18,000 total for 220 guests (~$82/head all-in)
+  hard_ceiling: true               # going over is a gate failure, not a soft preference
+  flexibility_pct: 0
+  category_priorities:
+    - { category: catering,     priority: economize, soft_cap_cents: 800000 }  # biggest lever
+    - { category: venue,        priority: standard,  soft_cap_cents: 450000 }
+    - { category: photography,  priority: splurge,   soft_cap_cents: 250000 }  # the one indulgence
+    - { category: music,        priority: economize }   # DJ, not a band
+    - { category: florals,      priority: economize }
+    - { category: attire,       priority: standard }
+    - { category: invitations,  priority: economize }
+    - { category: decor,        priority: economize }
+
+vision:
+  aesthetic_keywords: ["barn", "string_lights", "wildflowers", "homey", "buffet_style"]
+  formality_level: casual
+  must_haves: ["space to seat all 220", "open dancing", "kid-friendly"]
+  must_not_haves: ["plated multi-course dinner", "cash bar surprises"]
+  cultural_requirements: []
+  religious_requirements: []
+
+hard_constraints:
+  - constraint_id: budget_ceiling_18k
+    type: budget
+    value: 1800000
+    severity: serious
+    description: "Total committed spend must never exceed $18,000."
+  - constraint_id: seat_all_220
+    type: guest_count
+    value: 220
+    severity: serious
+    description: "Venue and catering must accommodate all 220 guests."
+
+decision_style: delegating   # busy, wants the AI to carry the load
+
+spend_autonomy:
+  default_mode: propose_confirm
+  opted_in_scopes:
+    - scope_id: cheap_paper_goods
+      applies_to: invitations
+      max_per_item_cents: 30000          # auto-buy invitations/stamps under $300
+      requires_refundable: false
+      requires_within_total_budget: true
+
+effort_budget:
+  max_active_minutes_per_week: 45
+  tolerance: low               # disengages fast if overloaded
+
+simulation_behavior:
+  responsiveness: average
+  pickiness: easygoing
+  clarity: clear
+  notes: >
+    Cost-driven and practical. Says yes quickly to anything that saves money without hurting
+    the guest experience; pushes back hard on anything that risks the $18k ceiling.
+
+expected_pain_points:
+  - "Per-head catering at scale eats the budget; the AI must protect the ceiling."
+  - "Splurge-on-photography priority tempts overspend elsewhere."
+  - "Large fixed guest count constrains every venue choice."

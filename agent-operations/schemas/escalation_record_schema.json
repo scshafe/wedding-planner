@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/escalation_record.json",
+  "title": "Escalation Record",
+  "description": "The contract for one escalation/incident at the human-reserved boundary: an ops agent took a situation up to one of the four human-reserved exceptions (human_reserved_boundary.md), contained what it could, froze the affected state, and handed off to a person. Chains into the same append-only hash-chained ledger as loop-orchestrator (ledger_entry_schema.json) so the boundary is auditable and tamper-evident.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["escalation_id", "opened_at", "raised_by_agent", "exception", "operational_tier", "trigger", "human_handoff", "ledger_chain"],
+  "properties": {
+    "escalation_id": { "type": "string", "description": "Stable id, injected (not ambient)." },
+    "opened_at": { "type": "string", "format": "date-time", "description": "UTC, injected." },
+    "raised_by_agent": {
+      "type": "string",
+      "enum": ["operations_manager", "build_release_agent", "product_improvement_loop", "support_agent", "reliability_agent", "security_agent"],
+      "description": "Which roster role raised it (agent_roster.md)."
+    },
+    "exception": {
+      "type": "string",
+      "enum": ["elevated_customer_support", "total_system_failure", "security_breach", "business_billing_or_legal"],
+      "description": "Which of the four human-reserved exceptions this crosses (human_reserved_boundary.md)."
+    },
+    "operational_tier": {
+      "type": "integer",
+      "enum": [3],
+      "description": "The four exceptions are operational Tier 3 — human-owned (shared_operating_discipline.md §4). Tier-2 approval-gate handoffs reuse the ledger directly and do not require this record."
+    },
+    "trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "description", "detected_from", "severity"],
+      "properties": {
+        "code": { "type": "string", "description": "Machine-readable trigger, e.g. SUPPORT.LEGAL_THREAT, SRE.RECOVERY_EXHAUSTED, SEC.SUSPECTED_EXFIL, BILLING.OVER_ENVELOPE." },
+        "description": { "type": "string", "description": "One line; PII by id only, sensitive free-text [REDACTED]." },
+        "detected_from": {
+          "type": "string",
+          "enum": ["out_of_band_payment_processor", "out_of_band_vendor_confirmation", "out_of_band_complaint_channel", "harness_trusted_record", "independent_health_check", "human_report"],
+          "description": "The trusted/out-of-band source that raised it — never a component's self-report (shared_operating_discipline.md §2)."
+        },
+        "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+        "suspected_not_confirmed": { "type": "boolean", "default": false, "description": "True for credibly-suspected (not yet confirmed) cases — security breaches escalate on suspicion." }
+      }
+    },
+    "contained_actions": {
+      "type": "array",
+      "description": "What the agent did UP TO the line — reversible containment only (the MAY column of human_reserved_boundary.md).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action", "reversible", "at"],
+        "properties": {
+          "action": { "type": "string", "description": "e.g. 'isolated comms channel', 'failed over to region B', 'rotated scoped credential', 'blocked outbound holds'." },
+          "reversible": { "type": "boolean", "description": "Must be true; containment never destroys state without human sign-off." },
+          "at": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "frozen_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frozen", "targets"],
+      "description": "What was frozen to stop ongoing harm before handoff.",
+      "properties": {
+        "frozen": { "type": "boolean" },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "ref", "reversible"],
+            "properties": {
+              "kind": { "type": "string", "enum": ["booking", "comms_channel", "deploy", "account", "integration", "infra_resource", "other"] },
+              "ref": { "type": "string", "description": "Identifier of the frozen thing (id only, no PII)." },
+              "reversible": { "type": "boolean", "description": "The freeze itself must be cleanly reversible." }
+            }
+          }
+        }
+      }
+    },
+    "cost_cents": { "type": ["integer", "null"], "minimum": 0, "description": "For business_billing_or_legal: the business spend/commitment the agent would have needed to make and MAY NOT (the thing handed to the human). Null otherwise. Never a couple's wedding-budget amount — that is product spend, governed by SPEND.* (spend-autonomy-model)." },
+    "human_handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["handed_off_at", "to_human_role", "packet_ref"],
+      "properties": {
+        "handed_off_at": { "type": "string", "format": "date-time" },
+        "to_human_role": { "type": "string", "description": "e.g. on_call_sre, support_lead, security_lead, finance_legal_owner, loop_supervisor." },
+        "packet_ref": { "type": "string", "description": "Pointer to the handoff packet (history, context, what was tried/contained)." },
+        "acknowledged_at": { "type": ["string", "null"], "format": "date-time", "description": "When the human took ownership; null until acknowledged." },
+        "agent_continues_under_direction": { "type": "boolean", "description": "Whether the agent keeps executing the human's instructions (e.g. during a total failure) — it executes, it no longer decides." }
+      }
+    },
+    "resolution": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "Filled on close; null while open.",
+      "properties": {
+        "resolved_at": { "type": "string", "format": "date-time" },
+        "disposition": { "type": "string", "enum": ["resolved_by_human", "resolved_with_agent_execution", "false_positive", "ongoing"] },
+        "notes": { "type": "string" }
+      }
+    },
+    "pii_redacted": { "type": "boolean", "const": true, "description": "This record references couples/guests by id only; sensitive free-text is [REDACTED] (telemetry PII discipline)." },
+    "ledger_chain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry_hash", "prev_entry_hash", "decided_by", "decided_by_signature"],
+      "description": "Chains this record into the shared append-only WORM ledger, same fields as ledger_entry_schema.json state_transitions.",
+      "properties": {
+        "entry_hash": { "type": "string", "description": "Hash of this record's content (incl. prev_entry_hash)." },
+        "prev_entry_hash": { "type": ["string", "null"], "description": "entry_hash of the prior ledger entry; null for the first." },
+        "decided_by": { "type": "string", "enum": ["operations_manager", "build_release_agent", "product_improvement_loop", "support_agent", "reliability_agent", "security_agent", "circuit_breaker", "human"], "description": "Who recorded/decided the escalation; bound by decided_by_signature, not trusted as a bare string." },
+        "decided_by_signature": { "type": "string", "description": "Signature binding the entry to the acting process's identity, so a forged record cannot spoof decided_by." }
+      }
+    }
+  }
+}

@@ -1,0 +1,91 @@
+# Conforms to schemas/couple_persona_schema.json
+persona_id: couple_twocultures
+description: >
+  Interfaith couple blending Hindu and Jewish traditions across a two-day celebration.
+  Stresses hard-constraint satisfaction, dual-aesthetic vision match, and catering that
+  honors multiple dietary laws at once.
+
+wedding_date:
+  target_date: "2027-06-12"
+  flexibility: fixed         # date chosen with both families' officiants; cannot move
+  lead_time_days: 350
+
+guest_count_target:
+  count: 180
+  flexibility: soft
+
+location:
+  region: "New Jersey, USA"
+  willing_travel_radius_km: 120
+  destination_wedding: false
+
+budget:
+  total_budget_cents: 6000000      # $60,000
+  hard_ceiling: false
+  flexibility_pct: 10              # up to $66,000 if justified
+  category_priorities:
+    - { category: venue,       priority: splurge }   # must hold a mandap and a chuppah
+    - { category: catering,    priority: splurge }   # dual-tradition menu is non-negotiable quality
+    - { category: officiant,   priority: standard }
+    - { category: photography, priority: standard }
+    - { category: music,       priority: standard }
+    - { category: florals,     priority: standard }
+    - { category: attire,      priority: standard }
+    - { category: invitations, priority: standard }
+
+vision:
+  aesthetic_keywords: ["vibrant", "marigold_and_white", "elegant", "two_ceremonies_one_story"]
+  formality_level: formal
+  must_haves:
+    - "Hindu ceremony under a mandap"
+    - "Jewish ceremony under a chuppah with a ketubah signing"
+    - "bilingual program (English + Hindi/Hebrew elements)"
+  must_not_haves: ["beef anywhere on the menu", "one tradition visually dominating the other"]
+  cultural_requirements: ["mandap", "baraat procession", "saptapadi (seven steps)"]
+  religious_requirements: ["Hindu priest (pandit)", "rabbi or officiant for the chuppah", "ketubah signing"]
+
+hard_constraints:
+  - constraint_id: date_fixed_officiants
+    type: date
+    value: "2027-06-12"
+    severity: serious
+    description: "Both officiants are booked for this date; it cannot change."
+  - constraint_id: no_beef_menu
+    type: dietary
+    value: "no_beef"
+    severity: serious
+    description: "No beef may appear anywhere on the catering menu (family religious requirement)."
+  - constraint_id: vegetarian_option_every_course
+    type: dietary
+    value: "vegetarian_each_course"
+    severity: serious
+    description: "Every course must have a clearly labeled vegetarian option."
+  - constraint_id: both_ceremonies_present
+    type: cultural
+    value: ["mandap", "chuppah"]
+    severity: serious
+    description: "Both the Hindu and Jewish ceremony structures must be present and given equal prominence."
+
+decision_style: collaborative
+
+spend_autonomy:
+  default_mode: propose_confirm
+  opted_in_scopes: []          # high-stakes cultural choices: confirm everything
+
+effort_budget:
+  max_active_minutes_per_week: 120
+  tolerance: medium
+
+simulation_behavior:
+  responsiveness: prompt
+  pickiness: very_particular
+  clarity: clear
+  notes: >
+    Deeply invested in getting both traditions right. Warm but will firmly reject any plan
+    that compromises a ritual, mislabels a dish, or makes one heritage feel secondary.
+
+expected_pain_points:
+  - "Catering must satisfy no-beef + vegetarian-each-course + crowd-pleasing simultaneously."
+  - "Venue must physically and visually accommodate two distinct ceremony setups."
+  - "Vision match must score BOTH aesthetics, not average them into mush."
+  - "Easy to accidentally violate a cultural hard constraint while optimizing cost or logistics."

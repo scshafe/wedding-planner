@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/grade_report.json",
+  "title": "Grade Report",
+  "description": "The output of one eval run. Uses the standard {data,error,meta} envelope. Consumed by the loop orchestrator to decide whether a candidate product change is accepted.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "error", "meta"],
+  "properties": {
+    "data": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["run_id", "scenario_id", "verdict", "gate_results", "metric_results", "north_star", "per_capability_scorecard"],
+      "properties": {
+        "run_id": { "type": "string", "description": "Unique id for this run (injected, not ambient)." },
+        "scenario_id": { "type": "string" },
+        "couple_persona_ref": { "type": "string" },
+        "guest_persona_refs": { "type": "array", "items": { "type": "string" } },
+        "verdict": { "type": "string", "enum": ["pass", "fail"], "description": "fail if any veto gate breached, regardless of North Star value." },
+        "gate_results": {
+          "type": "array",
+          "description": "One entry per gate evaluated. Grading continues after a failure so the report shows how far off.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["gate_code", "passed", "detail"],
+            "properties": {
+              "gate_code": { "type": "string", "description": "e.g. BUDGET.CEILING_EXCEEDED, COMMS.FALSE_FACT_TO_GUEST, SPEND.UNAUTHORIZED_COMMIT." },
+              "passed": { "type": "boolean" },
+              "detail": { "type": "string", "description": "Human-readable explanation." },
+              "evidence": { "type": "array", "items": { "type": "string" }, "description": "Trace references proving the result (message ids, action ids)." }
+            }
+          }
+        },
+        "metric_results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["metric_code", "value", "target", "direction", "passed"],
+            "properties": {
+              "metric_code": { "type": "string" },
+              "value": { "type": "number" },
+              "target": { "type": "number" },
+              "direction": { "type": "string", "enum": ["max", "min", "lte", "gte", "eq"] },
+              "passed": { "type": "boolean" }
+            }
+          }
+        },
+        "rubric_scores": {
+          "type": "array",
+          "description": "LLM-judge results for graded axes. Auditable: each carries rationale and judge model id.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["rubric_code", "score", "max_score", "rationale", "judge_model"],
+            "properties": {
+              "rubric_code": { "type": "string", "enum": ["vision_match", "comms_quality", "intuitiveness"] },
+              "score": { "type": "number" },
+              "max_score": { "type": "number" },
+              "rationale": { "type": "string" },
+              "judge_model": { "type": "string" }
+            }
+          }
+        },
+        "north_star": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["planning_value", "couple_cost", "ratio"],
+          "description": "The apex objective components. See scoring/scoring_model.md.",
+          "properties": {
+            "planning_value": { "type": "number", "description": "Composite numerator: quality × completeness × guest_experience, normalized 0..1." },
+            "couple_cost": { "type": "number", "description": "Composite denominator: effort + money + stress, normalized." },
+            "ratio": { "type": "number", "description": "planning_value / couple_cost, the score the loop maximizes (0 if any gate failed)." }
+          }
+        },
+        "per_capability_scorecard": {
+          "type": "array",
+          "description": "Attribution of the score to product capabilities so the loop knows what to change.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["capability", "score", "issues"],
+            "properties": {
+              "capability": { "type": "string", "enum": ["venue", "catering", "music", "invitations", "rsvp", "guest_qa", "seating", "comms_personalization", "budget_management", "integration", "orchestration"] },
+              "score": { "type": "number", "description": "Normalized 0..1 contribution health for this capability." },
+              "issues": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "new_adversarial_candidates": {
+          "type": "array",
+          "description": "Failure modes observed in this run worth promoting into scenarios/adversarial/. Grows the harness over time.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["title", "rationale"],
+            "properties": {
+              "title": { "type": "string" },
+              "rationale": { "type": "string" },
+              "suggested_focus": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "error": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "Set (and data=null) only when the run itself failed to execute, not when the product scored poorly.",
+      "properties": {
+        "code": { "type": "string", "description": "e.g. HARNESS.RUN_ABORTED, HARNESS.PRODUCT_UNREACHABLE." },
+        "message": { "type": "string" },
+        "context": { "type": "object" }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["harness_version", "started_at", "finished_at"],
+      "properties": {
+        "harness_version": { "type": "string" },
+        "product_under_test_version": { "type": "string" },
+        "started_at": { "type": "string", "format": "date-time", "description": "UTC, injected." },
+        "finished_at": { "type": "string", "format": "date-time", "description": "UTC, injected." },
+        "seed": { "type": "string", "description": "Determinism seed for the run." }
+      }
+    }
+  }
+}

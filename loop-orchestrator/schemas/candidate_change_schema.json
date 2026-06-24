@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/candidate_change.json",
+  "title": "Candidate Change",
+  "description": "One unit the loop operates on: a versioned, reversible, attributed mutation to the product under test, proposed with a falsifiable hypothesis. The proposer emits these; the deterministic selector and experiment engine decide their fate.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["candidate_id", "created_at", "author", "hypothesis", "change", "risk_tier", "status"],
+  "properties": {
+    "candidate_id": { "type": "string", "description": "Stable id, injected (not ambient)." },
+    "created_at": { "type": "string", "format": "date-time", "description": "UTC, injected." },
+    "author": { "type": "string", "enum": ["ai_proposer", "human"], "description": "Autonomous proposals are ai_proposer; objective/grader/corpus changes must be human (see safety_and_governance.md)." },
+    "hypothesis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_capability", "target_metric_code", "expected_direction", "guards_to_watch", "rationale"],
+      "description": "What the change is predicted to do, stated falsifiably so the selector can check whether it worked AND whether it worked for the claimed reason.",
+      "properties": {
+        "target_capability": { "type": "string", "enum": ["venue", "catering", "music", "invitations", "rsvp", "guest_qa", "seating", "comms_personalization", "budget_management", "integration", "orchestration"], "description": "The one capability this change primarily targets. Invariant: target_capability MUST be a member of change.capabilities_touched (enforced at offline_scoring)." },
+        "target_metric_code": { "type": "string", "description": "The primary metric this change aims to move. VALIDATION CONTRACT: the selector resolves this against ../telemetry/metric_catalog.md at implemented->offline_scoring; an unresolvable code (e.g. a typo) auto-rejects the candidate — a typo'd target would otherwise silently fail hypothesis_confirmed and mis-route to human review." },
+        "target_scenario_ids": { "type": "array", "items": { "type": "string" }, "description": "The scenarios expected to improve most." },
+        "expected_direction": { "type": "string", "enum": ["increase", "decrease"] },
+        "expected_magnitude": { "type": ["number", "null"], "description": "Optional predicted effect size; compared to ledger offline_result.observed_target_delta. A big aggregate gain via an unhypothesized path (low target_attribution_share) is treated as suspect." },
+        "guards_to_watch": { "type": "array", "items": { "type": "string" }, "description": "The paired counter-metrics from the catalog that must NOT regress. Also resolved against the catalog at offline_scoring; unresolvable codes auto-reject." },
+        "rationale": { "type": "string", "description": "Why the proposer believes this will work; grounded in the scorecard/ledger/adversarial candidate that motivated it." }
+      }
+    },
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["change_type", "summary", "artifact_ref", "reversible", "capabilities_touched"],
+      "properties": {
+        "change_type": { "type": "string", "enum": ["prompt", "tool", "flow", "integration", "config", "ranking", "copy", "weights_PROHIBITED"], "description": "weights_PROHIBITED is listed only so a proposer attempting to tune the objective is rejected explicitly, not silently." },
+        "summary": { "type": "string", "description": "One line a human reviewer can act on." },
+        "artifact_ref": { "type": "string", "description": "Branch/commit/flag identifying the change. Must be atomically revertible." },
+        "reversible": { "type": "boolean", "description": "Must be true to advance past offline. A change that cannot be cleanly reverted is rejected." },
+        "capabilities_touched": { "type": "array", "items": { "type": "string" }, "description": "A CLAIM by the proposer, NOT authoritative. The authoritative risk_tier is derived from a static analysis of the diff (see ../risk_tier_derivation.md); this field is cross-checked against that derivation and an under-declaration is auto-rejected and escalated as a firewall-evasion signal. Also seeds segment monitoring." },
+        "mid_engagement_safe": { "type": "boolean", "description": "True if rolling this back partway through a couple's 12-18 month engagement leaves no orphaned state. Required for production stages." }
+      }
+    },
+    "risk_tier": {
+      "type": "integer",
+      "enum": [0, 1, 2, 3],
+      "description": "0 = cosmetic/ranking (offline+canary, auto). 1 = flow/non-binding tools (adds shadow + human notify). 2 = money/guest-comms/bookings/PII (adds human approval gate + slow ramp). 3 = objective/graders/corpus/spend-model/legal — PROHIBITED for ai_proposer. See safety_and_governance.md."
+    },
+    "depends_on": { "type": "array", "items": { "type": "string" }, "description": "candidate_ids this builds on; prevents stacking unvalidated changes." },
+    "status": {
+      "type": "string",
+      "enum": ["proposed", "implemented", "offline_scoring", "offline_rejected", "offline_passed", "human_review", "human_rejected", "shadow", "canary", "ramp", "promoted", "rolled_back", "parked"],
+      "description": "Current position in the stage machine (loop_architecture.md)."
+    }
+  }
+}

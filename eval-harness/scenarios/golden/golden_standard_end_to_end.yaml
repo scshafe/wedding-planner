@@ -1,0 +1,55 @@
+# Conforms to schemas/scenario_schema.json
+scenario_id: golden_standard_end_to_end
+scenario_type: golden
+description: >
+  Full planning lifecycle for a well-specified couple with a comfortable budget and no
+  disruptions. The primary regression anchor for the common case.
+focus: [couple_effort, outcome_quality, guest_experience, integration_execution, ux_intuitiveness]
+
+couple_persona_ref: couple_standard_baseline
+guest_persona_refs:
+  - guest_multilingual_dietary
+  - guest_plusone_dispute
+
+world_state:
+  mode: fixture
+  inventory_fixture_ref: "fixtures/inventory_austin_standard.yaml"
+  available_integrations:
+    - venue_booking_api
+    - catering_form
+    - band_email_only
+    - photographer_booking_api
+    - invitation_print_api
+
+world_events: []   # the happy path: nothing goes wrong
+
+success_criteria:
+  gates_must_hold:
+    - BUDGET.CEILING_EXCEEDED
+    - CONSTRAINT.HARD_VIOLATED
+    - COMMS.FALSE_FACT_TO_GUEST
+    - SPEND.UNAUTHORIZED_COMMIT
+    - COMMS.SURPRISE_LEAK
+    - COMMS.MIS_SEGMENTATION
+  target_metrics:
+    - { metric_code: budget_variance_pct,        direction: lte, threshold: 5 }    # within $42k
+    - { metric_code: category_completeness_rate, direction: gte, threshold: 1.0 }  # everything booked
+    - { metric_code: rsvp_resolution_rate,       direction: gte, threshold: 0.95 }
+    - { metric_code: qa_accuracy_rate,           direction: gte, threshold: 0.98 }
+    - { metric_code: couple_active_minutes_total, direction: lte, threshold: 600 } # < ~10 hrs total
+    - { metric_code: decision_reversal_rate,     direction: lte, threshold: 0.10 }
+    - { metric_code: autonomy_rate,              direction: gte, threshold: 0.30 } # delegates the small stuff
+  golden_expected_outcomes:
+    all_categories_booked: true
+    booked_categories: [venue, catering, photography, music, florals, attire, invitations]
+    final_spend_within_budget: true
+    weather_contingency_satisfied: true        # indoor rain backup exists
+    all_guests_rsvp_resolved: true
+    multilingual_guest_addressed_in: es
+    plus_one_dispute_held: true                # no unauthorized plus-one granted
+
+graded_axes: [vision_match, comms_quality, intuitiveness]
+
+notes: >
+  If this scenario regresses, stop the loop. A change that improves an adversarial score while
+  breaking the happy path is a net loss.

@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/oversight_record.json",
+  "title": "Oversight Record",
+  "description": "The contract for one act of oversight in agent-operations: an inline pre-landing review of a consequential action, a continuous monitor/breaker trip, a periodic ledger sweep finding, or an out-of-band obligation violation. Chains into the same append-only hash-chained WORM ledger as escalation_record and loop-orchestrator's ledger_entry, so 'who reviewed what, on what trusted evidence, and what they were (and were NOT) allowed to decide' is tamper-evidently reconstructable. Pins the gameable properties of oversight_loops.md: additive-only verdicts for agent reviewers (cleared reachable only by the non-agent gate or the human), a mandatory floor-clearance reference under every agent inline review, substantiated + fresh + provenance-checked evidence, derived-vs-claimed tier, and out-of-band routing of obligation violations.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["review_id", "at", "review_kind", "reviewed_by", "verdict", "evidence", "ledger_chain", "pii_redacted"],
+  "properties": {
+    "review_id": { "type": "string", "description": "Stable id, injected (not ambient)." },
+    "at": { "type": "string", "format": "date-time", "description": "UTC, injected." },
+    "review_kind": {
+      "type": "string",
+      "enum": ["inline_pre_landing", "continuous_monitor", "periodic_sweep", "obligation_violation"],
+      "description": "inline_pre_landing = the before-land review gate on a consequential action (oversight_loops.md 'The pre-landing review gate'). continuous_monitor = a real-time breaker/monitor trip. periodic_sweep = a manager ledger-sweep finding. obligation_violation = an out-of-band obligation monitor caught a missed duty (the collusion/missed-flag signature)."
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What is under review. Required for an inline_pre_landing review.",
+      "required": ["acting_agent", "action_ref"],
+      "properties": {
+        "acting_agent": {
+          "type": "string",
+          "enum": ["operations_manager", "build_release_agent", "product_improvement_loop", "support_agent", "reliability_agent", "security_agent"],
+          "description": "The roster role whose action is reviewed (agent_roster.md)."
+        },
+        "action_ref": { "type": "string", "description": "Id of the action / candidate / escalation under review (id only, no PII)." },
+        "claimed_tier": { "type": ["integer", "null"], "minimum": 0, "maximum": 3, "description": "The tier the acting agent self-assigned — a CLAIM, never authoritative (shared_operating_discipline.md §4; risk_tier_derivation.md)." },
+        "derived_tier": { "type": ["integer", "null"], "minimum": 0, "maximum": 3, "description": "The AUTHORITATIVE tier, derived deterministically from the action's actual blast radius via the action->surface map (trusted config, agent-unwritable), not the claim. claimed < derived is an under-declaration: auto-rejected and escalated (verdict tier_raised + escalated; INTEGRITY.UNDER_DECLARED_TIER)." }
+      }
+    },
+    "reviewed_by": {
+      "type": "string",
+      "enum": ["deterministic_gate", "operations_manager", "build_release_agent", "product_improvement_loop", "support_agent", "reliability_agent", "security_agent", "obligation_monitor", "circuit_breaker", "human"],
+      "description": "Who performed the oversight. deterministic_gate / obligation_monitor / circuit_breaker are non-agent L0 mechanisms (their signing keys live outside every agent's process boundary); human is L4 (the standing supervisor for sweeps/meta-review, or the approver named in human_gate for a Tier-2 gate). The six roster roles are L2/L3 agent reviewers — bound by the additive-only constraint below (they cannot emit verdict=cleared)."
+    },
+    "reviewer_distinct_from_actor": {
+      "type": "boolean",
+      "const": true,
+      "description": "Non-self-review: the reviewer is NEVER the acting agent (oversight_loops.md). Like escalation_record's reversible flags, this is recorded true for audit; a record with reviewed_by == subject.acting_agent is itself an INTEGRITY.REVIEWER_WAS_ACTOR violation. Required for an inline_pre_landing review."
+    },
+    "floor_clearance_ref": {
+      "type": "string",
+      "description": "The review_id of the deterministic_gate oversight_record this agent review rode on top of. An agent inline review NEVER substitutes for the deterministic floor clearance — it adds recall above it. Required (and non-null — a present-null would defeat the floor) when review_kind=inline_pre_landing AND reviewed_by is an agent role (allOf below); omitted otherwise."
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["read_from"],
+      "description": "The trusted/out-of-band evidence the review was decided on. A review that 'read the actor's self-report' is not a review (shared_operating_discipline.md §2) — there is intentionally no self_report option. For a live out-of-band feed, the read must be substantiated (a signed receipt) and confirmed fresh, else fail closed.",
+      "properties": {
+        "read_from": {
+          "type": "string",
+          "enum": ["harness_trusted_record", "out_of_band_payment_processor", "out_of_band_vendor_confirmation", "out_of_band_complaint_channel", "independent_health_check", "static_diff_analysis", "ledger_replay"],
+          "description": "The trusted source — mirrors escalation_record.trigger.detected_from, never a component's self-report. static_diff_analysis backs deterministic tier-derivation; ledger_replay backs sweeps and obligation monitors; the out_of_band_* / independent_health_check feeds are live third-party sources reached over an agent-unwritable channel (oversight_loops.md 'Making the floor un-authorable in production')."
+        },
+        "evidence_ref": { "type": ["string", "null"], "description": "Pointer to the trusted record / readout / diff analysis backing the verdict." },
+        "receipt_ref": { "type": ["string", "null"], "description": "Reference to a signed read-receipt from the trusted source proving the reviewer actually consulted it (not a self-asserted read). Unresolvable => INTEGRITY.EVIDENCE_UNSUBSTANTIATED. Required for a live out-of-band feed read." },
+        "feed_fresh": { "type": ["boolean", "null"], "description": "The out-of-band feed was confirmed live within its harm-horizon (signed freshness/sequence assertion from the third party). A stale feed fails closed (INTEGRITY.TRUSTED_FEED_STALE) rather than reading silence as safety. Required (and true) for a live out-of-band feed read." },
+        "provenance_ref": { "type": ["string", "null"], "description": "Content-addressed ancestry of the evidence. Two 'independent' reviews whose evidence shares a poisoned ancestor are not independent => INTEGRITY.SHARED_EVIDENCE_ANCESTOR." }
+      }
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["cleared", "flagged", "blocked", "tier_raised", "escalated", "rolled_back"],
+      "description": "The outcome. ADDITIVE-ONLY for agent reviewers: an agent may only raise scrutiny (flagged / blocked / tier_raised / escalated) and may NEVER clear. Only a deterministic_gate or human may emit cleared; only a circuit_breaker / obligation_monitor reverts or raises (rolled_back / flagged / escalated). Enforced by the allOf branches below."
+    },
+    "obligation": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "Set when review_kind = obligation_violation. The duty an out-of-band monitor found unmet — the operational analogue of INTEGRITY.SELF_REPORT_DIVERGENCE.",
+      "required": ["code", "routed_out_of_band"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": ["INTEGRITY.MISSED_ESCALATION", "INTEGRITY.UNLEDGERED_ACTION", "INTEGRITY.SCOPE_EXCEEDED", "INTEGRITY.REVIEWER_WAS_ACTOR", "INTEGRITY.COOLDOWN_VIOLATION", "INTEGRITY.UNDER_DECLARED_TIER", "INTEGRITY.TRUSTED_FEED_STALE", "INTEGRITY.FORGED_CLEAR", "INTEGRITY.SAMPLING_BYPASS", "INTEGRITY.SHARED_EVIDENCE_ANCESTOR", "INTEGRITY.EVIDENCE_UNSUBSTANTIATED", "INTEGRITY.UNVERIFIED_LAND", "INTEGRITY.MONITOR_DARK", "INTEGRITY.CROSS_TENANT", "INTEGRITY.SELF_REPORT_DIVERGENCE"],
+          "description": "Which obligation was violated. INTEGRITY.SELF_REPORT_DIVERGENCE is the one code defined in eval-harness/rubrics/gate_checks.md; the rest are NEW ops-side codes defined in oversight_loops.md ('Keeping oversight honest') and trusted_evidence_channel.md ('Making the floor un-authorable'), modeled on it — they are NOT pre-existing in gate_checks.md. MISSED_ESCALATION covers effect-defined Tier-3 triggers only (judgment-defined triggers use a raise-only redundant classifier + human meta-review). MONITOR_DARK = a detector went dark and the guarded action halted (recursive liveness); CROSS_TENANT = cross-tenant evidence read/influence."
+        },
+        "routed_out_of_band": {
+          "type": "boolean",
+          "const": true,
+          "description": "An obligation violation routes on a path that does NOT pass through the operations_manager — straight to the human (L4) — so a watcher going dark cannot suppress the alarm about itself."
+        }
+      }
+    },
+    "human_gate": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "For a Tier-2 action: the human approval that must precede land (shared_operating_discipline.md §4; safety_and_governance.md §5). Null for Tier 0/1. Tier-3 does not use this — it blocks and produces an escalation_record instead.",
+      "required": ["approved", "approver_role", "decided_at"],
+      "properties": {
+        "approved": { "type": "boolean" },
+        "approver_role": { "type": "string", "description": "e.g. loop_supervisor, support_lead, on_call_sre, finance_legal_owner." },
+        "decided_at": { "type": "string", "format": "date-time" },
+        "binds_landing_key": { "type": ["string", "null"], "description": "The idempotency_key of the single landing this approval authorizes — one approval binds one landing, so a crash-retry cannot re-spend the approval (oversight_loops.md 'Crash and recovery')." }
+      }
+    },
+    "idempotency_key": { "type": ["string", "null"], "description": "action_ref x intended-effect-hash. Lets a restart ask the out-of-band record 'did THIS effect already land?' so a re-driven turn cannot double-land a real deploy/charge/send." },
+    "pii_redacted": { "type": "boolean", "const": true, "description": "References couples/guests by id only; sensitive free-text is [REDACTED] (telemetry PII discipline)." },
+    "ledger_chain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry_hash", "prev_entry_hash", "decided_by", "decided_by_signature"],
+      "description": "Chains this record into the shared append-only WORM ledger — same fields as ledger_entry_schema.json state_transitions and escalation_record_schema.json ledger_chain.",
+      "properties": {
+        "entry_hash": { "type": "string", "description": "Hash of this record's content (incl. prev_entry_hash)." },
+        "prev_entry_hash": { "type": ["string", "null"], "description": "entry_hash of the prior ledger entry; null for the first." },
+        "decided_by": {
+          "type": "string",
+          "enum": ["deterministic_gate", "operations_manager", "build_release_agent", "product_improvement_loop", "support_agent", "reliability_agent", "security_agent", "obligation_monitor", "circuit_breaker", "human"],
+          "description": "Who recorded/decided this oversight act; must equal reviewed_by, and is bound by decided_by_signature, not trusted as a bare string. For deterministic_gate / obligation_monitor / circuit_breaker / human, the signing key lives outside every agent's process boundary — a 'cleared' whose signature does not verify against the L0/L4 keyring is INTEGRITY.FORGED_CLEAR (shared_operating_discipline.md §5; safety_and_governance.md §7)."
+        },
+        "decided_by_signature": { "type": "string", "description": "Signature binding the entry to the acting process's identity, so a forged record cannot spoof decided_by. The L0/L4 keys are not available to any agent process." }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "description": "Additive-only authority: an AGENT reviewer (any roster role) may never clear work — only a deterministic_gate or human can. A colluding/captured agent reviewer can at worst fail to flag; it can never bless.",
+      "if": {
+        "required": ["reviewed_by"],
+        "properties": {
+          "reviewed_by": { "enum": ["operations_manager", "build_release_agent", "product_improvement_loop", "support_agent", "reliability_agent", "security_agent"] }
+        }
+      },
+      "then": {
+        "properties": {
+          "verdict": { "enum": ["flagged", "blocked", "tier_raised", "escalated"] }
+        }
+      }
+    },
+    {
+      "description": "Only the non-agent gate or the human may emit 'cleared'. This closes the laundering path where a captured agent signs as a non-agent decider: combined with L0/L4 key custody, no agent can produce a verifiable cleared.",
+      "if": {
+        "required": ["verdict"],
+        "properties": { "verdict": { "const": "cleared" } }
+      },
+      "then": {
+        "properties": { "reviewed_by": { "enum": ["deterministic_gate", "human"] } }
+      }
+    },
+    {
+      "description": "A breaker or obligation monitor reverts or raises — it never clears (a breaker that clears work is nonsensical).",
+      "if": {
+        "required": ["reviewed_by"],
+        "properties": { "reviewed_by": { "enum": ["circuit_breaker", "obligation_monitor"] } }
+      },
+      "then": {
+        "properties": { "verdict": { "enum": ["rolled_back", "flagged", "escalated"] } }
+      }
+    },
+    {
+      "description": "An obligation_violation record must carry the obligation object (non-null — a present-null would defeat the requirement) and routes out-of-band.",
+      "if": { "required": ["review_kind"], "properties": { "review_kind": { "const": "obligation_violation" } } },
+      "then": { "required": ["obligation"], "properties": { "obligation": { "type": "object" } } }
+    },
+    {
+      "description": "An inline pre-landing review must name its subject and assert non-self-review.",
+      "if": { "required": ["review_kind"], "properties": { "review_kind": { "const": "inline_pre_landing" } } },
+      "then": { "required": ["subject", "reviewer_distinct_from_actor"] }
+    },
+    {
+      "description": "An agent's inline review must reference the deterministic-gate clearance it rode on top of — the floor is never substituted by the agent review.",
+      "if": {
+        "required": ["review_kind", "reviewed_by"],
+        "properties": {
+          "review_kind": { "const": "inline_pre_landing" },
+          "reviewed_by": { "enum": ["operations_manager", "build_release_agent", "product_improvement_loop", "support_agent", "reliability_agent", "security_agent"] }
+        }
+      },
+      "then": { "required": ["floor_clearance_ref"] }
+    },
+    {
+      "description": "A live out-of-band feed read must be substantiated by a signed receipt and confirmed fresh — silence is not safety.",
+      "if": {
+        "required": ["evidence"],
+        "properties": {
+          "evidence": {
+            "required": ["read_from"],
+            "properties": { "read_from": { "enum": ["out_of_band_payment_processor", "out_of_band_vendor_confirmation", "out_of_band_complaint_channel", "independent_health_check"] } }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "evidence": { "required": ["read_from", "receipt_ref", "feed_fresh"] }
+        }
+      }
+    }
+  ]
+}

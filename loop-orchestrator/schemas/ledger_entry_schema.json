@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/ledger_entry.json",
+  "title": "Ledger Entry",
+  "description": "The durable, append-only audit record of one candidate's full journey through the loop: every state transition, who/what decided it, and the evidence. The ledger is the loop's memory — it makes decisions auditable and stops the proposer from re-trying dead ideas.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ledger_id", "candidate_id", "state_transitions", "final_disposition"],
+  "properties": {
+    "ledger_id": { "type": "string" },
+    "candidate_id": { "type": "string" },
+    "state_transitions": {
+      "type": "array",
+      "description": "Append-only, hash-chained. Every move through the stage machine. Stored on a WORM substrate outside the proposer's write scope (safety_and_governance.md §7); each entry chains to the prior via prev_entry_hash so tampering is detectable.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from_state", "to_state", "at", "decided_by", "rationale", "entry_hash", "prev_entry_hash", "decided_by_signature"],
+        "properties": {
+          "from_state": { "type": "string" },
+          "to_state": { "type": "string" },
+          "at": { "type": "string", "format": "date-time", "description": "UTC, injected." },
+          "decided_by": { "type": "string", "enum": ["ai_proposer", "deterministic_selector", "risk_tier_gate", "experiment_engine", "circuit_breaker", "human"], "description": "The mechanism that made the decision; only deterministic mechanisms (not the proposer) advance a candidate. Authenticity is bound by decided_by_signature, not trusted as a bare string." },
+          "decided_by_signature": { "type": "string", "description": "Signature binding this transition to the actual deciding process's identity, so a forged entry cannot spoof decided_by." },
+          "entry_hash": { "type": "string", "description": "Hash of this transition's content (incl. prev_entry_hash). The chain head." },
+          "prev_entry_hash": { "type": ["string", "null"], "description": "entry_hash of the prior transition for this candidate; null for the first. Breaks if any earlier entry is altered." },
+          "rationale": { "type": "string" },
+          "notified": { "type": ["boolean", "null"], "description": "True when this transition required and performed a human notification (e.g. the Tier-1 'human notified' obligation), so the audit trail proves the notify happened." },
+          "evidence_ref": { "type": ["string", "null"], "description": "Pointer to the grade reports / experiment readout backing the decision." }
+        }
+      }
+    },
+    "offline_result": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "Outcome of scoring the candidate across the whole corpus, per scoring_model.md's accept rule.",
+      "properties": {
+        "aggregate_north_star_delta": { "type": "number", "description": "Change in mean north_star_ratio across the corpus (adversarial weighted >= golden)." },
+        "golden_regressed": { "type": "boolean", "description": "True if any golden scenario regressed — a hard stop." },
+        "new_gate_failures": { "type": "array", "items": { "type": "string" }, "description": "Veto gates newly failing on any scenario (incl. FATAL flags)." },
+        "guard_regressions": { "type": "array", "items": { "type": "string" }, "description": "Counter-metrics that regressed beyond tolerance." },
+        "hypothesis_confirmed": { "type": "boolean", "description": "Did the target_metric move in the predicted direction on the predicted scenarios? Computed from the TRUSTED record, not product-emitted metrics (see telemetry Integrity). A gain WITHOUT this is suspect." },
+        "observed_target_delta": { "type": ["number", "null"], "description": "The actual measured movement of target_metric_code; compared to candidate.hypothesis.expected_magnitude." },
+        "target_attribution_share": { "type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "Fraction of the aggregate North Star gain attributable to the target scenarios. A large aggregate gain with LOW attribution share = the gain came from elsewhere than the declared mechanism = routed to human review (corpus-gaming signature). The surprise check tests magnitude+attribution, not just a boolean." },
+        "grade_report_refs": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "rollout_result": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "Outcome of the production funnel.",
+      "properties": {
+        "stage_reached": { "type": "string", "enum": ["shadow", "canary", "ramp", "full"] },
+        "primary_effect": { "type": ["number", "null"], "description": "Estimated production effect on the primary metric." },
+        "primary_ci": { "type": ["array", "null"], "items": { "type": "number" }, "description": "[low, high] always-valid confidence interval." },
+        "guardrail_status": { "type": "string", "enum": ["clean", "breached"] },
+        "segment_harm_detected": { "type": "boolean", "description": "True if any monitored cohort showed harm (shrinkage estimate, non-inferiority vs margin) even when the average improved. See rollout_stage.segment_results." },
+        "segment_underpowered": { "type": "boolean", "description": "True if any monitored segment could not be powered — 'no harm detected' there is NOT 'no harm', and blocks promote on that segment." }
+      }
+    },
+    "final_disposition": {
+      "type": ["string", "null"],
+      "enum": ["promoted", "rejected_offline", "rejected_human", "rolled_back", "parked", null],
+      "description": "Null while in flight."
+    },
+    "lessons": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "What the proposer should learn — including refs to adversarial scenarios created from this candidate's failures. Read by the proposer to avoid repeating dead ideas."
+    }
+  }
+}

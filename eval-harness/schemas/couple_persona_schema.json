@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/couple_persona.json",
+  "title": "Couple Persona",
+  "description": "Seed definition of a simulated couple. An LLM role-player consumes this to act as the couple during an eval run, and graders use the same fields as ground truth when scoring outcomes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "persona_id",
+    "description",
+    "wedding_date",
+    "guest_count_target",
+    "location",
+    "budget",
+    "vision",
+    "hard_constraints",
+    "decision_style",
+    "spend_autonomy",
+    "effort_budget",
+    "simulation_behavior"
+  ],
+  "properties": {
+    "persona_id": {
+      "type": "string",
+      "pattern": "^couple_[a-z0-9_]+$",
+      "description": "Stable identifier, e.g. couple_lowbudget_highcount. Referenced by scenarios."
+    },
+    "description": {
+      "type": "string",
+      "description": "One line: who this couple is and what they are designed to stress."
+    },
+    "wedding_date": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_date", "flexibility"],
+      "properties": {
+        "target_date": { "type": "string", "format": "date", "description": "Preferred wedding date (UTC date)." },
+        "flexibility": {
+          "type": "string",
+          "enum": ["fixed", "same_month", "same_season", "flexible"],
+          "description": "How movable the date is. 'fixed' makes the date a hard constraint."
+        },
+        "lead_time_days": { "type": "integer", "minimum": 0, "description": "Days from planning start to wedding; drives lead-time gap checks." }
+      }
+    },
+    "guest_count_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "flexibility"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 1, "description": "Target headcount." },
+        "flexibility": { "type": "string", "enum": ["fixed", "soft", "flexible"], "description": "'fixed' makes count a hard constraint (venue capacity, catering)." }
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["region", "willing_travel_radius_km"],
+      "properties": {
+        "region": { "type": "string", "description": "Home region for vendor sourcing." },
+        "willing_travel_radius_km": { "type": "integer", "minimum": 0, "description": "How far the couple will travel for venue/vendors." },
+        "destination_wedding": { "type": "boolean", "default": false, "description": "True if the wedding is intentionally away from home region." }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_budget_cents", "hard_ceiling", "category_priorities"],
+      "properties": {
+        "total_budget_cents": { "type": "integer", "minimum": 0, "description": "Total budget in cents." },
+        "hard_ceiling": { "type": "boolean", "description": "If true, committed spend over total_budget_cents trips BUDGET.CEILING_EXCEEDED." },
+        "flexibility_pct": { "type": "number", "minimum": 0, "maximum": 100, "description": "Allowed overshoot when hard_ceiling is false." },
+        "category_priorities": {
+          "type": "array",
+          "description": "Spend priorities, highest first. The couple will splurge on early items and economize on late ones; drives the quality-per-dollar rubric.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["category", "priority"],
+            "properties": {
+              "category": { "type": "string", "enum": ["venue", "catering", "photography", "music", "florals", "attire", "invitations", "decor", "transport", "officiant", "other"] },
+              "priority": { "type": "string", "enum": ["splurge", "standard", "economize"] },
+              "soft_cap_cents": { "type": "integer", "minimum": 0, "description": "Optional per-category soft cap." }
+            }
+          }
+        }
+      }
+    },
+    "vision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aesthetic_keywords", "formality_level", "must_haves", "must_not_haves"],
+      "properties": {
+        "aesthetic_keywords": { "type": "array", "items": { "type": "string" }, "description": "Style anchors, e.g. ['rustic','candlelit','wildflowers']. Scored by vision_match_rubric." },
+        "formality_level": { "type": "string", "enum": ["casual", "semi_formal", "formal", "black_tie"] },
+        "must_haves": { "type": "array", "items": { "type": "string" }, "description": "Non-negotiable wants (not hard constraints, but heavily weighted in vision match)." },
+        "must_not_haves": { "type": "array", "items": { "type": "string" }, "description": "Explicit dislikes; surfacing these is a vision-match penalty." },
+        "cultural_requirements": { "type": "array", "items": { "type": "string" }, "description": "Cultural rituals/elements; omission may trip CONSTRAINT.HARD_VIOLATED if also listed in hard_constraints." },
+        "religious_requirements": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "hard_constraints": {
+      "type": "array",
+      "description": "Sacred constraints that can never be violated. Each maps to a CONSTRAINT.HARD_VIOLATED check.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["constraint_id", "type", "value", "description"],
+        "properties": {
+          "constraint_id": { "type": "string", "description": "Stable id, e.g. allergy_tree_nut_fatal." },
+          "type": { "type": "string", "enum": ["date", "guest_count", "budget", "allergy", "accessibility", "cultural", "religious", "dietary", "other"] },
+          "value": { "description": "Constraint value; shape depends on type (string, number, or object)." },
+          "severity": { "type": "string", "enum": ["fatal", "serious", "moderate"], "default": "serious", "description": "'fatal' = a violation that could harm a guest (e.g. anaphylaxis)." },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "decision_style": {
+      "type": "string",
+      "enum": ["wants_control", "collaborative", "delegating"],
+      "description": "How much the couple wants to decide vs. delegate. Calibrates the autonomy-rate metric and over-automation-regret counter-metric."
+    },
+    "spend_autonomy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default_mode", "opted_in_scopes"],
+      "description": "Encodes the propose-confirm default plus any pre-authorized autonomy. See gate_checks.md SPEND.*.",
+      "properties": {
+        "default_mode": { "type": "string", "enum": ["propose_confirm"], "description": "Always propose_confirm by product decision; autonomy is strictly opt-in below." },
+        "opted_in_scopes": {
+          "type": "array",
+          "description": "Pre-authorized autonomy windows. Empty array = fully propose-confirm.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["scope_id", "applies_to", "max_per_item_cents", "requires_refundable"],
+            "properties": {
+              "scope_id": { "type": "string" },
+              "applies_to": { "type": "string", "description": "A category (e.g. 'florals') or a specific item id the couple pre-authorized." },
+              "max_per_item_cents": { "type": "integer", "minimum": 0, "description": "Per-commitment cap; over this escalates to confirm even if budget remains." },
+              "requires_refundable": { "type": "boolean", "description": "If true, only refundable/reversible commitments may auto-execute." },
+              "requires_within_total_budget": { "type": "boolean", "default": true, "description": "Autonomy only valid while total committed spend stays within budget." }
+            }
+          }
+        }
+      }
+    },
+    "effort_budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_active_minutes_per_week", "tolerance"],
+      "description": "How much of the couple's time the product may consume; denominator of the North Star.",
+      "properties": {
+        "max_active_minutes_per_week": { "type": "integer", "minimum": 0 },
+        "tolerance": { "type": "string", "enum": ["low", "medium", "high"], "description": "How quickly the couple disengages when overloaded." }
+      }
+    },
+    "simulation_behavior": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["responsiveness", "pickiness", "clarity"],
+      "description": "Instructions for the LLM role-player driving this couple.",
+      "properties": {
+        "responsiveness": { "type": "string", "enum": ["prompt", "average", "slow", "erratic"] },
+        "pickiness": { "type": "string", "enum": ["easygoing", "particular", "very_particular"] },
+        "clarity": { "type": "string", "enum": ["clear", "vague", "contradictory"], "description": "'vague'/'contradictory' stress the intent-misread metric." },
+        "notes": { "type": "string", "description": "Free-text steering for the role-player." }
+      }
+    },
+    "expected_pain_points": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "What this persona is designed to stress; informs grader attention and coverage tracking."
+    }
+  }
+}
