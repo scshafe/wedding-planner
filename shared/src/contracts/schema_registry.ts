@@ -14,7 +14,7 @@ import {
 /**
  * @canonical schema_registry -- the one place data is validated against the JSON Schema contracts.
  *
- * Loads all 12 draft-2020-12 contracts (named in contract_manifest.ts) into a single Ajv 2020
+ * Loads all 13 draft-2020-12 contracts (named in contract_manifest.ts) into a single Ajv 2020
  * instance — the schema files are the source of truth and are never copied or redefined. Every
  * domain validates through this registry; there is no second validator anywhere in the codebase.
  *
@@ -69,7 +69,7 @@ export class SchemaRegistry {
     // allErrors: report every failure, not just the first, so a grade report can show how far off.
     // strict: false — ajv strict mode audits *schema authoring style* (e.g. a conditional subschema
     //   using `required`/`properties` without an explicit `type: object`), NOT data-conformance
-    //   rigor, which is identical regardless. The 12 contracts are canonical, already draft-2020-12
+    //   rigor, which is identical regardless. The 13 contracts are canonical, already draft-2020-12
     //   meta-valid, must not be redefined here (plan Context §3), and legitimately use that terse
     //   conditional style (e.g. oversight_record's additive-only verdict rules). The registry is a
     //   consumer of these contracts, not their linter — strict false compiles them faithfully and
@@ -91,7 +91,7 @@ export class SchemaRegistry {
 
   /**
    * Return the compiled validator for a contract. Compiling a contract that fails to compile
-   * throws here, which is how the "all 12 compile" guarantee is exercised.
+   * throws here, which is how the "all 13 compile" guarantee is exercised.
    */
   getValidateFunction<T = unknown>(key: ContractKey): ValidateFunction<T> {
     const definition = getContractDefinition(key)
@@ -129,7 +129,7 @@ export class SchemaRegistry {
 let cachedRegistry: SchemaRegistry | undefined
 
 /**
- * The process-wide schema registry. Built lazily on first use (reads + compiles the 12 contracts
+ * The process-wide schema registry. Built lazily on first use (reads + compiles the 13 contracts
  * once) so that importing the shared barrel does not perform filesystem work until validation is
  * actually needed.
  */

@@ -42,8 +42,20 @@ export {
   type ContractValidationResult,
 } from './contracts/schema_registry'
 
+// Strategy genome — content-address binding (the firewall over "the thing that actually runs")
+export {
+  GENOME_ARTIFACT_REF_PREFIX,
+  assertValidGenome,
+  canonicalGenomeHash,
+  genomeArtifactRef,
+  classifyGenomeArtifactRef,
+  genomeMatchesArtifactRef,
+  type GenomeArtifactRefVerdict,
+} from './strategy/genome'
+
 // Generated contract types (clean-named surface over ./contracts/generated)
 export type {
+  StrategyGenome,
   EventEnvelope,
   CommitmentPayload,
   CommsFactAssertedPayload,

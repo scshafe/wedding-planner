@@ -1,7 +1,7 @@
 /**
  * @canonical contract_manifest -- the authoritative list of the system's JSON Schema contracts.
  *
- * The 12 `* /schemas/*.json` files are the canonical contracts of the system (root README).
+ * The 13 `* /schemas/*.json` files are the canonical contracts of the system (root README).
  * This manifest names each one (so "the grade_report schema" maps to exactly one entry),
  * records its `$id` (as declared inside the file) and its repo-relative path, and is the single
  * source the schema registry loads from. A test cross-checks this manifest against on-disk glob
@@ -11,12 +11,14 @@
  */
 
 export type ContractDomain =
+  | 'shared'
   | 'telemetry'
   | 'eval-harness'
   | 'loop-orchestrator'
   | 'agent-operations'
 
 export type ContractKey =
+  | 'strategy_genome'
   | 'event_envelope'
   | 'event_payloads'
   | 'couple_persona'
@@ -44,6 +46,13 @@ export interface ContractDefinition {
 const SCHEMA_ID_PREFIX = 'https://wedding-planner.eval/schemas'
 
 export const CONTRACT_DEFINITIONS: readonly ContractDefinition[] = [
+  // shared (cross-domain: authored by the loop-orchestrator proposer, consumed by the eval-harness simulator)
+  {
+    key: 'strategy_genome',
+    schemaId: `${SCHEMA_ID_PREFIX}/strategy_genome.json`,
+    repoRelativePath: 'shared/schemas/strategy_genome_schema.json',
+    domain: 'shared',
+  },
   // telemetry
   {
     key: 'event_envelope',

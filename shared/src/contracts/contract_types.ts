@@ -10,6 +10,9 @@
  * related: contract_manifest.ts (keys/paths), schema_registry.ts (runtime validation of these shapes).
  */
 
+// Cross-domain contract: the strategy genome the proposer authors and the simulator interprets.
+export type { StrategyGenome } from './generated/strategy_genome'
+
 // The event stream contract.
 export type { TelemetryEventEnvelope as EventEnvelope } from './generated/event_envelope'
 

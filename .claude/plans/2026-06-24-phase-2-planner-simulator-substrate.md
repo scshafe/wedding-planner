@@ -26,7 +26,7 @@ Grounding files: `loop-orchestrator/proposer_design.md`, `loop-orchestrator/risk
 
 ## Steps
 
-- [ ] **Step 1: The `strategy_genome` contract + content-address + fingerprint (in `shared`).**
+- [x] **Step 1: The `strategy_genome` contract + content-address + fingerprint (in `shared`).**
   - Add `shared/schemas/strategy_genome_schema.json` (draft-2020-12, `additionalProperties: false`), register it in the schema registry + `gen:types` like the other 12 contracts. v1 fields: `genome_id`, `parameters` (a closed object; ship `rsvp_reminder_cadence: integer 0..3` first), plus room to grow. Implement `canonicalGenomeHash(genome): string` = `sha256Hex(canonicalJson(genome.parameters))` (hash the *parameters*, not the id, so two genomes are equal iff behavior-equal) and `genomeArtifactRef(genome) = "genome:" + hash`.
   - Verify: `npm run build && npm test` — a test asserts (a) the schema compiles + a sample genome validates via `assertValid`, (b) hash determinism (same params → same hash; param change → different hash), (c) `genome_id` does NOT affect the hash (fingerprint = behavior, not identity).
   - Specialist: `doddy` *(content-addressing is the firewall binding for "the thing that actually runs" — verify the hash can't be spoofed/aliased and that hashing `parameters` only is the right boundary).*
