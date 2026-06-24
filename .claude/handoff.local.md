@@ -1,77 +1,81 @@
 # Handoff
 
-## Where things stand — Phase 4b (escalation forge-detection) is BUILT ✅
-`.claude/plans/2026-06-24-phase-4b-escalation-forge-detection.md` is **complete — all 6 steps ticked**,
-on branch **`build/phase-3-generalize-search`** (Phase 3 is the open review artifact for `main`; 4a + 4b
-build on it; the loop's merge-keeper advances `main` when green). Working tree clean.
-`npm run build && npm test && npm run lint` all green (**234 tests**, up from 210 at the start of this run).
-`main` contains Phase 1 + Phase 2; this branch is the review artifact for Phase 3 **and** 4a **and** 4b.
+## Where things stand — Phase 5 (3rd tier-1 knob, 3-D search) is BUILT ✅
+`.claude/plans/2026-06-24-phase-5-third-tier1-knob-3d-search.md` is **complete — all 7 steps ticked**,
+on branch **`build/phase-3-generalize-search`** (the open review artifact for `main`; 3/4a/4b/5 build on
+it; the loop's merge-keeper advances `main` when green). Working tree clean.
+`npm run build && npm test && npm run lint` all green (**249 tests**, up from 234 at the start of this run).
+`main` contains Phase 1 + Phase 2; this branch is the review artifact for Phases 3, 4a, 4b **and 5**.
 
-**What changed:** the firewall's integrity gate (`INTEGRITY.SELF_REPORT_DIVERGENCE`) went from
-**effectively vacuous in the live loop** (it only reconciled commitment/integration effects, of which the
-RSVP model emits none) to **load-bearing**. The headline 4a→4b P0 — the scorer computes every metric over
-the CLAIMED event stream, so a forged couple-resolution / shaved couple-cost could inflate the North Star
-unchecked — is closed. 4a made the human-gate load-bearing; 4b makes the forge-detection load-bearing.
+**What changed:** the autonomous offline search went from **2-D to 3-D**. A 3rd TIER-1, forge-free flow
+knob — **`reminder_batching`** (digest consolidation) — joins cadence × spacing, so the search box is now
+the 64-point cube (all tier-1). The optimum is genuinely **non-separable** (the optimal cadence flips with
+batching) and the 3-D landscape has a **coordinate-descent trap the full-box sweep escapes** — a sharper
+"old search misses it" than 2-D could claim. No new tier-2 surface: escalation/`autonomy_threshold` stays
+injected-only, and the 4a/4b tier-2 firewalls are untouched. See `docs/adr/0005`.
 
 ### What's new this phase (by step)
-- **Step 1** — optional `couple_resolvable` ground-truth fact on `guest_persona` `rsvp_truth` (scenario
-  fact, never genome/product) + shared `domain_facts.ts` (the FACTS both simulator stages read). Matrix
-  byte-identical, no genome-hash re-baseline.
-- **Step 2** — trusted `TrustedRsvpOutcomeRecord` + `TrustedCoupleSessionRecord` families + recorder
-  methods; **Stage B now takes `(scenario, genome)`** and independently authors the trusted resolved set
-  (reminder ∪ couple-escalation) + couple cost — by its OWN computation, sharing only the FACTS, never
-  Stage A's emission path. Stage A unchanged here; gate not yet reconciling, so honest runs unaffected.
-- **Step 3** — the integrity gate gains `rsvp_resolution` + `couple_session` effect-kinds: reconciles
-  EVERY claimed `guest.rsvp.received` by `guest_id` (any cause — closing a PRE-EXISTING reminder-forge
-  hole) + `couple.session.ended` `active_seconds` (field-diff, `skipWhenClaimAbsent:false`). New shared
-  reader-sets in `report_event_names.ts`; completeness-invariant test. The firewall lands BEFORE Step-4
-  escalation (window-free order). Two loop fixtures had to author honest trusted outcomes — the firewall
-  correctly biting.
-- **Step 4** — Stage A escalate-to-couple behavior: `autonomy_threshold` escalates pending couple-
-  resolvable guests, emitting `couple.session.ended` (cost, `about_guest_id` join key) + `guest.rsvp.received`.
-  Box-is-tier-1 guard test: `search_proposer` NEVER emits `autonomy_threshold`.
-- **Step 5** — THE KEYSTONE (`escalation_forge_keystone.test.ts`): 5 arms, each the RED/GREEN fact "the
-  forge moves the claimed metric favourably but produces a NEW gate failure vs the honest baseline →
-  rejected": forged couple-resolution, reminder-labeled forge, shaved `active_seconds`, suppressed session,
-  and honest escalation that WINS on resolution yet PARKS at the tier-2 gate (firewalls compose).
-- **Step 6** — metamorphic escalation relations (resolution↑ AND effort_cost↑, not a free win) +
-  `docs/adr/0004` + memory ([[escalation-forge-detection-load-bearing]] + updates to three related files)
-  + this handoff.
+- **Step 1** — `reminder_batching` (int 0..3, REQUIRED) in the schema + risk map (tier-1
+  `planning_flow_orchestration`, with the doddy precedent-guard weld) + the SHARED digest FACT in
+  `domain_facts.ts` (`digestSize`, `effectiveNudges`, `feltTouches`; identity at b=0). Threaded `b:0`
+  (behavior-identical) through every genome fixture/`parameters` literal (the required knob makes
+  omitting genomes schema-invalid). Re-baselines every genome content-hash by design (no `genome:` hashes pinned).
+- **Step 2** — batching wired into BOTH stages together (the forge weld): Stage A's `guestOutcome` (reach
+  dilution + comfort consolidation) AND Stage B's `reminderResolves` (IDENTICAL `effectiveNudges` reach
+  calc via the shared fact). Model oracle: hand-anchored reach/comfort values, batching reach- &
+  comfort-monotonicity (with strict-movement anti-vacuity pins), anti-no-op, boundary fixed-points;
+  Stage B↔honest Stage A agreement sweep extended to the full 64-point cube.
+- **Step 3** — the 3-D cube oracle (live `cube()` relations, not pinned cells): b=0 slice byte-identical
+  to the pinned 2-D matrix; UNIQUE strict optimum at **(cadence 3, spacing 1, batching 1)=0.8151** over its
+  axis neighbours (margin ~0.0130); strictly beats every b=0 point; non-separable BOTH directions
+  (`[2,3,1,1]` argmax cadence + argmax batching depends on cadence). Honest-claims boundary documented.
+- **Step 4** — SearchProposer enumerates the 64-point cube spread-first; `batchingMin/batchingMax` spec
+  knobs; the "never emits `autonomy_threshold`" guard re-asserted over the 3-D box (BOX_SIZE 64, coverage 63).
+- **Step 5** — loop keystone converges (certificate) to (3,1,1) from (0,0,0) and the opposite corner
+  (3,3,3); `maxDryIterations` bumped past the 64-box; NEW 2-D-blind contrast (batching pinned 0 STALLS at
+  (2,1,0), missing the 3-D win).
+- **Step 6** — THE tier-1 dilution-forge keystone arm: a lying Stage A claiming a batching-diluted-away
+  resolution moves the claimed rate above the champion (RED) but the integrity gate vetoes it and it is
+  not accepted (GREEN) — the sole stopper (the candidate is tier-1, no promotion-gate park). Companion
+  arm: the honest batching candidate is gate-clean.
+- **Step 7** — `docs/adr/0005` + memory ([[third-tier1-knob-batching-3d-search]] + updates to
+  [[second-genome-knob-must-stay-tier1]] and [[search-convergence-certificate-semantics]] §3/§4) + this handoff.
 
-## Next action — your call. Recommended: Phase 5 = the FORGE-FREE third tier-1 knob (stress the search)
-4a + 4b made BOTH tier-2 firewalls (human-gate, forge-detection) load-bearing. A clean, in-rails next
-phase that builds on the now-hardened substrate WITHOUT new tier-2 surface:
-- **A 3rd TIER-1, FORGE-FREE knob** (e.g. a channel/timing-of-day flow knob) to take the autonomous search
-  to 3-D — stresses the spread-first enumeration, the convergence certificate, and the non-separability
-  story at higher dimension. Per [[second-genome-knob-must-stay-tier1]] it MUST be tier-1
-  (`planning_flow_orchestration`) AND forge-free (manufactures no trusted outcome → Stage B unchanged), or
-  it breaks autonomous operation. This is `wolf`/`testineer` territory (landscape + metamorphic matrix).
+## Next action — your call. Recommended: Phase 6 = LLM-judge quality OR a real claimed-metric reconciliation
+The 3-D autonomous search, both tier-2 firewalls, and the forge-detection are all load-bearing. In-rails options:
+- **Wire the `quality` North-Star component** (currently always `null` — no LLM rubric scores). This is the
+  biggest unbuilt value lever (PLANNING_VALUE_WEIGHTS.quality = 0.4, the largest weight, dropped today).
+  Offline-first: a deterministic stub rubric over the simulator's claimed plan, OR — if it needs a real
+  Claude judge — that requires API credentials → STOP-and-surface (the local-only rail). Decide which.
+- **Close the `guest_sentiment_score` claimed-only gap** (D7 / [[third-tier1-knob-batching-3d-search]]):
+  give sentiment a trusted backing so the firewall covers the metric batching now enlarges. This is the
+  natural forge-detection follow-on; `wolf`/`doddy` territory (a trusted sentiment observation in Stage B).
+- **A 4th tier-1 knob → 4-D** (e.g. a timing-of-day knob): more of the same search-generalization; lower
+  marginal value than the two above, and a timing knob needs per-guest receptivity ground truth + Stage B
+  reach changes (see ADR 0005 alternatives).
+- **The deferred §4 convergence redefinition** — still only worth doing as a prelude to putting tier-2 in
+  the autonomous search, which memory says not to do; low priority.
 
-Alternatives (also in-rails):
-- **The deferred convergence redefinition** ([[search-convergence-certificate-semantics]] §4) — only worth
-  doing as the prelude to a phase that genuinely puts tier-2 in the autonomous search, which memory says
-  not to do; so this is low priority unless that policy changes.
-- **Decision-event reconciliation** (4b deferred, D2): if a future escalation model emits
-  `couple.decision.*` / `ai.decision.autonomous`, reconcile the counts that feed `autonomy_rate` /
-  `decision_reversal_rate` before emitting them.
-- **The real Claude-Agent-SDK proposer** (needs API credentials → STOP-and-surface, the local-only rail).
-
-## Non-obvious Phase-4b context (carry forward)
-- **The integrity gate is now load-bearing in the LIVE loop, not just unit tests.** Before 4b it fired
-  only on synthetic commitment/integration events; now it reconciles the RSVP resolution numerator + couple
-  cost denominator that the North Star actually reads.
-- **Resolution is ONE concept keyed on `guest_id`, regardless of cause.** Do not re-split it by
-  `resolved_via` — that reopens the reminder-labeled forge. `resolved_via` is provenance only.
-- **`active_seconds` is field-diffed with `skipWhenClaimAbsent:false`** — partial under-reporting (not just
-  suppression) is the real cost forge; an absent/zero value vs positive trusted is a mismatch.
-- **Stage B shares the FACT (`domain_facts.ts`), never the claim path.** It must NEVER import Stage A's
-  `guestOutcome`/emission — that would re-vacuum the gate. `couple_resolvable` stays a SCENARIO fact.
-- **Escalation is INJECTED-only; the search box is pinned tier-1 (guard test).** The convergence
-  certificate is unchanged; its redefinition stays deferred. The 4a human-gate rail is untouched.
-- **`guest_sentiment_score` is still a claimed-only metric** (no trusted backing) — escalation doesn't
-  touch it; reconciling model-output metrics is out of scope (like `qa_accuracy_rate`).
-- **`npm run build` is still `tsc --noEmit`** (strict typecheck, no emit). No deployable runtime yet.
-- Durable facts: `MEMORY.md` index — 4b added **[[escalation-forge-detection-load-bearing]]** and updated
-  [[second-genome-knob-must-stay-tier1]], [[search-convergence-certificate-semantics]] §4,
-  [[integrity-gate-completeness-invariants]]. Still load-bearing: [[tier2-promotion-gate-is-load-bearing]],
-  [[genome-content-address-firewall]], [[loop-trusted-evidence-boundary]], [[accept-rule-composition-invariance]].
+## Non-obvious Phase-5 context (carry forward)
+- **Honest-claims boundary (do NOT overclaim):** the optimum is interior on batching+spacing but on the
+  cadence FACE (3). Claim "interior on the NEW axis + non-separable + dominates every b=0 point", NEVER
+  "3-D interior optimum". Do not retune constants to manufacture a cube-interior optimum.
+- **The b=0 slice is byte-identical to the Phase-3 2-D matrix** — that's the backward-compat oracle and the
+  reason all prior anchored/2-D tests survived untouched. Keep batching 0 an EXACT reduction (`ceil(x/1)=x`).
+- **Stage B reads `reminder_batching` too** (it mirrors the reach dilution). If a future change touches the
+  reach model, BOTH stages must move together via the shared `domain_facts.ts` fact, or honest runs self-veto.
+- **`guest_sentiment_score` is still claimed-only/unreconciled** (like `qa_accuracy_rate`); batching enlarges
+  that unreconciled value — an acknowledged, pre-accepted deferral (D7), not a silent inheritance.
+- **The search box is 3-D but ALL tier-1**; the §4 "no PROMOTABLE point" redefinition stays deferred. Loop
+  fixtures asserting the convergence certificate need `maxDryIterations >= 64` (the box grew 16→64).
+- **CI/exit-code lesson:** never pipe `npm run build` to `tail`/`grep` when gating with `&&` — the pipe
+  masks the build's non-zero exit. Run build standalone and check `$?` (one red commit happened this run
+  from that; fixed in dce4630).
+- The repo's named specialist sub-agents (doddy/wolf/testineer/rigorous-architect) are **not provisioned**
+  in this environment — route adversarial reviews through `general-purpose` agents carrying the persona
+  lens (extracted from prior transcripts), as prior phases did.
+- Durable facts: `MEMORY.md` index — Phase 5 added **[[third-tier1-knob-batching-3d-search]]** and updated
+  [[second-genome-knob-must-stay-tier1]], [[search-convergence-certificate-semantics]] §3/§4. Still
+  load-bearing: [[escalation-forge-detection-load-bearing]], [[tier2-promotion-gate-is-load-bearing]],
+  [[genome-content-address-firewall]], [[loop-trusted-evidence-boundary]], [[integrity-gate-completeness-invariants]],
+  [[accept-rule-composition-invariance]].

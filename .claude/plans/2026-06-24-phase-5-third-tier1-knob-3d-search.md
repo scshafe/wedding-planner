@@ -1,6 +1,6 @@
 # Phase 5 — A 3rd TIER-1 forge-free knob (`reminder_batching`): the autonomous search goes 3-D
 
-**Status:** IN PROGRESS — step boxes below. **Branch:** `build/phase-3-generalize-search` (the open review
+**Status:** COMPLETE — all 7 steps ticked (249 tests green). **Branch:** `build/phase-3-generalize-search` (the open review
 artifact for `main`; 3/4a/4b build on it; the merge-keeper advances `main` when green). **Predecessor:**
 Phase 4b — escalation forge-detection load-bearing (complete, 234 tests).
 
@@ -159,7 +159,7 @@ environment, so `general-purpose` reviewers were framed with the **doddy** (secu
     `new_gate_failures` non-empty) and the candidate is NOT accepted (GREEN). This is the load-bearing
     "forge-free for the new knob is TESTED, not asserted". `npm test` green.
 
-- [ ] **Step 7 — Docs + memory + handoff.**
+- [x] **Step 7 — Docs + memory + handoff.**
   - `docs/adr/0005-*.md`: the 3rd tier-1 knob + 3-D search; the honest-claims boundary (D4); the D7
     sentiment-gap acknowledgment; the coordinate-descent-trap-escaped-by-full-box-sweep result.
   - Memory: **update** `search-convergence-certificate-semantics.md` §3 — at 3-D the landscape is

@@ -30,8 +30,14 @@ do not call it "low-discrepancy sophistication" (it is a 16-point lattice).
 **3. Non-separability comes from the MULTIPLICATIVE sentiment term, not the cost denominator.**
 `sentiment = 1 − penalty_per_nag(spacing) · nags(cadence)` couples the two knobs in the North Star
 *numerator* (guest_experience), so the optimal cadence depends on spacing (argmax cadence is 2 at
-spacing≤1, drops once capacity caps reach). This landscape is still coordinate-descent-SOLVABLE (the
-global optimum is reachable by axis moves), so the keystone does NOT claim a coordinate-descent saddle.
+spacing≤1, drops once capacity caps reach). This 2-D landscape is coordinate-descent-SOLVABLE (the
+global optimum is reachable by axis moves), so the Phase-3 keystone does NOT claim a coordinate-descent
+saddle. **UPDATE (Phase 5):** this CD-solvable statement is **2-D-only**. The 3rd knob
+([[third-tier1-knob-batching-3d-search]]) makes the 3-D (cadence×spacing×batching) landscape
+coordinate-descent-UNSOLVABLE — there is a CD trap at (2,1,0) (reaching the optimum (3,1,1) needs a
+SIMULTANEOUS cadence+batching move) — that the full-box spread-first sweep escapes. Do NOT carry the
+"coordinate-descent-solvable" wording into 3-D; the Phase-5 keystone may (and does) claim the stronger
+"full-box sweep escapes a CD trap the 2-D-blind search is stuck in".
 What it DOES prove: the optimum requires a non-default value on the second knob, which the pre-Phase-3
 1-D (cadence-only, spacing-pinned) search is structurally incapable of reaching — that is the honest
 "old search misses the interaction win". The genome→North-Star surface is pinned as a 16-value matrix
@@ -63,3 +69,11 @@ autonomous proposer's box stays tier-1 (cadence × spacing) and a guard test pin
 never emits `autonomy_threshold`. So no parked-but-acceptable point arises mid-sweep, `isConverged()`
 stays honest, and the certificate above is unchanged. This §4 fix is still pending — required only when a
 phase actually lets the autonomous proposer emit tier-2 (escalation>0) candidates.
+
+**UPDATE (Phase 5 — the box is 3-D but still all tier-1).** [[third-tier1-knob-batching-3d-search]] added
+`reminder_batching` as the 3rd autonomous knob, so the box is now cadence×spacing×batching (64 points).
+It is still ALL tier-1 (the proposer never emits `autonomy_threshold`; guard re-asserted), so §4 stays
+deferred — no parked-but-acceptable point arises. Termination/coverage generalize unchanged:
+per-champion coverage = boxSize−1 = 63; the strict North-Star ratchet over the finite cube still bounds
+promotions. Point §2 (spread-order outcome-neutral under a box-sufficient budget) is unchanged; loop
+fixtures asserting the certificate must use `maxDryIterations >= 64`.

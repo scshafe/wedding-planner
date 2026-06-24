@@ -54,3 +54,11 @@ forged resolution / shaved cost is a veto, not free score. Critically, escalatio
 (the search box is still pinned tier-1, with a guard test), exactly as this memory demanded — so the
 convergence-certificate "no PROMOTABLE point" redefinition ([[search-convergence-certificate-semantics]]
 §4) stays DEFERRED (no parked point arises mid-sweep). Tier-2 still never enters the autonomous search.
+
+**UPDATE (Phase 5 — a 3rd TIER-1 knob shipped).** [[third-tier1-knob-batching-3d-search]] added
+`reminder_batching` (delivery-grouping/digest consolidation) as the 3rd autonomous knob — tier-1 and
+forge-free, exactly the kind of knob this memory says the search MAY optimize. The box is now 3-D
+(cadence×spacing×batching), still all tier-1; the "never emits `autonomy_threshold`" guard is re-asserted
+over it. The doddy precedent guard held: batching is tier-1 ONLY because it groups a byte-identical fixed
+reminder set and is volume-monotone-DOWN (a content/segmentation-varying or contact-increasing digest
+would be tier-2 `guest_comms_content`). Tier-2 still never enters the autonomous search.
