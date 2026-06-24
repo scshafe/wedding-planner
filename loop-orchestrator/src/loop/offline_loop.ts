@@ -49,11 +49,27 @@ export interface OfflineLoopConfig {
    */
   readonly preScoreGate?: (candidate: CandidateChange) => PreScoreGateVerdict
   /**
-   * Optional hook fired after a candidate is ACCEPTED offline (Phase 2: promote the champion + record
-   * genome lineage). The loop calls this so the next iteration's scorer sees the new champion.
+   * Optional hook fired after a candidate PASSES the offline accept rule. It owns the PROMOTION
+   * decision and returns the outcome (Phase 4a: the tier-2 gate):
+   *  - `promoted`      — the candidate landed (the champion ratcheted). Real progress: un-dries the loop.
+   *  - `parked`        — accepted-by-rule but WITHHELD (a tier-2 candidate with no exogenous human
+   *                      approval). The champion did NOT ratchet, so this is NOT champion progress.
+   *  - `human_rejected`— accepted-by-rule but the human gate returned `approved:false`. Terminal.
+   * A hook that returns `void`/undefined is treated as `promoted` (the generic, gate-free engine: an
+   * accept lands). The hook — not the generic loop — re-derives the tier and writes the gate's ledger
+   * transitions; the loop only interprets the outcome for its accounting and termination.
    */
-  readonly onAccepted?: (candidate: CandidateChange) => void
+  readonly onAccepted?: (candidate: CandidateChange) => PromotionOutcome | void
 }
+
+/**
+ * The outcome of the post-accept promotion gate (Phase 4a). An accepted candidate either LANDS
+ * (`promoted` — the champion ratchets), is WITHHELD pending an exogenous human approval (`parked` —
+ * the autonomous loop may never self-grant tier-2 autonomy, so a tier-2 accept with no injected
+ * approval parks), or is rejected at the human gate (`human_rejected`). Only `promoted` advances the
+ * champion; `parked`/`human_rejected` make no champion progress (they do NOT reset the dry counter).
+ */
+export type PromotionOutcome = 'promoted' | 'parked' | 'human_rejected'
 
 /**
  * Why the loop stopped (Phase-3 termination taxonomy):
@@ -80,10 +96,18 @@ export type LoopTerminationReason = 'converged' | 'dry' | 'budget_exhausted' | '
 export interface OfflineLoopSummary {
   readonly iterations: number
   readonly proposed: number
+  /** Candidates that PASSED the offline accept rule (= promoted + parked + humanRejected). */
   readonly accepted: number
   readonly rejected: number
   readonly terminatedReason: LoopTerminationReason
   readonly acceptedCandidateIds: readonly string[]
+  /** Of the accepted: those that LANDED (champion ratcheted). The tier-1 / approved-tier-2 path. */
+  readonly promoted: number
+  /** Of the accepted: those WITHHELD pending an exogenous human approval (tier-2, no approval). */
+  readonly parked: number
+  readonly parkedCandidateIds: readonly string[]
+  /** Of the accepted: those the human gate rejected (`approved:false`). Terminal, not parked-for-retry. */
+  readonly humanRejected: number
 }
 
 /** The weakest capability across a set of per-scenario scores (lowest scorecard entry), or null. */
@@ -103,11 +127,15 @@ function weakestCapabilityOf(scores: readonly PerScenarioScore[]): string | null
 
 export function runOfflineLoop(config: OfflineLoopConfig): OfflineLoopSummary {
   const acceptedCandidateIds: string[] = []
+  const parkedCandidateIds: string[] = []
   const lessons: string[] = []
   let iterations = 0
   let proposed = 0
   let accepted = 0
   let rejected = 0
+  let promoted = 0
+  let parked = 0
+  let humanRejected = 0
   let consecutiveDry = 0
   let weakestCapability: string | null = null
 
@@ -118,6 +146,10 @@ export function runOfflineLoop(config: OfflineLoopConfig): OfflineLoopSummary {
     rejected,
     terminatedReason,
     acceptedCandidateIds,
+    promoted,
+    parked,
+    parkedCandidateIds,
+    humanRejected,
   })
 
   for (;;) {
@@ -176,8 +208,22 @@ export function runOfflineLoop(config: OfflineLoopConfig): OfflineLoopSummary {
     if (selection.accepted) {
       accepted += 1
       acceptedCandidateIds.push(candidate.candidate_id)
-      consecutiveDry = 0 // progress un-dries the search
-      config.onAccepted?.(candidate) // Phase 2: promote the champion so the next iteration ratchets.
+      // The gate (Phase 4a) owns the promote/park/reject decision; a void hook means "promote" (the
+      // gate-free engine). Only a landed PROMOTION is champion progress that un-dries the search — a
+      // parked or human-rejected accept ratchets nothing, so it must NOT reset the dry counter (else a
+      // stream of un-landable tier-2 accepts could mask convergence).
+      const outcome = config.onAccepted?.(candidate) ?? 'promoted'
+      if (outcome === 'promoted') {
+        promoted += 1
+        consecutiveDry = 0
+      } else if (outcome === 'parked') {
+        parked += 1
+        parkedCandidateIds.push(candidate.candidate_id)
+        consecutiveDry += 1
+      } else {
+        humanRejected += 1
+        consecutiveDry += 1
+      }
     } else {
       rejected += 1
       consecutiveDry += 1

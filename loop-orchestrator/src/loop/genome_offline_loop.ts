@@ -11,6 +11,7 @@ import { type ChampionStore } from '../genome/champion_store'
 import { type GenomeRegistry } from '../genome/genome_registry'
 import { type Ledger } from '../ledger/ledger'
 import { LoopOrchestratorError } from '../loop_orchestrator_error'
+import { runPromotionGate } from '../pipeline/promotion_gate'
 import { reconcileCandidateRiskTier } from '../pipeline/risk_tier_reconciliation'
 import { type Proposer } from '../proposer/proposer'
 import { type OfflineLoopSummary, runOfflineLoop } from './offline_loop'
@@ -87,15 +88,16 @@ export function runGenomeOfflineLoop(config: GenomeOfflineLoopConfig): OfflineLo
       return reconciliation.ok ? { ok: true } : { ok: false, detail: reconciliation.detail }
     },
 
-    // The ratchet + lineage: promote the accepted genome and anchor its hash in the append-only ledger.
-    onAccepted: (candidate) => {
-      const genome = config.registry.resolve(candidate.change.artifact_ref)
-      if (genome !== undefined) {
-        config.championStore.promote(genome)
-        // Lineage as evidence in the ledger (not a proposer lesson — the loop only forwards rejected
-        // entries' lessons, so an accepted entry's note never pollutes the proposer's context).
-        config.ledger.addLesson(candidate.candidate_id, `champion_lineage: ${candidate.change.artifact_ref}`)
-      }
-    },
+    // The tier gate (Phase 4a): re-derive the tier from the content-addressed genome and decide whether
+    // the accepted candidate LANDS (tier <= 1, ratchet the champion), PARKS (tier 2+ with no exogenous
+    // approval), or is human-rejected. The gate writes the promote/park/reject ledger transitions and
+    // returns the outcome the generic loop accounts for.
+    onAccepted: (candidate) =>
+      runPromotionGate({
+        candidate,
+        registry: config.registry,
+        championStore: config.championStore,
+        ledger: config.ledger,
+      }),
   })
 }

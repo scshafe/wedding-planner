@@ -58,6 +58,7 @@ export {
   type OfflineLoopSummary,
   type LoopTerminationReason,
   type PreScoreGateVerdict,
+  type PromotionOutcome,
 } from './loop/offline_loop'
 
 // Strategy substrate (Phase 2): the champion (the standard a candidate must beat) + the
@@ -72,6 +73,11 @@ export {
   reconcileCandidateRiskTier,
   type RiskTierReconciliation,
 } from './pipeline/risk_tier_reconciliation'
+export {
+  runPromotionGate,
+  type PromotionGateConfig,
+  MAX_AUTONOMOUS_PROMOTION_TIER,
+} from './pipeline/promotion_gate'
 export {
   runGenomeOfflineLoop,
   type GenomeOfflineLoopConfig,
