@@ -4,6 +4,19 @@
 
 **Out of scope (explicitly deferred to later phases, gated behind a working offline core):** the production funnel / experiment engine (shadow/canary/ramp), any real money / booking / comms side effects, the `agent-operations/` roster + oversight loops + the *production* trusted-evidence channel, and the full creative model-proposer with exploration. Phase 1 builds the deterministic, harmless filter the design says everything else sits behind (`loop-orchestrator/README.md` principle 2, "cheap filter before expensive risk").
 
+## Operating philosophy (read first)
+
+This project is a **testbed for autonomous agent build-out**: a defining interest of the user's is to
+see how well agents build a full-scale system given *general directives + optimization goals + loop
+development ability* ([[agents-own-buildout-decisions]]). So **the building agents own the engineering
+decisions** — stack, structure, design patterns, sequencing — and record their own rationale. This
+plan gives **direction and hard safety rails, not a rigid script**: treat the steps below as a
+*recommended* dependency-ordered starting sequence to adapt and amend (the `executing-plans` skill
+expects you to amend as reality diverges). The non-negotiables are the **safety rails**, not the *how*:
+offline-first (no production money/booking/comms blast radius in Phase 1), reuse the one safety model,
+ground every artifact in the specs, and optimize toward the North Star. Minimize human gates on
+engineering choices; keep the safety rails firm.
+
 ## Context
 
 - The repo is **specs-only** (this is the first build). Four domains, one safety model. Start here: root `README.md`, then `loop-orchestrator/README.md`, `telemetry/README.md`, `eval-harness/README.md`.
@@ -14,9 +27,10 @@
 
 ## Steps
 
-- [ ] **Step 1: Confirm tech stack & conventions.**
-  - Recommendation: **TypeScript + Claude Agent SDK + ajv**. Rationale: the 12 contracts are already JSON Schema → ajv gives runtime validation and `json-schema-to-typescript` gives static types from the *same* source of truth; the Claude Agent SDK (the proposer's substrate per `loop-orchestrator/README.md` "Implementation substrate") is first-class in TS. Python + pydantic is the viable alternative.
-  - Verify: human review *(this is the one big upfront decision — surface the recommendation and let the user confirm before scaffolding; do not pick unattended)*.
+- [ ] **Step 1: Choose the tech stack & project structure (agent decision — own it).**
+  - This is *your* call as the building agent, grounded in the specs and the goal of an agent-operated, schema-contract-driven system. Pick the stack and structure, and **record the decision + rationale** (a short ADR in the repo).
+  - Non-binding suggestion (take it or override it): TypeScript + Claude Agent SDK + ajv — the 12 contracts are already JSON Schema, so ajv gives runtime validation and `json-schema-to-typescript` gives static types from the same source, and the Agent SDK (the proposer's substrate, `loop-orchestrator/README.md` "Implementation substrate") is first-class in TS. Python + pydantic is an equally legitimate choice. **Do not stop for human approval — decide, record why, and proceed.**
+  - Verify: an ADR recording the choice + rationale exists in the repo.
 
 - [ ] **Step 2: Scaffold the project skeleton.**
   - A workspace with one package per domain (`telemetry`, `eval-harness`, `loop-orchestrator`, `agent-operations`), a test runner (e.g. vitest), tsconfig, lint. Follow the `agent-first-engineering` skill conventions.
