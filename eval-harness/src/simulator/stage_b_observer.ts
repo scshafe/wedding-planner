@@ -17,6 +17,16 @@ import { type ScenarioDefinition } from '../scoring/offline_scorer'
  * the couple's hard constraints — the baseline assumption a candidate must not break). When later
  * genomes drive spend/booking/comms, THIS is where the harness observes those effects out-of-band.
  *
+ * PHASE-3 (reminder_spacing): deliberately UNCHANGED, and that is the load-bearing point. A knob that
+ * only modulates the GROUND-TRUTH-DERIVED computation (spacing changes how many nudges land and how
+ * gentle they are, but a guest still resolves only if its true need is met) MANUFACTURES NO OUTCOME,
+ * so it opens no new self-report-divergence surface and needs no new trusted observation here. The
+ * contrast that defines the line: a knob that let the product AUTHOR a resolution the guest never gave
+ * (e.g. an escalate-to-couple knob that marks a never-responder resolved) WOULD be a forge-able
+ * outcome — it would require Stage B to independently observe the escalation/resolution and an
+ * integrity-gate effect kind to reconcile it. We deliberately did NOT add such a knob (it is also
+ * tier-2; see memory: second-genome-knob-must-stay-tier1). Forge-free knob => Stage B unchanged.
+ *
  * related: stage_a_planner.ts (the claims it is independent of), trusted_recorder.ts, gates/integrity_gate.ts.
  */
 

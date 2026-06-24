@@ -25,6 +25,21 @@ import { type ScenarioDefinition } from '../scoring/offline_scorer'
  * nag them (guest_sentiment_score, the paired guard, down). That tradeoff is a real property of the
  * model, not a number the test restates.
  *
+ * PHASE-3 SECOND KNOB — `reminder_spacing` (the temporal twin of cadence). It is FORGE-FREE by
+ * construction: a guest still resolves ONLY if its ground-truth need is met (`needed <= delivered`),
+ * so the planner never manufactures a resolution — which is exactly why this knob adds NO new
+ * self-report-divergence surface and Stage B needs no new observation (see stage_b_observer.ts and
+ * memory: second-genome-knob-must-stay-tier1). Spacing does two things, a real upside AND a real
+ * downside, which is what makes the (cadence, spacing) landscape NON-SEPARABLE with an interior
+ * optimum rather than a corner:
+ *   - DOWNSIDE: more spacing fits FEWER nudges in the fixed rsvp_window — delivered = min(cadence,
+ *     capacity(spacing)) — so high spacing caps reach and can leave a reachable guest unresolved.
+ *   - UPSIDE: more spacing makes each delivered nudge GENTLER — penalty_per_nag falls with spacing —
+ *     so the sentiment hit per nag shrinks. The sentiment term is therefore MULTIPLICATIVE
+ *     (penalty(spacing) * nags(cadence)); the optimal cadence depends on spacing, and vice versa.
+ * At spacing 0 the model is identical to Phase 2 (capacity(0) >= cadence_max, penalty == base), so the
+ * Phase-2 anchored oracle values are preserved unchanged.
+ *
  * related: stage_b_observer.ts (the independent trusted record), planner_simulator.ts (wiring).
  */
 
@@ -64,8 +79,37 @@ const REMINDERS_NEEDED: Readonly<Record<string, number>> = {
  * unreachable guest — which is the property that makes the cadence tradeoff worth optimizing.
  */
 const COMFORT_CAP = 1
-/** Sentiment lost per nagging reminder (a guest starts at 1.0, floored at 0). */
+/** Sentiment lost per nagging reminder at spacing 0 (a guest starts at 1.0, floored at 0). */
 const SENTIMENT_PENALTY_PER_NAG = 0.25
+
+/**
+ * PHASE-3 reminder_spacing constants. Tuned so the (cadence, spacing) North-Star surface has a genuine
+ * INTERIOR, NON-SEPARABLE optimum on the keystone corpus — pinned by the 16-value matrix test, never
+ * by editing the North Star weights. At spacing 0 both reduce to the Phase-2 model.
+ */
+/**
+ * Reminder window capacity at a spacing level: how many nudges fit in the fixed rsvp_window. cap(s) =
+ * SPACING_CAPACITY_BASE - s, floored at 0 -> {3,2,1,0} for s in {0,1,2,3}. At s=0 it is >= the cadence
+ * max (3), so spacing never caps delivery (Phase-2 behavior); higher spacing bites.
+ */
+const SPACING_CAPACITY_BASE = 3
+/**
+ * Fraction by which each spacing level softens a nag: penalty_per_nag = SENTIMENT_PENALTY_PER_NAG *
+ * (1 - SPACING_RELIEF * spacing). At 0.25 the per-nag penalty is {0.25, 0.1875, 0.125, 0.0625} for
+ * spacing {0,1,2,3} — strictly positive across the band (the guard never goes free), and exactly the
+ * Phase-2 value at spacing 0.
+ */
+const SPACING_RELIEF = 0.25
+
+/** Nudges that fit in the window at a spacing level (the spacing downside). */
+function spacingCapacity(spacing: number): number {
+  return Math.max(0, SPACING_CAPACITY_BASE - spacing)
+}
+
+/** Sentiment lost per nag at a spacing level (the spacing upside: gentler with more spacing). */
+function penaltyPerNag(spacing: number): number {
+  return SENTIMENT_PENALTY_PER_NAG * (1 - SPACING_RELIEF * spacing)
+}
 
 /** The rsvp_status a resolved guest reports, from their ground-truth intent. */
 function resolvedStatus(guest: GuestPersona): 'yes' | 'no' {
@@ -78,22 +122,28 @@ interface GuestOutcome {
   readonly sentimentScore: number
 }
 
-/** Deterministically resolve one guest's RSVP outcome under a reminder cadence. */
-function guestOutcome(guest: GuestPersona, cadence: number): GuestOutcome {
+/** Deterministically resolve one guest's RSVP outcome under a (cadence, spacing) genome. */
+function guestOutcome(guest: GuestPersona, cadence: number, spacing: number): GuestOutcome {
   const needed = REMINDERS_NEEDED[guest.rsvp_truth.response_latency] ?? NEVER
-  const resolved = needed !== NEVER && cadence >= needed
+  // Spacing caps how many of the cadence nudges actually fit in the window (the spacing downside).
+  const delivered = Math.min(cadence, spacingCapacity(spacing))
+  // FORGE-FREE: resolution requires the ground-truth need to be MET by delivered nudges — never
+  // manufactured. A never-responder (needed === NEVER) can never resolve regardless of the genome.
+  const resolved = needed !== NEVER && delivered >= needed
   // A resolved guest stops receiving reminders once they respond (at `needed`); an unresolved guest
-  // (still pending, or a never-responder) receives the full cadence budget.
-  const remindersSent = resolved ? needed : cadence
+  // (still pending, or a never-responder) receives the full delivered budget.
+  const remindersSent = resolved ? needed : delivered
   const comfortCeiling = needed === NEVER ? 0 : Math.min(needed, COMFORT_CAP)
   const nags = Math.max(0, remindersSent - comfortCeiling)
-  const sentimentScore = Math.max(0, Math.min(1, 1 - SENTIMENT_PENALTY_PER_NAG * nags))
+  // Each nag is gentler at higher spacing (the spacing upside) — the multiplicative interaction.
+  const sentimentScore = Math.max(0, Math.min(1, 1 - penaltyPerNag(spacing) * nags))
   return { resolved, remindersSent, sentimentScore }
 }
 
 /** The default Stage-A planner: RSVP resolution + sentiment as a function of `rsvp_reminder_cadence`. */
 export const rsvpCadencePlanner: Planner = ({ scenario, genome, clock, ids }) => {
   const cadence = genome.parameters.rsvp_reminder_cadence
+  const spacing = genome.parameters.reminder_spacing
   const events: EventEnvelope[] = []
 
   const emit = (
@@ -122,7 +172,7 @@ export const rsvpCadencePlanner: Planner = ({ scenario, genome, clock, ids }) =>
 
   for (const guest of scenario.guests) {
     const guestId = guest.persona_id
-    const outcome = guestOutcome(guest, cadence)
+    const outcome = guestOutcome(guest, cadence, spacing)
 
     emit(EVENT_NAMES.guest_rsvp_requested, 'rsvp', 'ai', guestId, { guest_id: guestId })
     for (let i = 0; i < outcome.remindersSent; i += 1) {

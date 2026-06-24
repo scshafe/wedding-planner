@@ -80,7 +80,7 @@ so requiring it does NOT inflate any genome's tier. Cost: re-baseline fixtures/s
     schema-invalid; assert the 2-knob max + sorted perParameter + that a 2-knob genome stays tier-1).
   - The drift-guard test already auto-covers the new param (reads the schema). Verify it passes.
 
-- [ ] **Step 2 — Stage A: the 2-D forge-free model (D3).**
+- [x] **Step 2 — Stage A: the 2-D forge-free model (D3).**
   - Extend `rsvpCadencePlanner` to read `reminder_spacing`; implement `delivered`, the gentler-nag
     penalty, and the capacity cap. Keep resolution strictly from ground truth (forge-free). Document
     the model + constants in-code with the testineer-style "explicit modeling decision" comments.
