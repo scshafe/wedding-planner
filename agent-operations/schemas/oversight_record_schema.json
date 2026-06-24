@@ -93,7 +93,7 @@
         "approved": { "type": "boolean" },
         "approver_role": { "type": "string", "description": "e.g. loop_supervisor, support_lead, on_call_sre, finance_legal_owner." },
         "decided_at": { "type": "string", "format": "date-time" },
-        "binds_landing_key": { "type": ["string", "null"], "description": "The idempotency_key of the single landing this approval authorizes — one approval binds one landing, so a crash-retry cannot re-spend the approval (oversight_loops.md 'Crash and recovery')." }
+        "binds_landing_key": { "type": ["string", "null"], "description": "The content-addressed identity of the SINGLE landing this approval authorizes — one approval binds one landing, so a crash-retry cannot re-spend it and a stale approval cannot land a CHANGED plan. The composition is defined by the landing channel: the offline genome loop binds sha256(canonicalJson{landing_genome_hash, against_champion_hash}) so the approval authorizes exactly the reviewed genome against the reviewed champion baseline — a champion ratchet re-derives a different key and invalidates the approval (loop-orchestrator promotion_gate.ts / landing_approval.ts). A production effecting channel binds action_ref x intended-effect-hash instead (oversight_loops.md 'Crash and recovery'). Null when the gate carries no landing binding." }
       }
     },
     "idempotency_key": { "type": ["string", "null"], "description": "action_ref x intended-effect-hash. Lets a restart ask the out-of-band record 'did THIS effect already land?' so a re-driven turn cannot double-land a real deploy/charge/send." },
@@ -170,6 +170,16 @@
         }
       },
       "then": { "required": ["floor_clearance_ref"] }
+    },
+    {
+      "description": "A human_gate is a HUMAN landing approval, so only a human review may carry one — it is the human's approval to author. A non-human decider (a deterministic_gate, a monitor, an agent role) carrying a human_gate is a forged landing approval (the contract analogue of INTEGRITY.FORGED_CLEAR); the consumer must never treat it as authorization. Binds only when human_gate is present and non-null (Tier-0/1 and Tier-3 records omit it).",
+      "if": {
+        "required": ["human_gate"],
+        "properties": { "human_gate": { "type": "object" } }
+      },
+      "then": {
+        "properties": { "reviewed_by": { "const": "human" } }
+      }
     },
     {
       "description": "A live out-of-band feed read must be substantiated by a signed receipt and confirmed fresh — silence is not safety.",

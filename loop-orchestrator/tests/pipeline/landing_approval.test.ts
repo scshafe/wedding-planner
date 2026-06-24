@@ -49,10 +49,12 @@ describe('ApprovalStore — read-only, one-shot, human-only', () => {
     expect(store.find('no-such-key')).toBeUndefined()
   })
 
-  it('ignores a non-human record (only a human review can authorize a land)', () => {
+  it('the CONTRACT forbids a non-human record from carrying a human_gate (only a human authorizes a land)', () => {
     const key = landingKeyFor(g(2, 1, 1), g(0, 0))
-    // A deterministic_gate "cleared" with a binding key is NOT a human landing approval.
-    const nonHuman: OversightRecord = {
+    // A deterministic_gate "cleared" carrying a human_gate is now rejected by the schema itself (the
+    // allOf: human_gate present => reviewed_by:human). The human-only rule is a contract invariant, not
+    // just a runtime guard in the store. (The store's reviewed_by!=='human' check remains defense-in-depth.)
+    const nonHuman = {
       review_id: 'rev_gate', at: '2027-05-01T12:30:00.000Z', review_kind: 'inline_pre_landing',
       subject: { acting_agent: 'product_improvement_loop', action_ref: 'c', claimed_tier: 2, derived_tier: 2 },
       reviewed_by: 'deterministic_gate', reviewer_distinct_from_actor: true,
@@ -61,8 +63,7 @@ describe('ApprovalStore — read-only, one-shot, human-only', () => {
       pii_redacted: true,
       ledger_chain: { entry_hash: 'h', prev_entry_hash: null, decided_by: 'deterministic_gate', decided_by_signature: 's' },
     }
-    const store = new ApprovalStore([getSchemaRegistry().assertValid<OversightRecord>('oversight_record', nonHuman)])
-    expect(store.find(key)).toBeUndefined()
+    expect(() => getSchemaRegistry().assertValid<OversightRecord>('oversight_record', nonHuman)).toThrow()
   })
 
   it('an empty / default store approves nothing (the autonomous default => everything parks)', () => {

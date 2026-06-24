@@ -108,7 +108,7 @@ approved: boolean
 approver_role: string
 decided_at: string
 /**
- * The idempotency_key of the single landing this approval authorizes — one approval binds one landing, so a crash-retry cannot re-spend the approval (oversight_loops.md 'Crash and recovery').
+ * The content-addressed identity of the SINGLE landing this approval authorizes — one approval binds one landing, so a crash-retry cannot re-spend it and a stale approval cannot land a CHANGED plan. The composition is defined by the landing channel: the offline genome loop binds sha256(canonicalJson{landing_genome_hash, against_champion_hash}) so the approval authorizes exactly the reviewed genome against the reviewed champion baseline — a champion ratchet re-derives a different key and invalidates the approval (loop-orchestrator promotion_gate.ts / landing_approval.ts). A production effecting channel binds action_ref x intended-effect-hash instead (oversight_loops.md 'Crash and recovery'). Null when the gate carries no landing binding.
  */
 binds_landing_key?: (string | null)
 } | null)
