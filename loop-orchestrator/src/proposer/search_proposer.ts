@@ -14,7 +14,8 @@ import { type Proposer, type ProposerContext } from './proposer'
 
 /**
  * @canonical search_proposer -- the offline, credential-free analogue of the creative Claude proposer,
- * generalized in Phase 3 to a MULTI-PARAMETER (2-D) genome box search.
+ * generalized in Phase 3 to a MULTI-PARAMETER box search and in Phase 5 to a 3-D box
+ * (cadence × spacing × batching, all tier-1 flow knobs).
  *
  * Each call it reads the CURRENT champion (from the injected ChampionStore), picks the next untried
  * box point in a fixed spread-first order, registers the genome (content-addressed), and emits a
@@ -25,7 +26,7 @@ import { type Proposer, type ProposerContext } from './proposer'
  * THREE Phase-3 design properties (each replacing a Phase-2 toy limitation wolf flagged):
  *
  *  1. FULL-BOX, CHAMPION-INDEPENDENT, SPREAD-FIRST ENUMERATION. The proposer enumerates the WHOLE
- *     parameter box (cadence × spacing) in a FIXED order derived from the bit-reversal (van der Corput
+ *     parameter box (cadence × spacing × batching) in a FIXED order derived from the bit-reversal (van der Corput
  *     base 2) of each point's row-major index — a deterministic space-filling permutation that does
  *     NOT re-center on the champion. Phase 2 walked the champion's axis-aligned distance-1 neighbours,
  *     which traps the search near the champion. HONEST framing of the value (the order is
@@ -63,12 +64,20 @@ export interface SearchProposerSpec {
   /** Inclusive bounds of the reminder_spacing search range (defaults to the schema's 0..3). */
   readonly spacingMin?: number
   readonly spacingMax?: number
+  /**
+   * Inclusive bounds of the reminder_batching search range (defaults to the schema's 0..3). Pinning
+   * batchingMin === batchingMax === 0 restricts the proposer to the OLD 2-D (cadence × spacing) box — the
+   * 2-D-blind contrast the keystone uses to prove the 3rd dimension is load-bearing.
+   */
+  readonly batchingMin?: number
+  readonly batchingMax?: number
 }
 
-/** A point in the integer parameter box. */
+/** A point in the integer parameter box (Phase 5: 3-D — cadence × spacing × batching, all tier-1). */
 interface BoxPoint {
   readonly cadence: number
   readonly spacing: number
+  readonly batching: number
 }
 
 /** Reverse the low `bits` bits of `value` (the van der Corput / bit-reversal scramble). */
@@ -175,12 +184,13 @@ export class SearchProposer implements Proposer {
         guards_to_watch: [...this.spec.guards_to_watch],
         rationale:
           `box move: (cadence ${champion.parameters.rsvp_reminder_cadence}, spacing ` +
-          `${champion.parameters.reminder_spacing}) -> (cadence ${point.cadence}, spacing ` +
-          `${point.spacing}) (iteration ${context.iteration}; ${context.lessons.length} prior lesson(s)).`,
+          `${champion.parameters.reminder_spacing}, batching ${champion.parameters.reminder_batching}) -> ` +
+          `(cadence ${point.cadence}, spacing ${point.spacing}, batching ${point.batching}) ` +
+          `(iteration ${context.iteration}; ${context.lessons.length} prior lesson(s)).`,
       },
       change: {
         change_type: this.spec.change_type,
-        summary: `cadence ${point.cadence}, spacing ${point.spacing} for ${this.spec.target_capability}.`,
+        summary: `cadence ${point.cadence}, spacing ${point.spacing}, batching ${point.batching} for ${this.spec.target_capability}.`,
         artifact_ref: artifactRef,
         reversible: true,
         capabilities_touched: [this.spec.target_capability],
@@ -195,32 +205,38 @@ export class SearchProposer implements Proposer {
   /** A genome at a box point, with a deterministic id (id is inert to the content hash). */
   private genomeFor(point: BoxPoint): StrategyGenome {
     return {
-      genome_id: `g_search_c${point.cadence}_s${point.spacing}`,
-      // Phase 5 Step 1: reminder_batching is REQUIRED, so the emitted genome must carry it. The box is
-      // still 2-D here (batching pinned 0); Step 4 promotes batching to a third enumerated box dimension.
+      genome_id: `g_search_c${point.cadence}_s${point.spacing}_b${point.batching}`,
+      // All three knobs are REQUIRED tier-1 flow knobs; the proposer NEVER emits autonomy_threshold, so
+      // every enumerated genome derives tier 1 (the search box stays tier-1 — guard test pins this).
       parameters: {
         rsvp_reminder_cadence: point.cadence,
         reminder_spacing: point.spacing,
-        reminder_batching: 0,
+        reminder_batching: point.batching,
       },
     }
   }
 
   /**
-   * The fixed spread-first order over the box: generate every point in row-major (cadence outer,
-   * spacing inner), then visit them in ascending bit-reversed-index order (van der Corput base 2). The
-   * order is independent of the champion, so the search fills the box rather than hugging the champion.
+   * The fixed spread-first order over the 3-D box: generate every point in row-major (cadence outer,
+   * spacing middle, batching inner), then visit them in ascending bit-reversed-index order (van der
+   * Corput base 2). The order is independent of the champion, so the search fills the cube rather than
+   * hugging the champion. For the default 4×4×4 box (64 points) the index width is 6 bits and 64 is a
+   * power of two, so the bit-reversal is a clean bijection.
    */
   private buildBoxOrder(): readonly BoxPoint[] {
     const cadenceMin = this.spec.cadenceMin ?? 0
     const cadenceMax = this.spec.cadenceMax ?? 3
     const spacingMin = this.spec.spacingMin ?? 0
     const spacingMax = this.spec.spacingMax ?? 3
+    const batchingMin = this.spec.batchingMin ?? 0
+    const batchingMax = this.spec.batchingMax ?? 3
 
     const rowMajor: BoxPoint[] = []
     for (let cadence = cadenceMin; cadence <= cadenceMax; cadence += 1) {
       for (let spacing = spacingMin; spacing <= spacingMax; spacing += 1) {
-        rowMajor.push({ cadence, spacing })
+        for (let batching = batchingMin; batching <= batchingMax; batching += 1) {
+          rowMajor.push({ cadence, spacing, batching })
+        }
       }
     }
     const bits = Math.max(1, Math.ceil(Math.log2(rowMajor.length)))

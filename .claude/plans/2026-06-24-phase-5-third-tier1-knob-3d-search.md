@@ -119,7 +119,7 @@ environment, so `general-purpose` reviewers were framed with the **doddy** (secu
   - `stage_b_observer.test.ts`: extend the honest Stage-A ↔ Stage-B agreement sweep to the full **64-point
     cube** [test-P0] — honest resolved set == trusted resolved set at every (c,s,b). `npm test` green.
 
-- [ ] **Step 3 — The 3-D landscape oracle (relations over a LIVE `matrix3d()`; D4/D5).**
+- [x] **Step 3 — The 3-D landscape oracle (relations over a LIVE `matrix3d()`; D4/D5).**
   - `matrix3d()` computes the 4×4×4 aggregate North Star over the keystone corpus (like `matrix()` does in
     2-D). Assert (computed live, not against pinned cube cells):
     - **unique** global argmax at (3,1,1) with value 0.8151; **strict** over the (in-box) 6 axis-neighbors
@@ -130,7 +130,7 @@ environment, so `general-purpose` reviewers were framed with the **doddy** (secu
     - a comment naming the honest claim (D4) and explicitly NOT claiming "3-D interior optimum".
   - `npm test` green.
 
-- [ ] **Step 4 — SearchProposer goes 3-D (D6).**
+- [x] **Step 4 — SearchProposer goes 3-D (D6).**
   - `search_proposer.ts`: `SearchProposerSpec` gains `batchingMin?/batchingMax?` (default 0..3);
     `BoxPoint` gains `batching`; `genomeFor` emits `reminder_batching` (else schema-invalid — doddy-C4);
     `buildBoxOrder` enumerates the cube (cadence outer, spacing mid, batching inner) in bit-reversal
@@ -139,7 +139,7 @@ environment, so `general-purpose` reviewers were framed with the **doddy** (secu
     trajectory-tabu + convergence-certificate logic unchanged; **re-assert the guard** that the proposer
     NEVER emits `autonomy_threshold` over the 3-D box (every emitted genome derives tier 1). `npm test` green.
 
-- [ ] **Step 5 — Loop keystone at 3-D (convergence + the "old search misses it" contrast).**
+- [x] **Step 5 — Loop keystone at 3-D (convergence + the "old search misses it" contrast).**
   - Bump `maxDryIterations` to **≥ boxSize (64)** wherever the convergence certificate is asserted (the
     keystone's default 20 < 64 would flip `converged`→`dry`) [test plumbing]; the taxonomy test's tight/loose
     values adjusted accordingly (tight stays well below boxSize; loose ≥ boxSize).

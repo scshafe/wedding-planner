@@ -38,7 +38,8 @@ import { describe, expect, it } from 'vitest'
  * positive arm asserts the full causal chain (genome delta -> metric moved -> hypothesis_confirmed ->
  * North Star up -> accepted -> champion promoted); the negative arm asserts a regressing genome is
  * rejected with a lesson. A guard-mechanism test shows the guard is live against the new substrate,
- * and a full loop run climbs to the interior optimum (cadence 2 on this corpus).
+ * and a full loop run climbs to the optimum. Phase 5: the search box is the 3-D cube
+ * (cadence × spacing × batching) and the loop converges to (cadence 3, spacing 1, batching 1).
  */
 
 const BASE_TS = '2027-05-01T12:00:00.000Z'
@@ -216,9 +217,10 @@ describe('keystone — the full loop climbs to the interior optimum and ratchets
   function runFullLoopWith(
     seedCadence: number,
     seedSpacing: number,
+    seedBatching = 0,
     overrides: { maxDryIterations?: number; maxIterations?: number } = {},
   ) {
-    const championStore = new ChampionStore(genome2(seedCadence, seedSpacing))
+    const championStore = new ChampionStore(genome2(seedCadence, seedSpacing, seedBatching))
     const registry = new GenomeRegistry()
     const ledger = new Ledger(
       new ManualClock(BASE_TS),
@@ -251,26 +253,28 @@ describe('keystone — the full loop climbs to the interior optimum and ratchets
       ledger,
       clock: new ManualClock(BASE_TS),
       ids: new SequentialIdGenerator('loopCtl'),
-      // >= boxSize so the final full sweep (all others rejected) does not trip maxDry before the
-      // proposer reports coverage-complete.
-      maxDryIterations: overrides.maxDryIterations ?? 20,
+      // >= boxSize (now 64, the 3-D cube) so the final full sweep (all others rejected) does not trip
+      // maxDry before the proposer reports coverage-complete.
+      maxDryIterations: overrides.maxDryIterations ?? 70,
       ...(overrides.maxIterations === undefined ? {} : { maxIterations: overrides.maxIterations }),
     })
     return { championStore, registry, ledger, summary, proposer }
   }
 
   /** Run to convergence with the default (loose) caps. */
-  function runFullLoop(seedCadence: number, seedSpacing = 0) {
-    return runFullLoopWith(seedCadence, seedSpacing)
+  function runFullLoop(seedCadence: number, seedSpacing = 0, seedBatching = 0) {
+    return runFullLoopWith(seedCadence, seedSpacing, seedBatching)
   }
 
-  it('climbs the 2-D box to the INTERIOR optimum (cadence 2, spacing 1) and ratchets the champion', () => {
-    const { championStore, ledger, summary, proposer } = runFullLoop(0, 0)
+  it('climbs the 3-D cube to the optimum (cadence 3, spacing 1, batching 1) and ratchets the champion', () => {
+    const { championStore, ledger, summary, proposer } = runFullLoop(0, 0, 0)
 
-    // The champion ratcheted to the North-Star-optimal box point (cadence 2, spacing 1) — a point that
-    // the old 1-D (spacing-pinned) search could never have reached.
-    expect(championStore.current().parameters.rsvp_reminder_cadence).toBe(2)
+    // The champion ratcheted to the North-Star-optimal CUBE point (cadence 3, spacing 1, batching 1) — a
+    // point the old 2-D (batching-pinned-0) search could never reach. The full-box sweep escapes the
+    // coordinate-descent trap at (2,1,0): reaching the optimum needs a simultaneous cadence+batching move.
+    expect(championStore.current().parameters.rsvp_reminder_cadence).toBe(3)
     expect(championStore.current().parameters.reminder_spacing).toBe(1)
+    expect(championStore.current().parameters.reminder_batching).toBe(1)
     expect(summary.accepted).toBeGreaterThanOrEqual(1)
     // It terminates with the CONVERGENCE CERTIFICATE: the box was exhausted against the standing
     // champion with nothing acceptable (not a maxDry stall, not a budget cap).
@@ -290,25 +294,26 @@ describe('keystone — the full loop climbs to the interior optimum and ratchets
     expect(promotedLineage.length).toBe(summary.accepted)
   })
 
-  it('converges to the SAME optimum from a different seed (champion-independent convergence)', () => {
-    const { championStore } = runFullLoop(3, 3) // start at the opposite corner
-    expect(championStore.current().parameters.rsvp_reminder_cadence).toBe(2)
+  it('converges to the SAME optimum from the opposite cube corner (champion-independent convergence)', () => {
+    const { championStore } = runFullLoop(3, 3, 3) // start at the opposite 3-D corner (cadence 3, spacing 3, batching 3)
+    expect(championStore.current().parameters.rsvp_reminder_cadence).toBe(3)
     expect(championStore.current().parameters.reminder_spacing).toBe(1)
+    expect(championStore.current().parameters.reminder_batching).toBe(1)
   })
 
   it('TAXONOMY: a tight maxDry STALLS (dry, no certificate); a loose maxDry CONVERGES (certificate)', () => {
     // The distinction Phase 2 could not make. Same landscape + seed; only maxDryIterations differs.
     // A tight budget trips on a run of non-accepts BEFORE the box is swept -> `dry` (stalled, NOT a
-    // certificate). A budget >= the box lets the proposer exhaust -> `converged` (the certificate).
-    const tight = runFullLoopWith(0, 0, { maxDryIterations: 2 })
+    // certificate). A budget >= the box (64) lets the proposer exhaust -> `converged` (the certificate).
+    const tight = runFullLoopWith(0, 0, 0, { maxDryIterations: 2 })
     expect(tight.summary.terminatedReason).toBe('dry')
 
-    const loose = runFullLoopWith(0, 0, { maxDryIterations: 20 })
+    const loose = runFullLoopWith(0, 0, 0, { maxDryIterations: 70 })
     expect(loose.summary.terminatedReason).toBe('converged')
   })
 
   it('BUDGET: a maxIterations cap below the search size stops with no certificate (budget_exhausted)', () => {
-    const capped = runFullLoopWith(0, 0, { maxDryIterations: 20, maxIterations: 3 })
+    const capped = runFullLoopWith(0, 0, 0, { maxDryIterations: 70, maxIterations: 3 })
     expect(capped.summary.terminatedReason).toBe('budget_exhausted')
   })
 })
@@ -391,7 +396,7 @@ describe('keystone — the generalization EARNS ITS KEEP (red on the old search,
       ledger,
       clock: new ManualClock(BASE_TS),
       ids: new SequentialIdGenerator('loopEK'),
-      maxDryIterations: 20,
+      maxDryIterations: 70, // >= the 3-D box (64) so a full sweep can complete
     })
     return { championStore, summary }
   }
@@ -406,7 +411,28 @@ describe('keystone — the generalization EARNS ITS KEEP (red on the old search,
     expect(championStore.current().parameters.reminder_spacing).toBe(0)
   })
 
-  it('the NEW 2-D search reaches the joint optimum (cadence 2, spacing 1) on the SAME landscape', () => {
+  it('the 2-D-BLIND search (batching pinned 0) STALLS at (cadence 2, spacing 1, batching 0) — misses the 3-D win', () => {
+    // The Phase-5 contrast: a SearchProposer restricted to batchingMin=batchingMax=0 is exactly the old
+    // 2-D search. It climbs to the b=0 optimum (cadence 2, spacing 1) but is STRUCTURALLY incapable of
+    // setting batching 1 — so it ends strictly below the true 3-D optimum (cadence 3, spacing 1, batching 1).
+    const { championStore } = loopWith(
+      (cs, reg) => new SearchProposer(new ManualClock(BASE_TS), new SequentialIdGenerator('blind'), cs, reg, {
+        target_capability: 'rsvp',
+        target_metric_code: 'rsvp_resolution_rate',
+        expected_direction: 'increase',
+        guards_to_watch: ['guest_sentiment_score'],
+        target_scenario_ids: ['golden_g', 'adv_a'],
+        change_type: 'flow',
+        batchingMin: 0,
+        batchingMax: 0,
+      }),
+    )
+    expect(championStore.current().parameters.rsvp_reminder_cadence).toBe(2)
+    expect(championStore.current().parameters.reminder_spacing).toBe(1)
+    expect(championStore.current().parameters.reminder_batching).toBe(0)
+  })
+
+  it('the NEW 3-D search reaches the cube optimum (cadence 3, spacing 1, batching 1) on the SAME landscape', () => {
     const { championStore } = loopWith(
       (cs, reg) => new SearchProposer(new ManualClock(BASE_TS), new SequentialIdGenerator('new'), cs, reg, {
         target_capability: 'rsvp',
@@ -417,8 +443,9 @@ describe('keystone — the generalization EARNS ITS KEEP (red on the old search,
         change_type: 'flow',
       }),
     )
-    expect(championStore.current().parameters.rsvp_reminder_cadence).toBe(2)
-    expect(championStore.current().parameters.reminder_spacing).toBe(1) // the interaction win the old search misses
+    expect(championStore.current().parameters.rsvp_reminder_cadence).toBe(3)
+    expect(championStore.current().parameters.reminder_spacing).toBe(1)
+    expect(championStore.current().parameters.reminder_batching).toBe(1) // the 3-D interaction win the 2-D search misses
   })
 
   it('SPREAD-FIRST coverage beats champion-local coverage UNDER A BUDGET (the only place order matters)', () => {
@@ -448,10 +475,10 @@ describe('keystone — the generalization EARNS ITS KEEP (red on the old search,
   })
 
   it('GUARD-ACTIVE: converged means "no ACCEPTABLE point", not global optimum — and it still terminates', () => {
-    // With guest_sentiment_score a HARD guard, the joint optimum (cadence 2, spacing 1) is unreachable
-    // from the seed: every resolution-raising move regresses sentiment vs the seed and is vetoed. The
-    // loop must still TERMINATE (bounded promotions), and the certificate (if it converges) is honest:
-    // the champion is the best ACCEPTABLE point, not the global North-Star argmax (which is guarded out).
+    // With guest_sentiment_score a HARD guard, the cube optimum (cadence 3, spacing 1, batching 1) is
+    // unreachable from the seed: every resolution-raising move regresses sentiment vs the seed and is
+    // vetoed. The loop must still TERMINATE (bounded promotions), and the certificate (if it converges) is
+    // honest: the champion is the best ACCEPTABLE point, not the global North-Star argmax (guarded out).
     const championStore = new ChampionStore(genome2(0, 0))
     const registry = new GenomeRegistry()
     const ledger = new Ledger(new ManualClock(BASE_TS), new SequentialIdGenerator('ledgerG'), new HmacTransitionSigner('phase3-key'))
@@ -475,13 +502,13 @@ describe('keystone — the generalization EARNS ITS KEEP (red on the old search,
       ledger,
       clock: new ManualClock(BASE_TS),
       ids: new SequentialIdGenerator('loopG'),
-      maxDryIterations: 20,
+      maxDryIterations: 70,
     })
     // It terminates (the bounded-promotions guarantee holds even with a binding guard)...
     expect(['converged', 'dry']).toContain(summary.terminatedReason)
     expect(summary.accepted).toBeLessThanOrEqual(proposer.boxSize)
-    // ...and the champion is NOT the global North-Star optimum (cadence 2, spacing 1) — it was vetoed.
+    // ...and the champion is NOT the global North-Star optimum (cadence 3, spacing 1, batching 1) — it was vetoed.
     const ended = championStore.current().parameters
-    expect(ended.rsvp_reminder_cadence === 2 && ended.reminder_spacing === 1).toBe(false)
+    expect(ended.rsvp_reminder_cadence === 3 && ended.reminder_spacing === 1 && ended.reminder_batching === 1).toBe(false)
   })
 })

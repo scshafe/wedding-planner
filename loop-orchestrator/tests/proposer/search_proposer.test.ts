@@ -17,10 +17,10 @@ import {
 import { describe, expect, it } from 'vitest'
 
 /**
- * Phase 3: the 2-D SearchProposer (search CONTRACT properties, not brittle exact outputs) + the
- * risk-tier reconciliation gate. The proposer enumerates the full (cadence × spacing) box in a fixed
- * champion-independent spread-first order, with a trajectory-relative tabu that re-opens points once
- * the champion ratchets.
+ * Phase 5: the 3-D SearchProposer (search CONTRACT properties, not brittle exact outputs) + the
+ * risk-tier reconciliation gate. The proposer enumerates the full (cadence × spacing × batching) box in
+ * a fixed champion-independent spread-first order, with a trajectory-relative tabu that re-opens points
+ * once the champion ratchets. All three knobs are tier-1 flow; the box never carries autonomy_threshold.
  */
 
 const SPEC: SearchProposerSpec = {
@@ -32,7 +32,7 @@ const SPEC: SearchProposerSpec = {
   change_type: 'flow',
 }
 
-const BOX_SIZE = 16 // default 4×4 (cadence 0..3 × spacing 0..3)
+const BOX_SIZE = 64 // default 4×4×4 (cadence 0..3 × spacing 0..3 × batching 0..3)
 
 function genome(cadence: number, spacing = 0, genome_id = `g_${cadence}_${spacing}`): StrategyGenome {
   return { genome_id, parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: spacing, reminder_batching: 0 } }
@@ -106,8 +106,8 @@ describe('SearchProposer — emits valid, content-addressed, honestly-tiered can
   })
 })
 
-describe('SearchProposer — 2-D box search contract', () => {
-  it('exposes the box size (default 4×4 = 16 points)', () => {
+describe('SearchProposer — 3-D box search contract', () => {
+  it('exposes the box size (default 4×4×4 = 64 points)', () => {
     expect(makeProposer().proposer.boxSize).toBe(BOX_SIZE)
   })
 
