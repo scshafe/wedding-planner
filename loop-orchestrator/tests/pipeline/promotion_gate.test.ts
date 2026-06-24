@@ -7,14 +7,18 @@ import {
   type StrategyGenome,
 } from '@wedding-planner/shared'
 import {
+  ApprovalStore,
   ChampionStore,
   GenomeRegistry,
   HmacTransitionSigner,
+  landingKeyFor,
   Ledger,
   MAX_AUTONOMOUS_PROMOTION_TIER,
   runPromotionGate,
 } from '@wedding-planner/loop-orchestrator'
 import { describe, expect, it } from 'vitest'
+
+import { humanApproval } from '../fixtures/oversight_fixtures'
 
 /**
  * Phase 4a Step 2: the promotion gate's tier branch. An accepted candidate (already at offline_passed)
@@ -141,5 +145,94 @@ describe('promotion gate — tier branch (Phase 4a Step 2)', () => {
 
   it('the autonomous-authority ceiling is tier 1', () => {
     expect(MAX_AUTONOMOUS_PROMOTION_TIER).toBe(1)
+  })
+})
+
+describe('promotion gate — the exogenous human approval (Phase 4a Step 3)', () => {
+  it('PROMOTES a tier-2 candidate with a matching approved approval: human_review -> promoted (by human)', () => {
+    const { registry, championStore, ledger } = harness()
+    const genome = tier2Genome(1)
+    registry.register(genome)
+    const candidate = candidateFor(genome, 2)
+    seedAcceptedEntry(ledger, candidate)
+    // The approval binds (this genome, the CURRENT champion = SEED).
+    const key = landingKeyFor(genome, SEED)
+    const approvals = new ApprovalStore([humanApproval(key, true)])
+
+    const outcome = runPromotionGate({ candidate, registry, championStore, ledger, approvals })
+
+    expect(outcome).toBe('promoted')
+    expect(championStore.current()).toBe(genome) // the champion ratcheted to the approved tier-2 genome
+    const states = ledger.getEntry(candidate.candidate_id)?.state_transitions
+    expect(states?.map((t) => t.to_state)).toEqual(['offline_passed', 'human_review', 'promoted'])
+    expect(states?.at(-1)?.decided_by).toBe('human')
+    expect(ledger.getEntry(candidate.candidate_id)?.final_disposition).toBe('promoted')
+  })
+
+  it('REJECTS a tier-2 candidate with a matching approved:false approval: human_review -> human_rejected', () => {
+    const { registry, championStore, ledger } = harness()
+    const genome = tier2Genome(1)
+    registry.register(genome)
+    const candidate = candidateFor(genome, 2)
+    seedAcceptedEntry(ledger, candidate)
+    const key = landingKeyFor(genome, SEED)
+    const approvals = new ApprovalStore([humanApproval(key, false)])
+
+    const outcome = runPromotionGate({ candidate, registry, championStore, ledger, approvals })
+
+    expect(outcome).toBe('human_rejected')
+    expect(championStore.current()).toBe(SEED) // not landed
+    const states = ledger.getEntry(candidate.candidate_id)?.state_transitions.map((t) => t.to_state)
+    expect(states).toEqual(['offline_passed', 'human_review', 'human_rejected'])
+    expect(ledger.getEntry(candidate.candidate_id)?.final_disposition).toBe('rejected_human')
+  })
+
+  it('PARKS when the approval is bound to a DIFFERENT champion (a stale, pre-ratchet approval)', () => {
+    const { registry, championStore, ledger } = harness()
+    const genome = tier2Genome(1)
+    registry.register(genome)
+    const candidate = candidateFor(genome, 2)
+    seedAcceptedEntry(ledger, candidate)
+    // Approval was minted against a DIFFERENT champion than the current SEED — its key won't match.
+    const staleChampion: StrategyGenome = { genome_id: 'other', parameters: { rsvp_reminder_cadence: 3, reminder_spacing: 3 } }
+    const approvals = new ApprovalStore([humanApproval(landingKeyFor(genome, staleChampion), true)])
+
+    const outcome = runPromotionGate({ candidate, registry, championStore, ledger, approvals })
+
+    expect(outcome).toBe('parked')
+    expect(championStore.current()).toBe(SEED)
+  })
+
+  it('PARKS when the approval is bound to a DIFFERENT genome', () => {
+    const { registry, championStore, ledger } = harness()
+    const genome = tier2Genome(1)
+    registry.register(genome)
+    const candidate = candidateFor(genome, 2)
+    seedAcceptedEntry(ledger, candidate)
+    // Approval is for a different tier-2 genome (autonomy 2), not the candidate's (autonomy 1).
+    const approvals = new ApprovalStore([humanApproval(landingKeyFor(tier2Genome(2), SEED), true)])
+
+    expect(runPromotionGate({ candidate, registry, championStore, ledger, approvals })).toBe('parked')
+    expect(championStore.current()).toBe(SEED)
+  })
+
+  it('one approval is one-shot: it cannot promote a second candidate sharing the same (genome, champion)', () => {
+    const { registry, championStore, ledger } = harness()
+    const genome = tier2Genome(1)
+    registry.register(genome)
+    const key = landingKeyFor(genome, SEED)
+    const approvals = new ApprovalStore([humanApproval(key, true)])
+
+    // First candidate against SEED: promotes (and the champion becomes `genome`).
+    const first = candidateFor(genome, 2)
+    seedAcceptedEntry(ledger, first)
+    expect(runPromotionGate({ candidate: first, registry, championStore, ledger, approvals })).toBe('promoted')
+
+    // A second candidate carrying the SAME genome — re-seat the champion to SEED to reconstruct the same
+    // landing key — must NOT re-spend the approval.
+    championStore.promote(SEED)
+    const second: CandidateChange = { ...candidateFor(genome, 2), candidate_id: 'cand_second' }
+    seedAcceptedEntry(ledger, second)
+    expect(runPromotionGate({ candidate: second, registry, championStore, ledger, approvals })).toBe('parked')
   })
 })

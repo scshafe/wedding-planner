@@ -4,13 +4,14 @@ import {
   scoreCandidateOffline,
   type ScenarioDefinition,
 } from '@wedding-planner/eval-harness'
-import { ManualClock, SequentialIdGenerator } from '@wedding-planner/shared'
+import { ManualClock, type OversightRecord, SequentialIdGenerator } from '@wedding-planner/shared'
 import { type MetricEngine } from '@wedding-planner/telemetry'
 
 import { type ChampionStore } from '../genome/champion_store'
 import { type GenomeRegistry } from '../genome/genome_registry'
 import { type Ledger } from '../ledger/ledger'
 import { LoopOrchestratorError } from '../loop_orchestrator_error'
+import { ApprovalStore } from '../pipeline/landing_approval'
 import { runPromotionGate } from '../pipeline/promotion_gate'
 import { reconcileCandidateRiskTier } from '../pipeline/risk_tier_reconciliation'
 import { type Proposer } from '../proposer/proposer'
@@ -43,9 +44,18 @@ export interface GenomeOfflineLoopConfig {
   readonly ids: SequentialIdGenerator
   readonly maxDryIterations: number
   readonly maxIterations?: number
+  /**
+   * Exogenous human approvals for tier-2 landings (Phase 4a). Read-only input: the loop NEVER mints an
+   * approval. Omitted (the autonomous default) => the approval store is empty => every accepted tier-2
+   * candidate parks. Supply approvals only from a channel outside the loop (a human, a future gate).
+   */
+  readonly approvals?: readonly OversightRecord[]
 }
 
 export function runGenomeOfflineLoop(config: GenomeOfflineLoopConfig): OfflineLoopSummary {
+  // Build the read-only approval channel ONCE so markSpent (one-shot) persists across iterations. The
+  // loop constructs only a *reader* over injected records — it has no method that authors an approval.
+  const approvals = new ApprovalStore(config.approvals)
   return runOfflineLoop({
     proposer: config.proposer,
     ledger: config.ledger,
@@ -98,6 +108,7 @@ export function runGenomeOfflineLoop(config: GenomeOfflineLoopConfig): OfflineLo
         registry: config.registry,
         championStore: config.championStore,
         ledger: config.ledger,
+        approvals,
       }),
   })
 }

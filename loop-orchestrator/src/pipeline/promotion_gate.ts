@@ -6,6 +6,7 @@ import { type Ledger } from '../ledger/ledger'
 import { type PromotionOutcome } from '../loop/offline_loop'
 import { type DecidedBy, DECIDED_BY, FINAL_DISPOSITIONS, STAGES } from '../loop_orchestrator_constants'
 import { LoopOrchestratorError } from '../loop_orchestrator_error'
+import { type ApprovalStore, type MatchedApproval, landingKeyFor } from './landing_approval'
 
 /**
  * @canonical promotion_gate -- the post-accept tier gate that decides whether an accepted candidate
@@ -47,6 +48,11 @@ export interface PromotionGateConfig {
   readonly registry: GenomeRegistry
   readonly championStore: ChampionStore
   readonly ledger: Ledger
+  /**
+   * The exogenous human-approval channel (Phase 4a Step 3). Read-only: the gate consumes approvals it
+   * never authored. Absent (the autonomous default), every tier-2 candidate parks — the safe outcome.
+   */
+  readonly approvals?: ApprovalStore
 }
 
 /**
@@ -86,8 +92,29 @@ export function runPromotionGate(config: PromotionGateConfig): PromotionOutcome 
     evidence_ref: candidate.change.artifact_ref,
   })
 
-  // Phase 4a Step 3 inserts the exogenous-approval lookup here. With no approval, the candidate PARKS.
-  return parkCandidate(config, derivedTier)
+  // Re-derive the landing key from the CURRENT champion + the content-addressed genome, and look for an
+  // exogenous approval bound to exactly that (genome, champion) landing. No approval (the autonomous
+  // default, and also a stale approval after the champion ratcheted) => PARK.
+  const landingKey = landingKeyFor(genome, config.championStore.current())
+  const approval = config.approvals?.find(landingKey)
+  if (approval === undefined) {
+    return parkCandidate(config, derivedTier)
+  }
+
+  // One approval authorizes one landing: spend it whether it approves or rejects, so it cannot be
+  // re-used for another candidate sharing this exact (genome, champion) landing.
+  config.approvals?.markSpent(landingKey)
+
+  if (approval.humanGate.approved) {
+    return landPromotion(config, genome, {
+      fromState: STAGES.human_review,
+      decidedBy: DECIDED_BY.human,
+      rationale:
+        `human approval ${approval.reviewId} (${approval.humanGate.approver_role}) cleared the ` +
+        `tier-${derivedTier} landing`,
+    })
+  }
+  return rejectAtHumanGate(config, approval, derivedTier)
 }
 
 /** Land an accepted candidate: ratchet the champion + ledger the promotion + record lineage. */
@@ -111,6 +138,27 @@ function landPromotion(
   // lessons, so an accepted entry's lineage never pollutes the proposer's context).
   ledger.addLesson(candidate.candidate_id, `champion_lineage: ${candidate.change.artifact_ref}`)
   return 'promoted'
+}
+
+/** A present human rejection (`approved:false`): terminal `human_rejected`, NOT parked-for-retry. */
+function rejectAtHumanGate(
+  config: PromotionGateConfig,
+  approval: MatchedApproval,
+  derivedTier: number,
+): 'human_rejected' {
+  const { candidate, ledger } = config
+  ledger.append({
+    candidate_id: candidate.candidate_id,
+    from_state: STAGES.human_review,
+    to_state: STAGES.human_rejected,
+    decided_by: DECIDED_BY.human,
+    rationale:
+      `human approval ${approval.reviewId} (${approval.humanGate.approver_role}) REJECTED the ` +
+      `tier-${derivedTier} landing`,
+    evidence_ref: candidate.change.artifact_ref,
+  })
+  ledger.setFinalDisposition(candidate.candidate_id, FINAL_DISPOSITIONS.rejected_human)
+  return 'human_rejected'
 }
 
 /** Withhold a tier-2+ candidate pending oversight: ledger the park, do NOT ratchet the champion. */

@@ -79,6 +79,12 @@ export {
   MAX_AUTONOMOUS_PROMOTION_TIER,
 } from './pipeline/promotion_gate'
 export {
+  ApprovalStore,
+  landingKeyFor,
+  type LandingHumanGate,
+  type MatchedApproval,
+} from './pipeline/landing_approval'
+export {
   runGenomeOfflineLoop,
   type GenomeOfflineLoopConfig,
 } from './loop/genome_offline_loop'
