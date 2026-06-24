@@ -127,7 +127,7 @@ so a baseline that also failed integrity could not let a forge through.
     unaffected. Tests: Stage B authors the right trusted resolutions/costs for fixtures; honest Stage A's
     reminder-resolution claims MATCH Stage B's trusted resolved set (the agreement the Step-3 gate needs).
 
-- [ ] **Step 3 — the integrity gate gains the RSVP-outcome + couple-cost effect-kinds; firewall lands
+- [x] **Step 3 — the integrity gate gains the RSVP-outcome + couple-cost effect-kinds; firewall lands
     BEFORE the escalation behavior (D3, D4, D6, D7).**
   - `report_event_names.ts`: add `RSVP_RECEIVED_REPORT_EVENT_NAMES = { guest_rsvp_received }` and
     `COUPLE_SESSION_REPORT_EVENT_NAMES = { couple_session_ended }` (the reader-seam single definitions).

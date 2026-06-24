@@ -24,3 +24,24 @@ export const COMMITMENT_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
 export const INTEGRATION_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
   EVENT_NAMES.integration_action_result,
 ])
+
+/**
+ * PHASE 4b. The product reports an RSVP RESOLUTION via `guest.rsvp.received` — the claim the
+ * `rsvp_resolution_rate` numerator counts. The integrity gate reconciles every such claim (by
+ * guest_id) against the trusted RSVP-outcome record, so a forged resolution (reminder- OR couple-
+ * attributed) cannot inflate the numerator unchecked. Resolution is ONE concept; the cause-label is
+ * never a reconciliation seam (doddy P0-1).
+ */
+export const RSVP_RECEIVED_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
+  EVENT_NAMES.guest_rsvp_received,
+])
+
+/**
+ * PHASE 4b. The product reports a couple-attention session (the escalate-to-couple COST) via
+ * `couple.session.ended` — the claim the `couple_active_minutes_total → effort_cost` denominator sums.
+ * The integrity gate reconciles each (by the escalated guest_id it carries) against the trusted
+ * couple-session record, field-diffing `active_seconds` so partial under-reporting is a veto.
+ */
+export const COUPLE_SESSION_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
+  EVENT_NAMES.couple_session_ended,
+])

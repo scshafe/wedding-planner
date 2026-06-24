@@ -6,7 +6,12 @@ import {
 } from '../trusted_recorder/trusted_outcomes'
 import { type TrustedRecorder } from '../trusted_recorder/trusted_recorder'
 import { GATE_CODES, type GateResult } from './gate_types'
-import { COMMITMENT_REPORT_EVENT_NAMES, INTEGRATION_REPORT_EVENT_NAMES } from './report_event_names'
+import {
+  COMMITMENT_REPORT_EVENT_NAMES,
+  COUPLE_SESSION_REPORT_EVENT_NAMES,
+  INTEGRATION_REPORT_EVENT_NAMES,
+  RSVP_RECEIVED_REPORT_EVENT_NAMES,
+} from './report_event_names'
 
 /**
  * INTEGRITY.SELF_REPORT_DIVERGENCE — the gate that makes the firewall cover the gates' INPUTS.
@@ -33,7 +38,7 @@ import { COMMITMENT_REPORT_EVENT_NAMES, INTEGRATION_REPORT_EVENT_NAMES } from '.
 
 export interface SelfReportDivergence {
   readonly kind: 'forged_effect' | 'field_mismatch' | 'suppressed_effect'
-  readonly effect_kind: 'commitment' | 'integration'
+  readonly effect_kind: 'commitment' | 'integration' | 'rsvp_resolution' | 'couple_session'
   readonly effect_id: string
   readonly field: string | null
   readonly claimed: unknown
@@ -236,6 +241,155 @@ function detectIntegrationDivergences(
 }
 
 /**
+ * PHASE 4b — reconcile the product's claimed RSVP RESOLUTIONS against the trusted RSVP-outcome record.
+ * Every `guest.rsvp.received` is a claim that guest responded; the scorer counts it in the
+ * `rsvp_resolution_rate` numerator over the CLAIMED stream. The trusted record (Stage B) says which
+ * guests ACTUALLY resolved. Keyed on guest_id REGARDLESS of cause (reminder/couple) — resolution is one
+ * concept, so a forge cannot hide behind a "reminder-resolved" label. forged: a claimed resolution the
+ * trusted record never observed; field_mismatch: a wrong rsvp_status; suppressed: a trusted resolution
+ * the product never reported.
+ */
+function detectRsvpOutcomeDivergences(
+  productEvents: readonly EventEnvelope[],
+  recorder: TrustedRecorder,
+): SelfReportDivergence[] {
+  const divergences: SelfReportDivergence[] = []
+  const claimedGuestIds = new Set<string>()
+
+  for (const event of productEvents.filter((e) => RSVP_RECEIVED_REPORT_EVENT_NAMES.has(e.event_name))) {
+    const payload = asRecord(event)
+    const guestId = readString(payload, 'guest_id')
+    if (guestId === null) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'rsvp_resolution',
+        effect_id: event.event_id,
+        field: 'guest_id',
+        claimed: null,
+        trusted: null,
+        detail: 'product reported an RSVP resolution with no guest_id',
+      })
+      continue
+    }
+    claimedGuestIds.add(guestId)
+    const trusted = recorder.rsvpOutcome(guestId)
+    if (trusted === undefined) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'rsvp_resolution',
+        effect_id: guestId,
+        field: null,
+        claimed: 'resolved',
+        trusted: 'no resolution observed for this guest',
+        detail: `product reports guest ${guestId} resolved, but the trusted record observed no resolution`,
+      })
+      continue
+    }
+    divergences.push(
+      ...fieldDivergences('rsvp_resolution', guestId, [
+        {
+          field: 'rsvp_status',
+          claimed: readString(payload, 'rsvp_status'),
+          trusted: trusted.rsvp_status,
+          skipWhenClaimAbsent: false,
+        },
+      ]),
+    )
+  }
+
+  for (const trusted of recorder.allRsvpOutcomes()) {
+    if (!claimedGuestIds.has(trusted.guest_id)) {
+      divergences.push({
+        kind: 'suppressed_effect',
+        effect_kind: 'rsvp_resolution',
+        effect_id: trusted.guest_id,
+        field: null,
+        claimed: 'no event emitted',
+        trusted: `guest resolved ${trusted.rsvp_status} (${trusted.resolved_via})`,
+        detail: `trusted record observed guest ${trusted.guest_id} resolved, but the product emitted no rsvp.received`,
+      })
+    }
+  }
+
+  return divergences
+}
+
+/**
+ * PHASE 4b — reconcile the product's claimed couple-attention sessions (the escalate-to-couple COST)
+ * against the trusted couple-session record. Each `couple.session.ended` carries the escalated guest it
+ * was about (`about_guest_id`, the harness-derivable join key). The scorer sums claimed `active_seconds`
+ * into the `couple_active_minutes_total → effort_cost` denominator — so PARTIAL under-reporting (a
+ * present session with shaved active_seconds) is the real attack, defeated by the field-level diff with
+ * `skipWhenClaimAbsent:false` (an absent/non-numeric active_seconds against a positive trusted cost is a
+ * mismatch, not a skip). forged: a claimed session the trusted record never observed; suppressed: a
+ * trusted session the product never reported.
+ */
+function detectCoupleSessionDivergences(
+  productEvents: readonly EventEnvelope[],
+  recorder: TrustedRecorder,
+): SelfReportDivergence[] {
+  const divergences: SelfReportDivergence[] = []
+  const claimedGuestIds = new Set<string>()
+
+  for (const event of productEvents.filter((e) => COUPLE_SESSION_REPORT_EVENT_NAMES.has(e.event_name))) {
+    const payload = asRecord(event)
+    const guestId = readString(payload, 'about_guest_id')
+    if (guestId === null) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'couple_session',
+        effect_id: event.event_id,
+        field: 'about_guest_id',
+        claimed: null,
+        trusted: null,
+        detail: 'product reported a couple session with no about_guest_id (no trusted join key)',
+      })
+      continue
+    }
+    claimedGuestIds.add(guestId)
+    const trusted = recorder.coupleSession(guestId)
+    if (trusted === undefined) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'couple_session',
+        effect_id: guestId,
+        field: null,
+        claimed: 'couple attention spent',
+        trusted: 'no couple session observed for this guest',
+        detail: `product reports a couple session for guest ${guestId}, but the trusted record observed none`,
+      })
+      continue
+    }
+    divergences.push(
+      ...fieldDivergences('couple_session', guestId, [
+        {
+          field: 'active_seconds',
+          claimed: readNumber(payload, 'active_seconds'),
+          trusted: trusted.active_seconds,
+          skipWhenClaimAbsent: false,
+        },
+      ]),
+    )
+  }
+
+  for (const trusted of recorder.allCoupleSessions()) {
+    if (!claimedGuestIds.has(trusted.guest_id)) {
+      divergences.push({
+        kind: 'suppressed_effect',
+        effect_kind: 'couple_session',
+        effect_id: trusted.guest_id,
+        field: null,
+        claimed: 'no event emitted',
+        trusted: `couple spent ${trusted.active_seconds}s on this escalation`,
+        detail: `trusted record observed a couple session for guest ${trusted.guest_id}, but the product emitted no couple.session.ended`,
+      })
+    }
+  }
+
+  return divergences
+}
+
+/**
  * Find every divergence between the product's self-reported events and the trusted record.
  * Pure function of (product events, trusted recorder).
  */
@@ -246,6 +400,8 @@ export function detectSelfReportDivergence(
   return [
     ...detectCommitmentDivergences(productEvents, recorder),
     ...detectIntegrationDivergences(productEvents, recorder),
+    ...detectRsvpOutcomeDivergences(productEvents, recorder),
+    ...detectCoupleSessionDivergences(productEvents, recorder),
   ]
 }
 

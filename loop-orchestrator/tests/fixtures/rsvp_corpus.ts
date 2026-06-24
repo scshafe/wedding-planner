@@ -56,10 +56,17 @@ export function makeRsvpRunner(improve: boolean): ProductRunner {
     for (const guest of ['g1', 'g2', 'g3']) {
       emit(EVENT_NAMES.guest_rsvp_requested, { guest_id: guest }, guest)
     }
-    emit(EVENT_NAMES.guest_rsvp_received, { guest_id: 'g1', rsvp_status: 'yes' }, 'g1')
-    emit(EVENT_NAMES.guest_rsvp_received, { guest_id: 'g2', rsvp_status: 'no' }, 'g2')
+    // Phase 4b: an HONEST product authors a trusted RSVP outcome for every resolution it claims (the
+    // integrity gate now reconciles guest.rsvp.received against the trusted record). A claim with no
+    // matching outcome here would be a forged_effect veto — which is exactly the firewall working.
+    const resolve = (guestId: string, status: 'yes' | 'no'): void => {
+      recorder.recordRsvpOutcome({ guest_id: guestId, rsvp_status: status, resolved_via: 'reminder' })
+      emit(EVENT_NAMES.guest_rsvp_received, { guest_id: guestId, rsvp_status: status }, guestId)
+    }
+    resolve('g1', 'yes')
+    resolve('g2', 'no')
     if (improve && variant === 'candidate') {
-      emit(EVENT_NAMES.guest_rsvp_received, { guest_id: 'g3', rsvp_status: 'yes' }, 'g3')
+      resolve('g3', 'yes')
     }
     return { recorder, productEvents: events }
   }
