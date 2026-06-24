@@ -31,13 +31,21 @@ function readParametersSchema(): { additionalProperties: unknown; properties: Re
 }
 
 describe('deriveRiskTier — derive from the genome, fail closed', () => {
-  it('maps a known parameter to its surface tier (rsvp_reminder_cadence -> planning flow -> tier 1)', () => {
-    const derived = deriveRiskTier(genome({ rsvp_reminder_cadence: 2 }))
+  it('derives the genome tier as the MAX over its parameters surfaces (both flow knobs -> tier 1)', () => {
+    const derived = deriveRiskTier(genome({ rsvp_reminder_cadence: 2, reminder_spacing: 1 }))
     expect(derived.tier).toBe(1)
     expect(derived.touchedSurfaces).toContain('planning_flow_orchestration')
+    // perParameter is sorted by parameter name (a stable audit artifact, insertion-order-independent).
     expect(derived.perParameter).toEqual([
+      { parameter: 'reminder_spacing', surface: 'planning_flow_orchestration', tierFloor: 1 },
       { parameter: 'rsvp_reminder_cadence', surface: 'planning_flow_orchestration', tierFloor: 1 },
     ])
+  })
+
+  it('perParameter ordering is insertion-order-independent (stable ledger artifact)', () => {
+    const a = deriveRiskTier(genome({ rsvp_reminder_cadence: 2, reminder_spacing: 1 }))
+    const b = deriveRiskTier(genome({ reminder_spacing: 1, rsvp_reminder_cadence: 2 } as never))
+    expect(a.perParameter).toEqual(b.perParameter)
   })
 
   it('takes the MAX over touched surfaces (touching anything higher pulls the whole genome up)', () => {
@@ -51,8 +59,8 @@ describe('deriveRiskTier — derive from the genome, fail closed', () => {
   })
 
   it('validates the genome first (the weld): an invalid genome throws before any tier is returned', () => {
-    expect(() => deriveRiskTier(genome({ rsvp_reminder_cadence: 99 }))).toThrow()
-    expect(() => deriveRiskTier({ genome_id: 'g', parameters: { rsvp_reminder_cadence: 1, x: 2 } } as never)).toThrow()
+    expect(() => deriveRiskTier(genome({ rsvp_reminder_cadence: 99, reminder_spacing: 0 }))).toThrow()
+    expect(() => deriveRiskTier({ genome_id: 'g', parameters: { rsvp_reminder_cadence: 1, reminder_spacing: 0, x: 2 } } as never)).toThrow()
   })
 })
 

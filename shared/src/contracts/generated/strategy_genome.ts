@@ -13,12 +13,16 @@ export interface StrategyGenome {
  */
 genome_id: string
 /**
- * The behavioral knobs the planner simulator reads. CLOSED set: every parameter must appear in the genome->surface map (shared deriveRiskTier) or risk derivation fails closed. The canonical hash is computed over THIS object only.
+ * The behavioral knobs the planner simulator reads. CLOSED set: every parameter must appear in the genome->surface map (shared deriveRiskTier) or risk derivation fails closed. The canonical hash is computed over THIS object only. Every parameter is REQUIRED (no optional/default-as-no-op knobs): an absent-vs-disabled alias would let one behavior carry two content-addresses and defeat the dedupe key, so a new knob re-baselines every genome hash by design.
  */
 parameters: {
 /**
  * Number of RSVP reminder nudges the planner sends a still-pending guest before the rsvp_window closes. Higher resolves more RSVPs (moves rsvp_resolution_rate up) but past a comfort threshold reads as nagging and depresses guest_sentiment_score (its paired guard). A bounded, non-binding cadence/flow knob: touches no spend/booking/PII/autonomy surface. Its AUTHORITATIVE risk tier is derived from the genome->surface map (shared deriveRiskTier), NOT restated here — this schema does not assert a tier it cannot enforce.
  */
 rsvp_reminder_cadence: number
+/**
+ * How spread out the reminder nudges are in the rsvp_window (0 = tightly packed, 3 = very spread). More spacing makes each nudge gentler (a smaller guest_sentiment_score hit per nag) but fits FEWER nudges in the fixed window (delivered = min(cadence, capacity(spacing))), so it trades reminder reach for guest comfort. The TEMPORAL analogue of rsvp_reminder_cadence: a bounded flow/timing knob (WHEN nudges land, not WHAT they say), touching no comms-content, spend, booking, PII, or autonomy surface — so it derives to the SAME planning_flow_orchestration surface (tier 1). It manufactures no outcome: a guest still resolves only if its ground-truth need is met, so it adds no self-report-divergence surface.
+ */
+reminder_spacing: number
 }
 }

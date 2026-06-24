@@ -28,9 +28,9 @@ export function makeGuest(personaId: string, latency: Latency, willAttend: WillA
   }
 }
 
-/** A genome at a given rsvp_reminder_cadence. */
-export function makeGenome(cadence: number, genomeId = `g_cadence_${cadence}`): StrategyGenome {
-  return { genome_id: genomeId, parameters: { rsvp_reminder_cadence: cadence } }
+/** A genome at a given (rsvp_reminder_cadence, reminder_spacing). Spacing defaults to 0 (tightly packed). */
+export function makeGenome(cadence: number, spacing = 0, genomeId = `g_c${cadence}_s${spacing}`): StrategyGenome {
+  return { genome_id: genomeId, parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: spacing } }
 }
 
 /** The content-addressed artifact_ref a candidate carrying this genome must commit to. */

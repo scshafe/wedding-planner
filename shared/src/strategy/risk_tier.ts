@@ -66,6 +66,15 @@ export const GENOME_PARAMETER_SURFACES: Readonly<Record<string, SensitivitySurfa
   // (e.g. a wide-range followup_interval): high-volume unsolicited guest contact is a guest-comms
   // surface (tier 2), even though it looks like "cadence". Bounded reminder cadence != outreach volume.
   rsvp_reminder_cadence: 'planning_flow_orchestration',
+  // reminder_spacing is the TEMPORAL twin of cadence: it sets WHEN nudges land (how spread out), not
+  // WHAT they say. Timing/spacing is flow orchestration, not comms *content* and not segmentation, and
+  // it is BOUNDED (0..3) — so it sits at the SAME planning-flow surface (tier 1) as cadence. Same
+  // PRECEDENT GUARD applies (Phase-2 doddy review): this holds only because the knob is bounded and
+  // outcome-neutral (it manufactures no resolution — see stage_a_planner). It must NOT auto-launder a
+  // future knob that changes comms CONTENT/tone (guest_comms_content, tier 2) or that lets the AI
+  // decide to consume couple time / take an action (commitment_autonomy, tier 2) just because it,
+  // too, looks like "a small bounded scheduling number". See memory: second-genome-knob-must-stay-tier1.
+  reminder_spacing: 'planning_flow_orchestration',
   // Reserved for later phases (decide the tier before the knob exists):
   //   autonomy_threshold / auto_commit_scope -> 'commitment_autonomy' (tier 2)
   //   any spend-authorization knob            -> 'spend_authorization_model' (tier 3, prohibited)
@@ -116,10 +125,15 @@ export function deriveRiskTier(genome: StrategyGenome): GenomeRiskDerivation {
     throw new UnmappedGenomeParameterError(unmapped)
   }
 
-  const perParameter: ParameterSurface[] = parameterKeys.map((parameter) => {
-    const surface = GENOME_PARAMETER_SURFACES[parameter] as SensitivitySurface
-    return { parameter, surface, tierFloor: SURFACE_TIER_FLOOR[surface] }
-  })
+  // Sort by parameter name so the derivation/ledger artifact is stable regardless of the genome's
+  // property insertion order (the content hash is already order-independent; this keeps the AUDIT
+  // packet order-independent too, so two behavior-equal genomes produce byte-identical attribution).
+  const perParameter: ParameterSurface[] = [...parameterKeys]
+    .sort()
+    .map((parameter) => {
+      const surface = GENOME_PARAMETER_SURFACES[parameter] as SensitivitySurface
+      return { parameter, surface, tierFloor: SURFACE_TIER_FLOOR[surface] }
+    })
 
   const tier = perParameter.reduce<0 | 1 | 2 | 3>(
     (max, entry) => (entry.tierFloor > max ? entry.tierFloor : max),

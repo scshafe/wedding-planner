@@ -67,7 +67,7 @@ so requiring it does NOT inflate any genome's tier. Cost: re-baseline fixtures/s
 
 ## Steps (each: `npm run build && npm test && npm run lint` green before ticking + committing)
 
-- [ ] **Step 1 — the 2nd genome parameter + stable derivation.**
+- [x] **Step 1 — the 2nd genome parameter + stable derivation.**
   - `strategy_genome_schema.json`: add `reminder_spacing` (integer 0..3) to the **required** closed
     `parameters` set, with a description that pins it as a bounded flow/timing knob.
   - `risk_tier.ts`: add `reminder_spacing: 'planning_flow_orchestration'` to `GENOME_PARAMETER_SURFACES`

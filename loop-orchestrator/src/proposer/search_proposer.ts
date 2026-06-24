@@ -151,8 +151,15 @@ export class SearchProposer implements Proposer {
     return [...new Set(ordered)]
   }
 
-  /** A genome at a cadence, with a deterministic id (id is inert to the content hash). */
+  /**
+   * A genome at a cadence, with a deterministic id (id is inert to the content hash). STOPGAP: this
+   * 1-D proposer pins reminder_spacing at 0; Phase-3 Step-4 replaces this whole class with the 2-D
+   * box search that perturbs the champion's FULL parameter set.
+   */
   private genomeFor(cadence: number): StrategyGenome {
-    return { genome_id: `g_search_cadence_${cadence}`, parameters: { rsvp_reminder_cadence: cadence } }
+    return {
+      genome_id: `g_search_cadence_${cadence}`,
+      parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: 0 },
+    }
   }
 }

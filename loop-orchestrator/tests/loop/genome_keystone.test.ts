@@ -93,7 +93,7 @@ const CORPUS: readonly ScenarioDefinition[] = [
 ]
 
 function genome(cadence: number, genome_id = `g_${cadence}`): StrategyGenome {
-  return { genome_id, parameters: { rsvp_reminder_cadence: cadence } }
+  return { genome_id, parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: 0 } }
 }
 
 function scoreChallenger(championCadence: number, candidateCadence: number, guardCodes: string[] = []) {

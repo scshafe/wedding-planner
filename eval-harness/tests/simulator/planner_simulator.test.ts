@@ -110,7 +110,7 @@ describe('planner simulator — content-address enforcement (validate -> verify-
     const candidateGenome = makeGenome(1)
     expect(() =>
       makePlannerSimulator({
-        championGenome: { genome_id: 'bad', parameters: { rsvp_reminder_cadence: 99 } },
+        championGenome: { genome_id: 'bad', parameters: { rsvp_reminder_cadence: 99, reminder_spacing: 0 } },
         candidateGenome,
         candidateArtifactRef: refFor(candidateGenome),
         baseTimestamp: BASE_TS,
