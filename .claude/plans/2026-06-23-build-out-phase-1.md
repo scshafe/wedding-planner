@@ -36,7 +36,7 @@ engineering choices; keep the safety rails firm.
   - A workspace with one package per domain (`telemetry`, `eval-harness`, `loop-orchestrator`, `agent-operations`), a test runner (e.g. vitest), tsconfig, lint. Follow the `agent-first-engineering` skill conventions.
   - Verify: `npm run build` (tsc, no errors) and `npm test` (empty suite passes) both succeed.
 
-- [ ] **Step 3: Wire the 12 schemas as runtime contracts + a validation harness.**
+- [x] **Step 3: Wire the 12 schemas as runtime contracts + a validation harness.**
   - Load all 12 `*/schemas/*.json` into ajv (do not copy/redefine them); a test compiles each and validates the existing sample instances (`eval-harness/personas/*.yaml`, `eval-harness/scenarios/**/*.yaml`) against their schemas.
   - Verify: a test asserts all 12 schemas compile under ajv and every sample persona/scenario validates.
 

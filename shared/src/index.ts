@@ -7,3 +7,26 @@
  */
 
 export const SHARED_PACKAGE_NAME = '@wedding-planner/shared'
+
+// Errors
+export { WeddingPlannerError, type WeddingPlannerErrorOptions } from './errors/wedding_planner_error'
+
+// Path anchoring
+export { REPO_ROOT, resolveFromRepoRoot } from './repo_root'
+
+// Contracts (the 12 JSON Schema contracts as runtime validators)
+export {
+  CONTRACT_DEFINITIONS,
+  CONTRACT_COUNT,
+  getContractDefinition,
+  type ContractDefinition,
+  type ContractDomain,
+  type ContractKey,
+} from './contracts/contract_manifest'
+export {
+  SchemaRegistry,
+  getSchemaRegistry,
+  ContractValidationFailedError,
+  type ContractValidationError,
+  type ContractValidationResult,
+} from './contracts/schema_registry'
