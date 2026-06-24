@@ -8,7 +8,7 @@ import type {
 import { buildEvent, EVENT_NAMES } from '@wedding-planner/telemetry'
 
 import { type ScenarioDefinition } from '../scoring/offline_scorer'
-import { NEVER, REMINDERS_NEEDED } from './domain_facts'
+import { NEVER, REMINDERS_NEEDED, spacingCapacity } from './domain_facts'
 
 /**
  * @canonical stage_a_planner -- STAGE A of the planner simulator: the product's self-report.
@@ -78,18 +78,10 @@ const SENTIMENT_PENALTY_PER_NAG = 0.25
 /**
  * PHASE-3 reminder_spacing constants. Tuned so the (cadence, spacing) North-Star surface has a genuine
  * INTERIOR, NON-SEPARABLE optimum on the keystone corpus — pinned by the 16-value matrix test, never
- * by editing the North Star weights. At spacing 0 both reduce to the Phase-2 model.
+ * by editing the North Star weights. At spacing 0 both reduce to the Phase-2 model. The reminder-window
+ * CAPACITY profile [3,3,1,0] is the shared reach fact (domain_facts.ts `spacingCapacity`), so Stage B's
+ * trusted record agrees with Stage A's claims on which guests reminders resolve.
  */
-/**
- * Reminder window capacity by spacing level: how many nudges fit in the fixed rsvp_window. The window
- * holds the full cadence budget (3) at tight/normal spacing (s0, s1); spacing the nudges widely (s2)
- * leaves room for only one; very wide (s3) for none. The flat-then-sharp shape is deliberate: it keeps
- * an INTERIOR spacing optimum (s1 — full reach AND softer nags) strictly above its neighbours rather
- * than collapsing to a corner or a c2/c3 saturation tie (no guest needs >2 reminders, so a column with
- * capacity >= 3 strictly punishes the cadence-3 overshoot, which a capped column cannot). The matrix
- * test pins this; the constant-sensitivity test documents the band over which the interior optimum holds.
- */
-const SPACING_CAPACITY: readonly number[] = [3, 3, 1, 0]
 /**
  * Fraction by which each spacing level softens a nag: penalty_per_nag = SENTIMENT_PENALTY_PER_NAG *
  * (1 - SPACING_RELIEF * spacing). At 0.25 the per-nag penalty is {0.25, 0.1875, 0.125, 0.0625} for
@@ -97,11 +89,6 @@ const SPACING_CAPACITY: readonly number[] = [3, 3, 1, 0]
  * Phase-2 value at spacing 0.
  */
 const SPACING_RELIEF = 0.25
-
-/** Nudges that fit in the window at a spacing level (the spacing downside). */
-function spacingCapacity(spacing: number): number {
-  return SPACING_CAPACITY[spacing] ?? 0
-}
 
 /** Sentiment lost per nag at a spacing level (the spacing upside: gentler with more spacing). */
 function penaltyPerNag(spacing: number): number {

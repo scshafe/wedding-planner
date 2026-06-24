@@ -4,12 +4,16 @@ import { EvalHarnessError } from '../eval_harness_error'
 import {
   type RecordCommitmentInput,
   type RecordConstraintDeterminationInput,
+  type RecordCoupleSessionInput,
   type RecordGuestMessageInput,
   type RecordIntegrationActionInput,
+  type RecordRsvpOutcomeInput,
   type TrustedCommitmentRecord,
   type TrustedConstraintDetermination,
+  type TrustedCoupleSessionRecord,
   type TrustedGuestMessageRecord,
   type TrustedIntegrationActionRecord,
+  type TrustedRsvpOutcomeRecord,
 } from './trusted_outcomes'
 
 /**
@@ -46,6 +50,8 @@ export class TrustedRecorder {
   private readonly integrationActionsById = new Map<string, TrustedIntegrationActionRecord>()
   private readonly constraintsById = new Map<string, TrustedConstraintDetermination>()
   private readonly guestMessagesById = new Map<string, TrustedGuestMessageRecord>()
+  private readonly rsvpOutcomesByGuestId = new Map<string, TrustedRsvpOutcomeRecord>()
+  private readonly coupleSessionsByGuestId = new Map<string, TrustedCoupleSessionRecord>()
   private runningCommittedCents = 0
   private sealed = false
 
@@ -125,6 +131,64 @@ export class TrustedRecorder {
     })
     this.guestMessagesById.set(input.message_id, record)
     return record
+  }
+
+  /**
+   * Record the harness-observed RSVP resolution of one guest (Phase 4b). Append-only, one per guest.
+   * Feeds the integrity gate's rsvp-outcome reconciliation (the trusted backing for the claimed
+   * resolution numerator). Throws DUPLICATE_EFFECT if this guest already resolved.
+   */
+  recordRsvpOutcome(input: RecordRsvpOutcomeInput): TrustedRsvpOutcomeRecord {
+    this.assertNotSealed('rsvp_outcome', input.guest_id)
+    if (this.rsvpOutcomesByGuestId.has(input.guest_id)) {
+      throw new EvalHarnessError(
+        'TRUSTED_RECORDER.DUPLICATE_EFFECT',
+        `Guest ${input.guest_id} already has a recorded RSVP outcome; the trusted record is append-only.`,
+        { context: { guest_id: input.guest_id } },
+      )
+    }
+    const record = deepFreeze<TrustedRsvpOutcomeRecord>({ ...input })
+    this.rsvpOutcomesByGuestId.set(input.guest_id, record)
+    return record
+  }
+
+  /**
+   * Record the harness-observed couple-attention session one escalation consumed (Phase 4b). Append-only,
+   * one per escalated guest. Feeds the integrity gate's couple-cost reconciliation (the trusted backing
+   * for the claimed effort_cost denominator). Throws DUPLICATE_EFFECT on a repeat for the same guest.
+   */
+  recordCoupleSession(input: RecordCoupleSessionInput): TrustedCoupleSessionRecord {
+    this.assertNotSealed('couple_session', input.guest_id)
+    if (this.coupleSessionsByGuestId.has(input.guest_id)) {
+      throw new EvalHarnessError(
+        'TRUSTED_RECORDER.DUPLICATE_EFFECT',
+        `Guest ${input.guest_id} already has a recorded couple session; the trusted record is append-only.`,
+        { context: { guest_id: input.guest_id } },
+      )
+    }
+    const record = deepFreeze<TrustedCoupleSessionRecord>({ ...input })
+    this.coupleSessionsByGuestId.set(input.guest_id, record)
+    return record
+  }
+
+  /** The trusted RSVP outcome for one guest, or undefined if the harness observed no resolution. */
+  rsvpOutcome(guestId: string): TrustedRsvpOutcomeRecord | undefined {
+    return this.rsvpOutcomesByGuestId.get(guestId)
+  }
+
+  /** All trusted RSVP outcomes (actual resolutions). Feeds the integrity rsvp-outcome reconciliation. */
+  allRsvpOutcomes(): readonly TrustedRsvpOutcomeRecord[] {
+    return [...this.rsvpOutcomesByGuestId.values()]
+  }
+
+  /** The trusted couple session for one escalated guest, or undefined if none was observed. */
+  coupleSession(guestId: string): TrustedCoupleSessionRecord | undefined {
+    return this.coupleSessionsByGuestId.get(guestId)
+  }
+
+  /** All trusted couple sessions (escalation costs). Feeds the integrity couple-cost reconciliation. */
+  allCoupleSessions(): readonly TrustedCoupleSessionRecord[] {
+    return [...this.coupleSessionsByGuestId.values()]
   }
 
   /** All trusted constraint determinations. Feeds CONSTRAINT.HARD_VIOLATED. */

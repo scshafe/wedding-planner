@@ -64,6 +64,46 @@ export interface TrustedIntegrationActionRecord {
 
 export type RecordIntegrationActionInput = TrustedIntegrationActionRecord
 
+/**
+ * What the harness independently observed about one guest's RSVP RESOLUTION (Phase 4b). The product
+ * claims resolutions via `guest.rsvp.received`; this is the trusted truth of which guests ACTUALLY
+ * resolved and how. Authored by Stage B from scenario ground truth + the trusted genome policy alone —
+ * never from the product's claims. Only ACTUAL resolutions are recorded (like commitments): a claimed
+ * resolution with no record here is a forge, and a record here with no claim is a suppression.
+ *
+ * This is the trusted backing for the `rsvp_resolution_rate` numerator, which the scorer computes over
+ * the CLAIMED event stream — so the integrity gate can veto a forged resolution that would otherwise
+ * inflate the North Star (the Phase-4b metric-reads-claims P0). Resolution is reconciled as ONE concept
+ * keyed on guest_id regardless of cause; `resolved_via` is provenance only, never a reconciliation seam.
+ */
+export interface TrustedRsvpOutcomeRecord {
+  readonly guest_id: string
+  /** The status the guest actually gave; the gate field-diffs the claimed rsvp_status against this. */
+  readonly rsvp_status: 'yes' | 'no'
+  /** Provenance of the resolution: AI reminders, or the couple personally (escalate-to-couple). */
+  readonly resolved_via: 'reminder' | 'couple'
+}
+
+export type RecordRsvpOutcomeInput = TrustedRsvpOutcomeRecord
+
+/**
+ * What the harness observed for one couple-attention session the planner consumed by ESCALATING a guest
+ * to the couple (Phase 4b). Each escalation consumes the couple's scarce attention — the cost side of
+ * the escalate-to-couple tradeoff — and feeds `couple_active_minutes_total → effort_cost` (the North
+ * Star denominator), which the scorer computes over CLAIMED `couple.session.ended` events. Keyed by the
+ * escalated guest_id (harness-derivable, never a product-chosen opaque id) so a claimed session joins to
+ * its trusted cost; the gate field-diffs `active_seconds` so partial under-reporting is a veto, not a
+ * skip. Authored by Stage B from the genome policy + ground truth alone.
+ */
+export interface TrustedCoupleSessionRecord {
+  /** The guest whose escalation consumed this couple session (the join key). */
+  readonly guest_id: string
+  /** The true couple attention spent on this escalation, in seconds (the cost the gate reconciles). */
+  readonly active_seconds: number
+}
+
+export type RecordCoupleSessionInput = TrustedCoupleSessionRecord
+
 /** Grader-side determination of whether one hard constraint is satisfied by the final plan. */
 export interface TrustedConstraintDetermination {
   readonly constraint_id: string

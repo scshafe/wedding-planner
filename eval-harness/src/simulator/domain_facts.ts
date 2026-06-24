@@ -53,3 +53,38 @@ export function coupleResolvableGuestIds(scenario: ScenarioDefinition): Readonly
 export function isCoupleResolvable(guest: GuestPersona): boolean {
   return guest.rsvp_truth.couple_resolvable === true
 }
+
+/**
+ * Reminder-window capacity by spacing level: how many nudges fit in the fixed rsvp_window (the reach
+ * fact). SHARED so Stage A's claim and Stage B's trusted record agree on which guests reminders alone
+ * resolve. The flat-then-sharp shape [3,3,1,0] is the tuned Phase-3 profile pinned by the metamorphic
+ * matrix — see stage_a_planner.ts for the modeling rationale; this is the single source of the values.
+ */
+const SPACING_CAPACITY: readonly number[] = [3, 3, 1, 0]
+
+/** Nudges that fit in the window at a spacing level (capped reach; 0 past the table). */
+export function spacingCapacity(spacing: number): number {
+  return SPACING_CAPACITY[spacing] ?? 0
+}
+
+/**
+ * The true couple attention (seconds) one escalate-to-couple consumes — the per-escalation cost feeding
+ * couple_active_minutes_total → effort_cost. A flat per-escalation cost keeps the value/cost tradeoff
+ * legible: more escalations resolve more guests but spend proportionally more couple attention. SHARED
+ * so Stage A's claimed `active_seconds` and Stage B's trusted cost agree on the honest run.
+ */
+export const COUPLE_SESSION_ACTIVE_SECONDS = 600
+
+/**
+ * How many still-pending, couple-resolvable guests the planner escalates to the couple WITHOUT asking,
+ * by `autonomy_threshold` (the tier-2 commitment-autonomy knob). Higher threshold = more autonomous
+ * escalation = more couple-resolutions AND more couple cost (the monotone tradeoff the oracle pins).
+ * `Infinity` at 3 = escalate every pending couple-resolvable guest. This is a POLICY mapping over a
+ * shared datum; each stage applies it to the pending set by its own slicing computation.
+ */
+export function escalationBudget(autonomyThreshold: number): number {
+  if (autonomyThreshold >= 3) {
+    return Number.POSITIVE_INFINITY
+  }
+  return Math.max(0, autonomyThreshold)
+}

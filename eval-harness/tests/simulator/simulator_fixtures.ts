@@ -15,14 +15,24 @@ import { loadCouplePersona, type ScenarioDefinition } from '@wedding-planner/eva
 type Latency = GuestPersona['rsvp_truth']['response_latency']
 type WillAttend = GuestPersona['rsvp_truth']['will_attend']
 
-/** Build a schema-shaped guest persona whose RSVP behavior is fixed by latency + intent. */
-export function makeGuest(personaId: string, latency: Latency, willAttend: WillAttend = 'yes'): GuestPersona {
+/** Build a schema-shaped guest persona whose RSVP behavior is fixed by latency + intent. The optional
+ *  `coupleResolvable` sets the Phase-4b ground-truth fact: the couple can resolve this guest on escalation. */
+export function makeGuest(
+  personaId: string,
+  latency: Latency,
+  willAttend: WillAttend = 'yes',
+  coupleResolvable?: boolean,
+): GuestPersona {
   return {
     persona_id: personaId,
     description: `Test guest ${personaId} (${latency}).`,
     relationship: { to_couple: 'friend', side: 'both' },
     contact: { preferred_channel: 'email', preferred_language: 'en' },
-    rsvp_truth: { will_attend: willAttend, response_latency: latency },
+    rsvp_truth: {
+      will_attend: willAttend,
+      response_latency: latency,
+      ...(coupleResolvable === undefined ? {} : { couple_resolvable: coupleResolvable }),
+    },
     questions: [],
     personalization_expectations: { expected_tone: 'friendly_peer', expected_language: 'en' },
   }
@@ -31,6 +41,23 @@ export function makeGuest(personaId: string, latency: Latency, willAttend: WillA
 /** A genome at a given (rsvp_reminder_cadence, reminder_spacing). Spacing defaults to 0 (tightly packed). */
 export function makeGenome(cadence: number, spacing = 0, genomeId = `g_c${cadence}_s${spacing}`): StrategyGenome {
   return { genome_id: genomeId, parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: spacing } }
+}
+
+/** A TIER-2 genome carrying the escalate-to-couple knob `autonomy_threshold` (Phase 4b; derives tier 2). */
+export function makeTier2Genome(
+  cadence: number,
+  spacing: number,
+  autonomyThreshold: number,
+  genomeId = `g_c${cadence}_s${spacing}_a${autonomyThreshold}`,
+): StrategyGenome {
+  return {
+    genome_id: genomeId,
+    parameters: {
+      rsvp_reminder_cadence: cadence,
+      reminder_spacing: spacing,
+      autonomy_threshold: autonomyThreshold,
+    },
+  }
 }
 
 /** The content-addressed artifact_ref a candidate carrying this genome must commit to. */

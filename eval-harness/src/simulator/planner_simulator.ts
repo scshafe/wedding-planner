@@ -86,9 +86,11 @@ export function makePlannerSimulator(config: PlannerSimulatorConfig): ProductRun
     const clock = new ManualClock(config.baseTimestamp)
     const ids = new SequentialIdGenerator(`sim_${scenario.scenario_id}_${variant}`)
 
-    // Stage A: planner claims. Stage B: harness trusted record from the scenario ALONE (not from A).
+    // Stage A: planner claims. Stage B: harness trusted record from the scenario + TRUSTED genome
+    // policy ALONE (never from A's claims) — Phase 4b extends Stage B with the genome to observe the
+    // escalation outcomes it must reconcile, without ever reading productEvents.
     const productEvents = planner({ scenario, genome, clock, ids })
-    const recorder = observeTrustedRecord(scenario)
+    const recorder = observeTrustedRecord(scenario, genome)
 
     return { recorder, productEvents }
   }

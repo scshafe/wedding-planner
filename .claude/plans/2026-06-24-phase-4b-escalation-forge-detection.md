@@ -110,7 +110,7 @@ so a baseline that also failed integrity could not let a forge through.
     `metamorphic_oracle.test.ts` is byte-identical** (a guest with no `couple_resolvable` behaves exactly
     as today — no escalation wired yet). No genome-hash re-baseline (genome schema untouched).
 
-- [ ] **Step 2 — trusted RSVP-outcome + couple-cost family; Stage B authors it (Stage A still no
+- [x] **Step 2 — trusted RSVP-outcome + couple-cost family; Stage B authors it (Stage A still no
     escalation) (D3, D4, D5, D6).**
   - `trusted_outcomes.ts`: add `TrustedRsvpOutcomeRecord { guest_id, resolved, rsvp_status }` and
     `TrustedCoupleSessionRecord { guest_id, active_seconds }` (couple cost), with their record-input
