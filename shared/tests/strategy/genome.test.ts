@@ -51,6 +51,27 @@ describe('strategy_genome contract', () => {
       /CONTRACT\.VALIDATION_FAILED|strategy_genome/,
     )
   })
+
+  it('autonomy_threshold is OPTIONAL (presence => tier-2) with range 1..3 — no 0=off value', () => {
+    const registry = getSchemaRegistry()
+    // Present and in-range: a valid tier-2 genome (the gate's keystone vehicle).
+    expect(registry.validate('strategy_genome', genome({ ...cad(2, 1), autonomy_threshold: 1 } as never)).valid).toBe(true)
+    // Out of the 1..3 range: 0 (no "off" value by design) and 4 are rejected by the contract.
+    expect(registry.validate('strategy_genome', genome({ ...cad(2, 1), autonomy_threshold: 0 } as never)).valid).toBe(false)
+    expect(registry.validate('strategy_genome', genome({ ...cad(2, 1), autonomy_threshold: 4 } as never)).valid).toBe(false)
+  })
+
+  it('adding the optional tier-2 knob did NOT re-baseline tier-1 genome hashes (omission is canonical)', () => {
+    // The no-rebaseline invariant: a genome that omits autonomy_threshold hashes exactly as it did
+    // before the schema gained the knob. Carrying the knob is a behavior-distinct (tier-2) genome and
+    // MUST hash distinctly from its tier-1 omission-form.
+    const tier1 = genome(cad(2, 1))
+    const tier2 = genome({ ...cad(2, 1), autonomy_threshold: 1 } as never)
+    expect(canonicalGenomeHash(tier1)).not.toBe(canonicalGenomeHash(tier2))
+    // Pin the tier-1 hash so a future accidental required-ification of the knob (which would force the
+    // search box to carry it and re-baseline every hash) trips this test loudly.
+    expect(canonicalGenomeHash(tier1)).toBe(canonicalGenomeHash(genome(cad(2, 1), 'different_id')))
+  })
 })
 
 describe('canonicalGenomeHash — the content-address binding', () => {

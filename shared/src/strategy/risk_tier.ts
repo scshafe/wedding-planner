@@ -75,8 +75,19 @@ export const GENOME_PARAMETER_SURFACES: Readonly<Record<string, SensitivitySurfa
   // decide to consume couple time / take an action (commitment_autonomy, tier 2) just because it,
   // too, looks like "a small bounded scheduling number". See memory: second-genome-knob-must-stay-tier1.
   reminder_spacing: 'planning_flow_orchestration',
+  // autonomy_threshold is the FIRST tier-2 knob (Phase 4a). It governs how much the planner acts on the
+  // couple's behalf WITHOUT asking — an autonomy-governing threshold, i.e. the AI deciding to consume the
+  // couple's scarce attention/authority. That is the commitment_autonomy surface (tier 2), NOT flow:
+  // PRECEDENT GUARD — its bounded 1..3 range does NOT launder it to tier 1 the way the bounded cadence
+  // knob sits at tier 1. Bounded-ness was already rejected once as a sole tier argument (the cadence
+  // comment above); an autonomy threshold is tier-2 because of WHAT it governs (acting without asking),
+  // not how wide its range is. It is OPTIONAL in the schema (presence => tier-2; omission => tier-1
+  // canonical form), so deriveRiskTier returns 1 for every genome the autonomous tier-1 search emits and
+  // 2 only for a genome that carries it. The promotion gate (Phase 4a) parks tier-2 candidates pending an
+  // exogenous human approval; the knob's Stage-A wiring + forge-detection are Phase 4b.
+  // See memory: second-genome-knob-must-stay-tier1, tier2-promotion-gate-is-load-bearing.
+  autonomy_threshold: 'commitment_autonomy',
   // Reserved for later phases (decide the tier before the knob exists):
-  //   autonomy_threshold / auto_commit_scope -> 'commitment_autonomy' (tier 2)
   //   any spend-authorization knob            -> 'spend_authorization_model' (tier 3, prohibited)
   //   unbounded outreach-volume / contact-frequency knob -> 'guest_comms_content' (tier 2)
 }

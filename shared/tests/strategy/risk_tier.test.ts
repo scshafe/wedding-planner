@@ -64,6 +64,42 @@ describe('deriveRiskTier — derive from the genome, fail closed', () => {
   })
 })
 
+describe('autonomy_threshold — the first tier-2 knob (Phase 4a), optional by presence', () => {
+  it('a genome that OMITS autonomy_threshold stays tier-1 (the canonical search-box form)', () => {
+    // The autonomous search never emits the knob; deriveRiskTier iterates only PRESENT parameters, so
+    // every searched genome derives to 1 and auto-promotes exactly as before — no hash re-baseline.
+    const derived = deriveRiskTier(genome({ rsvp_reminder_cadence: 2, reminder_spacing: 1 }))
+    expect(derived.tier).toBe(1)
+    expect(derived.perParameter.map((p) => p.parameter)).not.toContain('autonomy_threshold')
+  })
+
+  it('a genome that CARRIES autonomy_threshold derives to tier-2 (presence pulls the whole genome up)', () => {
+    const derived = deriveRiskTier(genome({ rsvp_reminder_cadence: 2, reminder_spacing: 1, autonomy_threshold: 1 }))
+    expect(derived.tier).toBe(2)
+    expect(derived.touchedSurfaces).toContain('commitment_autonomy')
+    // sorted, stable audit artifact; the tier-2 surface attribution is recorded per-parameter.
+    expect(derived.perParameter).toEqual([
+      { parameter: 'autonomy_threshold', surface: 'commitment_autonomy', tierFloor: 2 },
+      { parameter: 'reminder_spacing', surface: 'planning_flow_orchestration', tierFloor: 1 },
+      { parameter: 'rsvp_reminder_cadence', surface: 'planning_flow_orchestration', tierFloor: 1 },
+    ])
+  })
+
+  it('every elevated value 1..3 is tier-2; there is no 0=off value (no absent-vs-disabled alias)', () => {
+    for (const value of [1, 2, 3]) {
+      expect(deriveRiskTier(genome({ rsvp_reminder_cadence: 0, reminder_spacing: 0, autonomy_threshold: value })).tier).toBe(2)
+    }
+    // 0 and 4 are out of the schema's 1..3 range -> the weld rejects them before any tier is returned.
+    expect(() => deriveRiskTier(genome({ rsvp_reminder_cadence: 0, reminder_spacing: 0, autonomy_threshold: 0 }))).toThrow()
+    expect(() => deriveRiskTier(genome({ rsvp_reminder_cadence: 0, reminder_spacing: 0, autonomy_threshold: 4 }))).toThrow()
+  })
+
+  it('the map entry is live (the drift guard above now requires it) and floors to tier 2', () => {
+    expect(GENOME_PARAMETER_SURFACES.autonomy_threshold).toBe('commitment_autonomy')
+    expect(SURFACE_TIER_FLOOR.commitment_autonomy).toBe(2)
+  })
+})
+
 describe('map / schema drift guard', () => {
   it('every parameter in strategy_genome_schema.json is mapped to a sensitivity surface', () => {
     // The fail-closed throw should only ever fire on genuine drift; this test makes drift loud at CI
