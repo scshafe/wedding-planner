@@ -52,9 +52,16 @@ const REMINDERS_NEEDED: Readonly<Record<string, number>> = {
 }
 
 /**
- * The most reminders a guest is comfortable receiving before it reads as nagging. A responder
- * implicitly accepts up to COMFORT_CAP reminders; beyond that (or any reminder to a never-responder)
- * costs sentiment. COMFORT_CAP = 1 makes the guard sensitive once cadence pushes past a light touch.
+ * The most reminders a guest is comfortable receiving before it reads as nagging.
+ *
+ * EXPLICIT MODELING DECISION (testineer, Phase-2 Step-4 review): COMFORT_CAP is a UNIVERSAL comfort
+ * ceiling, INDEPENDENT of how many reminders a guest's latency required — `nags = remindersSent -
+ * min(needed, COMFORT_CAP)`. So a slow responder who needed 2 reminders is charged 1 nag for the
+ * second even though it's what converted them: a 2nd+ reminder mildly annoys even when it works. The
+ * alternative (`max(needed, COMFORT_CAP)` — only reminders BEYOND a guest's need nag) was rejected
+ * because it makes the guard bite ONLY on never-responders, leaving a flat gradient whenever every
+ * guest is reachable. The universal-ceiling choice gives the loop a real gradient even without an
+ * unreachable guest — which is the property that makes the cadence tradeoff worth optimizing.
  */
 const COMFORT_CAP = 1
 /** Sentiment lost per nagging reminder (a guest starts at 1.0, floored at 0). */
