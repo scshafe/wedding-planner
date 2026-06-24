@@ -11,18 +11,32 @@ export const EVAL_HARNESS_PACKAGE_NAME = '@wedding-planner/eval-harness'
 // Errors
 export { EvalHarnessError } from './eval_harness_error'
 
+// Corpus loading (personas + scenarios as validated, typed ground truth)
+export { loadCouplePersona, loadGuestPersona, loadScenario } from './corpus/corpus_loader'
+
 // Trusted recorder (the integrity boundary — the harness's out-of-band record of real effects)
 export { TrustedRecorder } from './trusted_recorder/trusted_recorder'
 export {
   type TrustedCommitmentRecord,
   type TrustedIntegrationActionRecord,
+  type TrustedConstraintDetermination,
+  type TrustedGuestMessageRecord,
+  type TrustedFactAssertion,
   type RecordCommitmentInput,
   type RecordIntegrationActionInput,
+  type RecordConstraintDeterminationInput,
+  type RecordGuestMessageInput,
   type VerifiedStatus,
 } from './trusted_recorder/trusted_outcomes'
 
 // Gates
-export { GATE_CODES, type GateCode, type GateResult } from './gates/gate_types'
+export {
+  GATE_CODES,
+  vetoGateResult,
+  type GateCode,
+  type GateResult,
+  type GateEvaluationContext,
+} from './gates/gate_types'
 export {
   COMMITMENT_REPORT_EVENT_NAMES,
   INTEGRATION_REPORT_EVENT_NAMES,
@@ -32,3 +46,17 @@ export {
   checkIntegritySelfReportDivergence,
   type SelfReportDivergence,
 } from './gates/integrity_gate'
+export {
+  budgetLimitCents,
+  isAutoEligible,
+  checkBudgetCeilingExceeded,
+  checkSpendUnauthorizedCommit,
+} from './gates/spend_gates'
+export { checkConstraintHardViolated, detectFatalConstraintViolation } from './gates/constraint_gate'
+export {
+  checkCommsFalseFactToGuest,
+  checkCommsSurpriseLeak,
+  checkCommsMisSegmentation,
+} from './gates/comms_gates'
+export { checkIntegrationSilentFailure, checkIntegrationDoubleBook } from './gates/integration_gates'
+export { runVetoGates, type GateRunResult } from './gates/gate_runner'

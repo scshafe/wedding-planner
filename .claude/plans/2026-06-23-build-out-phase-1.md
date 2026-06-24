@@ -57,7 +57,7 @@ engineering choices; keep the safety rails firm.
   - Verify: a test shows a gate reads the trusted record (not a product-emitted field), and a product self-report that diverges from the trusted record raises `INTEGRITY.SELF_REPORT_DIVERGENCE`.
   - Specialist: `doddy` *(this is the project's #1 safety boundary — verify the implementation actually protects the graders' inputs, not just their code).*
 
-- [ ] **Step 8: The deterministic veto gates over the trusted stream.**
+- [x] **Step 8: The deterministic veto gates over the trusted stream.**
   - Implement the gates in `eval-harness/rubrics/gate_checks.md` (`COMMS.*`, `SPEND.*`, `INTEGRITY.SELF_REPORT_DIVERGENCE`, …) as pure functions over the *trusted* portion of the stream.
   - Verify: tests over the golden + adversarial scenarios (`eval-harness/scenarios/**`) assert each gate's expected pass/fail against the scenarios' encoded expected outcomes.
 

@@ -3,8 +3,12 @@ import { deepFreeze } from '@wedding-planner/shared'
 import { EvalHarnessError } from '../eval_harness_error'
 import {
   type RecordCommitmentInput,
+  type RecordConstraintDeterminationInput,
+  type RecordGuestMessageInput,
   type RecordIntegrationActionInput,
   type TrustedCommitmentRecord,
+  type TrustedConstraintDetermination,
+  type TrustedGuestMessageRecord,
   type TrustedIntegrationActionRecord,
 } from './trusted_outcomes'
 
@@ -40,6 +44,8 @@ import {
 export class TrustedRecorder {
   private readonly commitmentsById = new Map<string, TrustedCommitmentRecord>()
   private readonly integrationActionsById = new Map<string, TrustedIntegrationActionRecord>()
+  private readonly constraintsById = new Map<string, TrustedConstraintDetermination>()
+  private readonly guestMessagesById = new Map<string, TrustedGuestMessageRecord>()
   private runningCommittedCents = 0
   private sealed = false
 
@@ -62,6 +68,7 @@ export class TrustedRecorder {
     }
     const record = deepFreeze<TrustedCommitmentRecord>({
       ...input,
+      applies_to_ref: input.applies_to_ref ?? null,
       running_committed_cents: this.runningCommittedCents,
     })
     this.commitmentsById.set(input.commitment_id, record)
@@ -81,6 +88,53 @@ export class TrustedRecorder {
     const record = deepFreeze<TrustedIntegrationActionRecord>({ ...input })
     this.integrationActionsById.set(input.action_id, record)
     return record
+  }
+
+  /** Record a grader-side determination of whether one hard constraint is satisfied by the plan. */
+  recordConstraintDetermination(
+    input: RecordConstraintDeterminationInput,
+  ): TrustedConstraintDetermination {
+    this.assertNotSealed('constraint', input.constraint_id)
+    if (this.constraintsById.has(input.constraint_id)) {
+      throw new EvalHarnessError(
+        'TRUSTED_RECORDER.DUPLICATE_EFFECT',
+        `Constraint ${input.constraint_id} was already evaluated; the trusted record is append-only.`,
+        { context: { constraint_id: input.constraint_id } },
+      )
+    }
+    const record = deepFreeze<TrustedConstraintDetermination>({ ...input })
+    this.constraintsById.set(input.constraint_id, record)
+    return record
+  }
+
+  /** Record the trusted capture of one guest-facing message (the actual content sent). */
+  recordGuestMessage(input: RecordGuestMessageInput): TrustedGuestMessageRecord {
+    this.assertNotSealed('guest_message', input.message_id)
+    if (this.guestMessagesById.has(input.message_id)) {
+      throw new EvalHarnessError(
+        'TRUSTED_RECORDER.DUPLICATE_EFFECT',
+        `Guest message ${input.message_id} was already recorded; the trusted record is append-only.`,
+        { context: { message_id: input.message_id } },
+      )
+    }
+    const record = deepFreeze<TrustedGuestMessageRecord>({
+      ...input,
+      fact_assertions: input.fact_assertions.map((fact) => ({ ...fact })),
+      reveals_secret_tags: [...input.reveals_secret_tags],
+      discloses_guest_ids: [...input.discloses_guest_ids],
+    })
+    this.guestMessagesById.set(input.message_id, record)
+    return record
+  }
+
+  /** All trusted constraint determinations. Feeds CONSTRAINT.HARD_VIOLATED. */
+  allConstraintDeterminations(): readonly TrustedConstraintDetermination[] {
+    return [...this.constraintsById.values()]
+  }
+
+  /** All trusted guest-message captures. Feeds the COMMS.* gates. */
+  allGuestMessages(): readonly TrustedGuestMessageRecord[] {
+    return [...this.guestMessagesById.values()]
   }
 
   /**

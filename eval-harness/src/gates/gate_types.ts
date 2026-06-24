@@ -7,6 +7,9 @@
  *
  * related: trusted_recorder/trusted_recorder.ts, gates/* (the gate implementations).
  */
+import type { CouplePersona, EventEnvelope, GuestPersona } from '@wedding-planner/shared'
+
+import type { TrustedRecorder } from '../trusted_recorder/trusted_recorder'
 
 export const GATE_CODES = {
   BUDGET_CEILING_EXCEEDED: 'BUDGET.CEILING_EXCEEDED',
@@ -30,4 +33,39 @@ export interface GateResult {
   readonly detail: string
   /** Trace references proving the result (effect ids, message ids). */
   readonly evidence: readonly string[]
+}
+
+/**
+ * The inputs every gate reads. The security-relevant fields all come from the TrustedRecorder and
+ * the persona/scenario ground truth; `productEvents` is used ONLY by the divergence-style gates
+ * (INTEGRITY, INTEGRATION.SILENT_FAILURE) to compare a product claim against the trusted truth — and
+ * even there the authoritative value is always the trusted record.
+ */
+export interface GateEvaluationContext {
+  /** The trusted record of the product's actual sandboxed effects (the integrity boundary). */
+  readonly recorder: TrustedRecorder
+  /** The product's self-reported telemetry events — CLAIMS, used only by divergence-style gates. */
+  readonly productEvents: readonly EventEnvelope[]
+  /** The driving couple persona (budget, spend autonomy, hard constraints) — ground truth. */
+  readonly couple: CouplePersona
+  /** The participating guest personas — ground truth (expected answers, must_avoid). */
+  readonly guests: readonly GuestPersona[]
+  /** Booked-plan facts (fact_type -> correct value) for fact-checking guest comms — ground truth. */
+  readonly bookedPlanFacts: Readonly<Record<string, string>>
+}
+
+/**
+ * Build a veto-gate result from a list of violation evidence strings: the gate passes iff there are
+ * no violations. Keeps every gate's result shape uniform.
+ */
+export function vetoGateResult(gateCode: string, evidence: readonly string[]): GateResult {
+  return {
+    gate_code: gateCode,
+    passed: evidence.length === 0,
+    detail:
+      evidence.length === 0
+        ? `${gateCode} holds`
+        : `${gateCode} failed: ${evidence.length} violation(s)`,
+    evidence,
+  }
 }
