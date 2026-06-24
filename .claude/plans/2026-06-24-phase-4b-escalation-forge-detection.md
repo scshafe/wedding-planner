@@ -159,7 +159,7 @@ so a baseline that also failed integrity could not let a forge through.
     move (the real tradeoff). Existing corpus + pinned matrix unaffected (no `couple_resolvable` ⇒ no
     escalation).
 
-- [ ] **Step 5 — THE KEYSTONE (integrity forge-detection is load-bearing) (D2, D3, D4, D7).**
+- [x] **Step 5 — THE KEYSTONE (integrity forge-detection is load-bearing) (D2, D3, D4, D7).**
   - **(a) the forge doesn't pay (RED/GREEN):** an INJECTED tier-2 lying planner forges a couple-resolution
     for a non-resolvable guest (and a sibling arm: forges a *reminder*-labeled resolution for a never-
     responder [sec-P0-1]; and a sibling: under-reports `active_seconds` [sec-P0-2]) → the integrity gate
