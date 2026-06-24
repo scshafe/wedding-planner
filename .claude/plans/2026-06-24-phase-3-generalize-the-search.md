@@ -1,6 +1,6 @@
 # Phase 3 — Generalize the offline search to a multi-parameter, non-separable landscape
 
-**Status:** in progress. **Branch:** `build/phase-3-generalize-search`.
+**Status:** COMPLETE — all 7 steps ticked (183 tests green). **Branch:** `build/phase-3-generalize-search`.
 **Predecessor:** Phase 2 (planner-simulator substrate) — complete, merged to `main`.
 
 ## Why this phase
@@ -136,7 +136,7 @@ so requiring it does NOT inflate any genome's tier. Cost: re-baseline fixtures/s
     far-from-seed winner a champion-local order would miss within the same budget — or this sub-test
     fails to exist and we CUT the spread ordering [R-search-P1-5].
 
-- [ ] **Step 7 — memory + ADR + handoff.**
+- [x] **Step 7 — memory + ADR + handoff.**
   - ADR under `docs/adr/` recording D1–D5.
   - Memory: the `converged` certificate semantics (no-acceptable-point ≠ global optimum); the
     non-separability-via-multiplicative-sentiment fact; spread-ordering only matters under truncation.

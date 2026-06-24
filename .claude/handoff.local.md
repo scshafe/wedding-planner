@@ -1,73 +1,79 @@
 # Handoff
 
-## Where things stand — Phase 2 (the planner simulator substrate) is BUILT ✅
-`.claude/plans/2026-06-24-phase-2-planner-simulator-substrate.md` is **complete — all 7 steps ticked**,
-on branch **`build/phase-1-offline-core`** (now 19 commits ahead of `main`; 8 added this run). Working
-tree clean. **No git remote** (user declined the push), so the branch is the review artifact.
-`npm run build && npm test && npm run lint` all green (**166 tests**, up from 107).
+## Where things stand — Phase 3 (generalize the search) is BUILT ✅
+`.claude/plans/2026-06-24-phase-3-generalize-the-search.md` is **complete — all 7 steps ticked**, on
+branch **`build/phase-3-generalize-search`** (8 commits this run). Working tree clean.
+`npm run build && npm test && npm run lint` all green (**183 tests**, up from 166 at the start of this
+run / 167 after the schema change). `main` already contains Phase 1 + Phase 2 (merged); this branch is
+the review artifact for Phase 3 (the loop's merge-keeper advances `main` when green).
 
-**What changed:** the offline loop went from *optimizing nothing* to a **real optimizer**. In Phase 1
-the `ProductRunner` was candidate-blind — a hand-set `improve` boolean (not the candidate's content)
-decided wins. Now a candidate carries a structured **strategy genome** that a deterministic two-stage
-**planner simulator** interprets into different plans → events → metrics → North Star, scored by the
-**unmodified** harness; a **heuristic search proposer** perturbs a **champion** genome that ratchets on
-accept (real hill-climbing). Fully offline/deterministic, zero side effects — same rails as Phase 1.
+**What changed:** the offline search went from a **1-D** genome with a toy search (axis-aligned
+distance-1 + global tabu, one `proposer_exhausted` terminal state) to a **2-D, non-separable** genome
+with a real box search and an honest termination taxonomy.
 
-### What's running (additions this phase)
-- **`shared/`** — `strategy_genome` contract (the 13th, content-addressed: `artifact_ref =
-  genome:<sha256(canonicalJson(parameters))>`); `genome.ts` (hash + `classifyGenomeArtifactRef`
-  match/mismatch/malformed); `risk_tier.ts` (`deriveRiskTier` + the genome→surface map — the firewall's
-  first real mechanism, `risk_tier_derivation.md` was doc-only before).
-- **`eval-harness/`** — the **planner simulator**: **Stage A** (`stage_a_planner.ts`, planner→claims
-  from persona `rsvp_truth`) / **Stage B** (`stage_b_observer.ts`, trusted record from persona ground
-  truth, never from Stage A — keeps `INTEGRITY.SELF_REPORT_DIVERGENCE` non-vacuous); content-address
-  enforced at construction. Plus the non-circular **metamorphic + anchored + anti-no-op oracle**.
-- **`loop-orchestrator/`** — `ChampionStore` (ratchet), content-addressed `GenomeRegistry`,
-  `SearchProposer` (perturbs champion, dedupe on genome hash), `reconcileCandidateRiskTier` (re-derives
-  the tier, rejects under-declaration), and `runGenomeOfflineLoop` wiring it all + the **keystone test**.
+### What's new this phase (by step)
+- **Step 1** — `reminder_spacing` (int 0..3), the 2nd genome knob, **REQUIRED** in the closed schema,
+  mapped tier-1 (`planning_flow_orchestration`, the temporal twin of cadence). `deriveRiskTier`
+  `perParameter` now sorted (stable ledger artifact). All genome fixtures re-baselined for 2 params.
+- **Step 2** — Stage A reads spacing: `delivered = min(cadence, capacity(spacing))` (downside: fewer
+  nudges fit) + gentler nags with spacing (upside) → a **multiplicative** sentiment interaction.
+  **Forge-free** (resolution still from ground truth), so Stage B is unchanged (documented why).
+- **Step 3** — the 2-D oracle: anchored spacing values + a **pinned 16-value North-Star matrix** with
+  proofs that the optimum is STRICT/UNIQUE/INTERIOR at (cadence 2, spacing 1), the landscape is
+  NON-SEPARABLE (argmax cadence depends on spacing), and the box optimum strictly beats every
+  spacing-0 point (the old 1-D search can't reach it). Capacity profile tuned to `[3,3,1,0]`.
+- **Step 4** — the 2-D `SearchProposer`: fixed champion-independent **spread-first** (bit-reversal /
+  van der Corput) box order + **trajectory-relative tabu** (keyed `(championHash, genomeHash)`, so a
+  point re-opens after the champion ratchets — fixes the Phase-2 global-tabu miss).
+- **Step 5** — the **termination taxonomy**: `converged` (the proposer's `isConverged()` certificate —
+  "no ACCEPTABLE point against the standing champion", NOT a global optimum) vs `dry` (stalled) vs
+  `budget_exhausted`. Termination guaranteed by the strict North-Star ratchet (bounded promotions, no
+  cycle, even with guards).
+- **Step 6** — the keystone proof: a `LegacyOneDProposer` fixture (the pre-Phase-3 search) **STALLS at
+  (cadence 2, spacing 0)**; the new search reaches **(cadence 2, spacing 1)** on the same landscape
+  (RED on old, GREEN on new). Plus spread-coverage-under-truncation and a guard-active termination arm.
+- **Step 7** — `docs/adr/0002-generalize-the-offline-search.md`, two memory files, this handoff.
 
-### Specialist reviews — all found real issues, all applied + journaled
-- **doddy** (Steps 1, 2): content-addressing is the firewall binding; **validate-before-bind**, distinct
-  refuse-and-halt verdicts, fixed a schema-prose/map tier contradiction, pinned the closed-set fact.
-  Memory: **[[genome-content-address-firewall]]**.
-- **testineer** (Steps 4, 7): the metamorphic relations are only self-*consistency* checks — added
-  **anchored** oracles (hand-reasoned values that survive a sign-flip); the keystone now proves the
-  causal chain with a non-target scenario making attribution test *localization*, strict-regression on
-  the negative arm, and `accepted===2`/`proposer_exhausted`/overshoot-tried-and-refused on the loop.
-- **wolf** (Step 6): the exploit/explore split is *relabeled enumeration*, not a policy; the global tabu
-  poisons re-exploration after a champion move. Documented honestly + **deferred** the fix (see below).
+### Design reviews (important context for the next run)
+The repo's **specialist sub-agents (wolf, doddy, rigorous-architect, testineer) are NOT provisioned in
+this environment** (they live in the operator's `~/.claude`; see commit b1201fa). I substituted **two
+`general-purpose` adversarial reviewers** (a search/stats reviewer and an architecture/trust-boundary
+reviewer) and folded their P0/P1 findings into the plan as `[R-…]` tags. Their most consequential
+catch: the escalate-to-couple knob I first considered is **tier-2 + a forge surface** and would have
+broken autonomous operation — which is why the 2nd knob is `reminder_spacing` instead
+(`.claude/memory/second-genome-knob-must-stay-tier1.md`). **If you can provision the real specialists,
+re-run doddy on the tier-1 classification of `reminder_spacing` and wolf on the search soundness.**
 
-## Next action — pick the next phase (each its own plan, gated behind this substrate)
-The loop now optimizes a real (simulated) fitness landscape. Highest-value candidates, your call:
-1. **Generalize the search (wolf's deferred work)** — fully offline, no credentials, the natural next
-   step. Multi-parameter genomes; replace axis-aligned distance-1 steps + global tabu with a
-   **trajectory-relative tabu + a low-discrepancy deterministic sequence**, and a **termination taxonomy**
-   that distinguishes "local optimum" from "globally converged" (today both surface as `dry`/exhausted).
-   Add genome parameters beyond `rsvp_reminder_cadence` (each needs a schema edit + a surface-map entry).
-2. **Real Claude-Agent-SDK proposer** — plugs into the SAME `Proposer` interface + genome type.
-   **Needs API credentials → STOP-and-surface** (the local-only rail): write it in the handoff and stop,
-   do not fake calls.
-3. **Production funnel** (`loop-orchestrator/experiment_design.md`) — first real blast radius, heavily
-   gated; offline-first means simulate, no real ramp.
+## Next action — pick the next phase (your call)
+The autonomous search now generalizes over a real 2-D non-separable landscape with an honest
+convergence certificate. Highest-value candidates:
+1. **A third tier-1 genome knob** → makes the box ≥3-D and stresses the spread order / certificate at
+   higher dimension (cheap, in-rails; the box generator + matrix oracle extend mechanically). Good if
+   you want to harden the search further before changing substrate.
+2. **The tier-2 escalate-to-couple knob as its OWN gated phase** — the deferred, high-value work that
+   makes the firewall's **tier-2 human-gate + integrity forge-detection** load-bearing: Stage B must
+   independently observe escalation/resolution, the integrity gate needs an escalation effect kind, and
+   the loop must GATE (not auto-promote) tier-2 candidates. Fully offline (simulate the human gate). See
+   the rejected-path notes in `stage_b_observer.ts` and `second-genome-knob-must-stay-tier1.md`.
+3. **Real Claude-Agent-SDK proposer** — plugs into the SAME `Proposer` interface + genome type.
+   **Needs API credentials → STOP-and-surface** (the local-only rail). Do not fake calls.
 
-**Recommend #1** (search generalization) — it's the honest, in-rails next lever and wolf already scoped it.
+**Recommend #2** — it is the deferred high-value firewall work, now well-scoped, and it is what turns
+the tier-2 + forge-detection machinery from documented-but-dormant into load-bearing.
 
-## Non-obvious Phase-2 context (carry forward)
-- **Guards vs North Star (deliberate):** the cadence tradeoff lives in the **North Star** (guest_sentiment
-  feeds `guest_experience`), NOT as a hard guard. If `guest_sentiment_score` were a hard guard, *every*
-  cadence increase would regress it and the loop could never climb. The loop's default `guards: []`; the
-  interior optimum (cadence 2 on the keystone corpus, ratios ~0.56/0.68/0.78/0.75) emerges from the North
-  Star. A separate keystone arm proves the guard *mechanism* still works when sentiment IS a guard.
-- **COMFORT_CAP nag model** (`stage_a_planner.ts`) is an explicit choice: a universal comfort ceiling
-  (a 2nd+ reminder mildly annoys even when it converts), so the guard has a gradient even without an
-  unreachable guest. Documented in-code; revisit if it distorts the gradient the real proposer climbs.
-- **Promotion is offline-only:** the loop promotes the champion on offline-ACCEPT (offline has no
-  `promoted` transition). The champion ratchets monotonically; lineage is a `champion_lineage:` lesson on
-  the accepted ledger entry (the loop only forwards *rejected* lessons to the proposer, so it's inert).
-- **`deriveRiskTier`'s fail-closed throw is unreachable for valid input** (closed schema + drift guard) —
-  it's defense-in-depth against schema/map drift; the drift-guard test is the primary protection.
-- **`npm run build` is still `tsc --noEmit`** (a strict typecheck), no emit. Phase-1/2 runtime is the
-  test-driven core; a real emit (project refs / bundler) is needed before any deployable runtime.
-- Durable facts: `MEMORY.md` index — Phase-2 added **[[genome-content-address-firewall]]**; still load-
-  bearing: [[loop-trusted-evidence-boundary]], [[integrity-gate-completeness-invariants]],
-  [[accept-rule-composition-invariance]], [[prod-trusted-evidence-channel]].
+## Non-obvious Phase-3 context (carry forward)
+- **The `converged` certificate is "no ACCEPTABLE point", not "global optimum"** — guards/golden
+  conditions can veto a higher-North-Star point. See [[search-convergence-certificate-semantics]].
+- **The spread-first order is outcome-neutral under a full sweep** — it only matters under
+  `maxIterations` truncation. Don't claim it improves the converged result.
+- **At `reminder_spacing = 0` the simulator is byte-identical to Phase 2**, which is why the Phase-2
+  anchored-oracle values were preserved unchanged when the knob was added.
+- **The interior optimum depends on tuned simulator constants** (capacity `[3,3,1,0]`, relief 0.25),
+  pinned by the matrix oracle. North Star **weights are never tuned**. A constant-sensitivity *margin*
+  check stands in for an injection-based sensitivity test (constants are module-level, not injected) —
+  making them injectable is a possible refinement.
+- **`npm run build` is still `tsc --noEmit`** (strict typecheck, no emit). No deployable runtime yet.
+- Durable facts: `MEMORY.md` index — Phase-3 added **[[second-genome-knob-must-stay-tier1]]** and
+  **[[search-convergence-certificate-semantics]]**; still load-bearing:
+  [[genome-content-address-firewall]], [[loop-trusted-evidence-boundary]],
+  [[integrity-gate-completeness-invariants]], [[accept-rule-composition-invariance]].

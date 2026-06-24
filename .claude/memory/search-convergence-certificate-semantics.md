@@ -1,0 +1,44 @@
+---
+name: search-convergence-certificate-semantics
+description: "Phase-3 search facts — what the `converged` certificate does and does NOT claim, why the spread order only matters under truncation, and where non-separability actually comes from"
+metadata:
+  node_type: memory
+  type: project
+---
+
+Three load-bearing, easy-to-misread facts about the Phase-3 multi-parameter offline search
+(`loop-orchestrator/src/proposer/search_proposer.ts` + `loop/offline_loop.ts`). Builds on
+[[second-genome-knob-must-stay-tier1]].
+
+**1. `converged` means "no ACCEPTABLE point against the standing champion" — NOT a global optimum.**
+The proposer returns null exactly when every other box point was proposed against the *current*
+champion (per-champion-hash coverage) and none was accepted; the loop turns that into `converged`. But
+the accept rule is a CONJUNCTION (no golden regression, no new gate failure, no guard regression, AND
+strict aggregate-North-Star gain). So with a binding guard or golden condition, a point with strictly
+HIGHER North Star can be vetoed — the certificate then says the champion is the best *acceptable*
+point, not the box argmax. The guard-active keystone arm asserts exactly this (the global optimum is
+guarded out and never adopted). Never relabel `converged` as "optimal".
+
+**2. The spread-first (bit-reversal / van der Corput) box order is OUTCOME-NEUTRAL under a
+box-sufficient budget.** Because the loop sweeps the whole box against each champion before declaring
+convergence, the *order* cannot change the converged result — only the iteration at which each point
+is visited. Its value exists ONLY under `maxIterations` truncation, where spread-first covers
+far-from-champion points a champion-local order would not reach within the budget (the keystone proves
+this with a K-budget reach comparison). Do not claim it speeds up or improves the converged outcome;
+do not call it "low-discrepancy sophistication" (it is a 16-point lattice).
+
+**3. Non-separability comes from the MULTIPLICATIVE sentiment term, not the cost denominator.**
+`sentiment = 1 − penalty_per_nag(spacing) · nags(cadence)` couples the two knobs in the North Star
+*numerator* (guest_experience), so the optimal cadence depends on spacing (argmax cadence is 2 at
+spacing≤1, drops once capacity caps reach). This landscape is still coordinate-descent-SOLVABLE (the
+global optimum is reachable by axis moves), so the keystone does NOT claim a coordinate-descent saddle.
+What it DOES prove: the optimum requires a non-default value on the second knob, which the pre-Phase-3
+1-D (cadence-only, spacing-pinned) search is structurally incapable of reaching — that is the honest
+"old search misses the interaction win". The genome→North-Star surface is pinned as a 16-value matrix
+in `metamorphic_oracle.test.ts`; the simulator constants (capacity profile `[3,3,1,0]`, relief 0.25)
+were tuned to that matrix — never the North Star weights.
+
+**Termination guarantee:** every accept strictly raises the champion North Star (accept condition 4),
+so over the finite content-addressed genome box promotions are bounded and no champion recurs — true
+even with binding guards (a guard can reject but never make an accept non-monotone in North Star). The
+trajectory-relative tabu (keyed on champion hash) therefore cannot cycle.
