@@ -44,7 +44,7 @@ engineering choices; keep the safety rails firm.
   - `json-schema-to-typescript` over the 12 schemas → typed contracts shared across packages.
   - Verify: `tsc` typechecks; a round-trip test constructs a typed `event_envelope` and `candidate_change` and validates them against ajv.
 
-- [ ] **Step 5: Telemetry substrate — the event stream + metrics as pure functions.**
+- [x] **Step 5: Telemetry substrate — the event stream + metrics as pure functions.**
   - Implement the event envelope/payloads as runtime-validated types and the metric engine where a metric is `f(events filtered by wedding_id)` with **no ambient state/clock** (`telemetry/README.md` "Metrics own no state" / "Determinism"). Implement a handful of `metric_code`s from `telemetry/metric_catalog.md`.
   - Verify: a test replays a fixed event stream twice and asserts identical metric output (replayability); `event_id`/`occurred_at`/`seed` are injected, not read from a clock.
 

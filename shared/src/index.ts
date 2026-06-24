@@ -14,6 +14,10 @@ export { WeddingPlannerError, type WeddingPlannerErrorOptions } from './errors/w
 // Path anchoring
 export { REPO_ROOT, resolveFromRepoRoot } from './repo_root'
 
+// Determinism (injected clock + id generator; nothing reads an ambient clock/RNG)
+export { type Clock, ManualClock } from './determinism/clock'
+export { type IdGenerator, SequentialIdGenerator } from './determinism/id_generator'
+
 // Contracts (the 12 JSON Schema contracts as runtime validators)
 export {
   CONTRACT_DEFINITIONS,

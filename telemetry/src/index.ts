@@ -1,9 +1,56 @@
 /**
  * @wedding-planner/telemetry — the event stream and metrics over it.
  *
- * Public barrel for the telemetry domain. Capabilities are added here as they are built:
- * the runtime-validated event envelope/payloads and the metric engine (metrics as pure
- * functions over events filtered by wedding_id, with no ambient state or clock).
+ * Public barrel. The event envelope/payloads are runtime-validated; metrics are pure functions over
+ * events filtered by wedding_id, with no ambient state or clock (telemetry/README.md).
  */
 
 export const TELEMETRY_PACKAGE_NAME = '@wedding-planner/telemetry'
+
+// Controlled vocabularies
+export {
+  EVENT_NAMES,
+  METRIC_CODES,
+  type EventName,
+  type MetricCode,
+} from './telemetry_constants'
+
+// Errors
+export { TelemetryError } from './telemetry_error'
+
+// Events
+export { buildEvent, type BuildEventInput, EVENT_ID_PREFIX } from './events/event_factory'
+export { type TelemetryEvent, validateEventStream, forWedding } from './events/event_stream'
+export {
+  type CoupleSessionEndedPayload,
+  type GuestRsvpRequestedPayload,
+  type GuestRsvpReceivedPayload,
+  type GuestSentimentSampledPayload,
+  type BudgetSnapshotPayload,
+  type PlanFinalizedPayload,
+  type RsvpStatus,
+  readCoupleSessionEndedPayload,
+  readGuestRsvpRequestedPayload,
+  readGuestRsvpReceivedPayload,
+  readGuestSentimentSampledPayload,
+  readBudgetSnapshotPayload,
+  readPlanFinalizedPayload,
+} from './events/event_payload_readers'
+
+// Metrics
+export {
+  MetricEngine,
+  type MetricComputation,
+  type MetricFunction,
+} from './metrics/metric_engine'
+export {
+  METRIC_DEFINITIONS,
+  createMetricEngine,
+  coupleActiveMinutesTotal,
+  autonomyRate,
+  decisionReversalRate,
+  rsvpResolutionRate,
+  guestSentimentScore,
+  boundaryHoldRate,
+  budgetVariancePct,
+} from './metrics/metric_definitions'
