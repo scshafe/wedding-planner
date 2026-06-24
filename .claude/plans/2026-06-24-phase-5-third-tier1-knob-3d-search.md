@@ -151,7 +151,7 @@ environment, so `general-purpose` reviewers were framed with the **doddy** (secu
   - Confirm any live loop config / pipeline fixture's `maxIterations` accommodates the 64-point box (or
     documents honest truncation). `npm test` green.
 
-- [ ] **Step 6 — The dilution-forge keystone arm (D2 proof; test-P0).**
+- [x] **Step 6 — The dilution-forge keystone arm (D2 proof; test-P0).**
   - In `escalation_forge_keystone.test.ts` (or a sibling `batching_forge_keystone.test.ts`): a tier-1 genome
     with `batching ≥ 1` where some guest is diluted-out of resolution; a lying Stage A (test double) claims
     that guest's `guest.rsvp.received` (reminder-attributed, no escalation vocabulary — the bypass arm).

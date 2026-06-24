@@ -195,3 +195,53 @@ describe('keystone — honest escalation genuinely WINS on resolution, yet still
     expect(championStore.current()).toBe(CHAMPION) // the loop never self-granted tier-2 autonomy
   })
 })
+
+/**
+ * PHASE-5 — the dilution-forge keystone: integrity forge-detection is load-bearing for the NEW tier-1
+ * knob too. reminder_batching DILUTES reach (effectiveNudges = ceil(delivered/digestSize)), so a guest
+ * reachable at batching 0 can be diluted OUT of resolution at batching ≥ 1. That SHRINKS the trusted
+ * resolved set Stage B authors — the new forge surface: a lying Stage A can claim a resolution batching
+ * diluted away (a plain reminder-attributed claim, no escalation vocabulary). The candidate is TIER-1
+ * (batching, no autonomy_threshold), so there is no promotion-gate park to lean on — the INTEGRITY gate
+ * is the sole stopper. This proves "forge-free for the new knob" is TESTED, not merely asserted (testineer P0).
+ */
+describe('keystone — a batching-DILUTED-AWAY resolution does not pay (the tier-1 dilution forge)', () => {
+  // immediate (always resolves) + a guest needing 2 reminders that batching 1 dilutes out of reach.
+  const dilGuests: readonly GuestPersona[] = [
+    guest('g_immediate', 'immediate', 'yes'),
+    guest('g_many', 'after_multiple_reminders', 'yes'),
+  ]
+  function dilScenario(id: string, type: ScenarioDefinition['scenario_type']): ScenarioDefinition {
+    return { scenario_id: id, scenario_type: type, couple: COUPLE, guests: dilGuests, bookedPlanFacts: {}, targetMetrics: [{ metric_code: 'rsvp_resolution_rate', direction: 'gte', threshold: 0.3 }] }
+  }
+  const dilCorpus: readonly ScenarioDefinition[] = [dilScenario('golden_g', 'golden'), dilScenario('adv_a', 'adversarial')]
+  // Champion cadence 1 (g_many unreached: rate 0.5). Candidate cadence 2 WOULD reach g_many at batching 0,
+  // but batching 1 dilutes it (effectiveNudges = ceil(2/2) = 1 < 2) → honest candidate also rate 0.5.
+  // Both tier-1 (no autonomy_threshold). So ONLY a forge can make the candidate "win".
+  const dilChampion: StrategyGenome = { genome_id: 'champ_b', parameters: { rsvp_reminder_cadence: 1, reminder_spacing: 0, reminder_batching: 0 } }
+  const dilCandidate: StrategyGenome = { genome_id: 'cand_b', parameters: { rsvp_reminder_cadence: 2, reminder_spacing: 0, reminder_batching: 1 } }
+
+  function scoreDil(planner: Planner) {
+    const runner = makePlannerSimulator({ championGenome: dilChampion, candidateGenome: dilCandidate, candidateArtifactRef: genomeArtifactRef(dilCandidate), baseTimestamp: BASE_TS, planner })
+    return scoreCandidateOffline({ corpus: dilCorpus, runner, guards: guardSpecsFor([]), metricEngine: createMetricEngine(), clock: new ManualClock(BASE_TS), ids: new SequentialIdGenerator('keystone5'), harnessVersion: 'h5' })
+  }
+  // A liar that claims g_many resolved (reminder-attributed) ONLY for the batching candidate (b > 0).
+  const dilLiar: Planner = (input) => {
+    const honest = [...rsvpCadencePlanner(input)]
+    if (input.genome.parameters.reminder_batching === 0) return honest // baseline stays honest
+    append(honest, input, EVENT_NAMES.guest_rsvp_received, 'guest', { guest_id: 'g_many', rsvp_status: 'yes' })
+    return honest
+  }
+
+  it('claims a resolution batching diluted away: numerator up vs champion, but VETOED + rejected', () => {
+    const r = scoreDil(dilLiar)
+    expect(candValue(r, METRIC_CODES.rsvp_resolution_rate)).toBeGreaterThan(baseValue(r, METRIC_CODES.rsvp_resolution_rate)) // RED: the forge moved the metric above the champion
+    expect(integrityFailed(r)).toBe(true) // GREEN: Stage B authored no trusted outcome for g_many → forged_effect
+    expect(r.decision.accepted).toBe(false) // the forge does not pay
+  })
+
+  it('the HONEST batching candidate is gate-CLEAN — the veto targets the lie, not batching itself', () => {
+    const r = scoreDil(rsvpCadencePlanner)
+    expect(integrityFailed(r)).toBe(false) // honest claims (g_many diluted out, unclaimed) match the trusted record
+  })
+})
