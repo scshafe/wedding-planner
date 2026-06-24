@@ -66,7 +66,7 @@ engineering choices; keep the safety rails firm.
   - Verify: a test scores a known candidate across the corpus and asserts the `grade_report` + accept/reject decision matches the rule in `scoring_model.md`.
   - Specialist: `testineer` *(the estimand and the accept-rule oracle are subtle; get the test strategy right).*
 
-- [ ] **Step 10: Wire the offline pipeline end-to-end.**
+- [x] **Step 10: Wire the offline pipeline end-to-end.**
   - Connect trusted recorder → gates → scoring → ledger: scoring a candidate produces a `grade_report` and an `offline_passed`/`offline_rejected` ledger transition with `decided_by: deterministic_selector` (`loop-orchestrator/loop_architecture.md` stage machine).
   - Verify: an integration test runs one candidate through the whole offline path and asserts the chained ledger entry + the `offline_result` payload.
 

@@ -85,4 +85,21 @@ export {
   COUPLE_COST_WEIGHTS,
   AGGREGATION_WEIGHTS,
   ACCEPT_TOLERANCES,
+  NORMALIZATION_ANCHORS,
+  GUARD_DIRECTIONS,
 } from './scoring/scoring_constants'
+export {
+  deriveNorthStarInputs,
+  guardSpecsFor,
+  type MetricValues,
+} from './scoring/metric_normalization'
+export {
+  scoreCandidateOffline,
+  type OfflineScoreResult,
+  type PerScenarioScore,
+  type ProductRunner,
+  type ProductVariant,
+  type ScenarioDefinition,
+  type ScenarioExecution,
+  type ScoreCandidateOfflineArgs,
+} from './scoring/offline_scorer'

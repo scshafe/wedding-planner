@@ -36,3 +36,11 @@ export {
   type ChainVerification,
 } from './ledger/ledger_hashing'
 export { type TransitionSigner, HmacTransitionSigner } from './ledger/transition_signer'
+
+// Offline pipeline (the deterministic selector — recorder -> gates -> scoring -> ledger)
+export {
+  runOfflineSelection,
+  computeSurpriseCheck,
+  type OfflineSelectionResult,
+  type SurpriseCheck,
+} from './pipeline/deterministic_selector'
