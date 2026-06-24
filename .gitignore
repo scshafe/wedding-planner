@@ -3,9 +3,12 @@
 *.swp
 *~
 
-# Local session state — not shared (handoff notes, lock files)
+# Local session state — not shared (lock files, machine-local notes)
 *.local.md
 .claude/*.lock
+# EXCEPTION: the handoff IS the autonomous loop's continuation state — it must travel with the repo
+# so a fresh clone (e.g. on the build server) can pick up where the last run left off. Committed.
+!.claude/handoff.local.md
 
 # Dependencies / build output (forward-looking, once implementation starts)
 node_modules/

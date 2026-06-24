@@ -1,0 +1,16 @@
+[Unit]
+Description=Autonomous build run for the wedding-planner repo (one shot; the timer schedules it)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Edit WorkingDirectory + ExecStart if you cloned somewhere other than ~/wedding-planner.
+WorkingDirectory=%h/wedding-planner
+ExecStart=/usr/bin/env bash %h/wedding-planner/ops/run.sh
+# Uncomment/adjust as needed for your server:
+# Environment=CLAUDE_BIN=%h/.local/bin/claude
+# Environment=WP_MODEL=opus
+# Environment=WP_EFFORT=high
+# Generous cap: a full build session can take many minutes.
+TimeoutStartSec=7200
