@@ -2,9 +2,19 @@ import { type OfflineScoreResult, type PerScenarioScore } from '@wedding-planner
 import type { CandidateChange, Clock, IdGenerator } from '@wedding-planner/shared'
 
 import { type Ledger } from '../ledger/ledger'
-import { DECIDED_BY, STAGES } from '../loop_orchestrator_constants'
+import { DECIDED_BY, FINAL_DISPOSITIONS, STAGES } from '../loop_orchestrator_constants'
 import { runOfflineSelection } from '../pipeline/deterministic_selector'
 import { type Proposer } from '../proposer/proposer'
+
+/**
+ * A pre-score gate verdict (Phase 2: the risk-tier reconciliation). `ok: false` rejects the candidate
+ * BEFORE scoring — a firewall rejection, not a fitness one. Kept structural so the generic loop does
+ * not depend on the reconciliation module.
+ */
+export interface PreScoreGateVerdict {
+  readonly ok: boolean
+  readonly detail?: string
+}
 
 /**
  * @canonical offline_loop -- the fast offline clock: a continuous propose -> score -> ledger -> learn
@@ -32,6 +42,17 @@ export interface OfflineLoopConfig {
   readonly maxDryIterations: number
   /** Hard cap on iterations (the compute/token budget bound); optional. */
   readonly maxIterations?: number
+  /**
+   * Optional pre-score firewall gate (Phase 2: risk-tier reconciliation). Runs after the candidate is
+   * implemented and BEFORE scoring; `ok: false` writes a risk_tier_gate rejection and skips scoring —
+   * a candidate that fails the firewall is never even fitness-evaluated.
+   */
+  readonly preScoreGate?: (candidate: CandidateChange) => PreScoreGateVerdict
+  /**
+   * Optional hook fired after a candidate is ACCEPTED offline (Phase 2: promote the champion + record
+   * genome lineage). The loop calls this so the next iteration's scorer sees the new champion.
+   */
+  readonly onAccepted?: (candidate: CandidateChange) => void
 }
 
 export type LoopTerminationReason = 'dry' | 'budget_exhausted' | 'proposer_exhausted'
@@ -102,6 +123,28 @@ export function runOfflineLoop(config: OfflineLoopConfig): OfflineLoopSummary {
       rationale: candidate.hypothesis.rationale,
     })
 
+    // Pre-score firewall gate (Phase 2): a candidate that fails the risk-tier reconciliation is
+    // rejected here, BEFORE any fitness scoring — the firewall comes before the optimizer.
+    const gate = config.preScoreGate?.(candidate)
+    if (gate !== undefined && !gate.ok) {
+      const detail = gate.detail ?? 'risk-tier reconciliation failed'
+      config.ledger.append({
+        candidate_id: candidate.candidate_id,
+        from_state: STAGES.implemented,
+        to_state: STAGES.offline_rejected,
+        decided_by: DECIDED_BY.risk_tier_gate,
+        rationale: detail,
+        evidence_ref: candidate.change.artifact_ref,
+      })
+      config.ledger.setFinalDisposition(candidate.candidate_id, FINAL_DISPOSITIONS.rejected_offline)
+      config.ledger.addLesson(candidate.candidate_id, `risk_tier_gate: ${detail}`)
+      iterations += 1
+      rejected += 1
+      consecutiveDry += 1
+      lessons.push(...(config.ledger.getEntry(candidate.candidate_id)?.lessons ?? []))
+      continue
+    }
+
     const scoreResult = config.scoreCandidate(candidate)
     const selection = runOfflineSelection(candidate, scoreResult, config.ledger)
     iterations += 1
@@ -111,6 +154,7 @@ export function runOfflineLoop(config: OfflineLoopConfig): OfflineLoopSummary {
       accepted += 1
       acceptedCandidateIds.push(candidate.candidate_id)
       consecutiveDry = 0 // progress un-dries the search
+      config.onAccepted?.(candidate) // Phase 2: promote the champion so the next iteration ratchets.
     } else {
       rejected += 1
       consecutiveDry += 1
