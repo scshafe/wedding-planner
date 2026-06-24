@@ -9,10 +9,12 @@ import { assertValidGenome, canonicalGenomeHash, type StrategyGenome } from '@we
  *
  * OFFLINE-ONLY SIMPLIFICATION (documented, deliberate): in the full design promotion is an ONLINE
  * outcome (shadow -> canary -> ramp -> promoted); offline there is no `promoted` transition, so the
- * loop advances the champion on offline-ACCEPT — the closest legitimate signal. The champion ratchets
- * monotonically (every accepted candidate raises the bar), which is exactly real hill-climbing. The
- * champion's lineage is recorded as EVIDENCE in the append-only ledger (the genome hash on the
- * accepting transition), never as mutable state here — this store holds only "who is champion now".
+ * loop advances the champion on offline-ACCEPT — the closest legitimate signal. The champion then
+ * ratchets monotonically (every accepted candidate raises the bar) — a local hill-climb. NOTE the
+ * ratchet only EXECUTES once the loop calls `promote()` on accept (wired in Step 7); this store is the
+ * mechanism, the loop is the policy. The champion's lineage is recorded as EVIDENCE in the append-only
+ * ledger (the genome hash on the accepting transition), never as mutable state here — this store holds
+ * only "who is champion now".
  *
  * related: genome_registry.ts, loop/offline_loop.ts, ledger/ledger.ts.
  */

@@ -63,3 +63,11 @@ export {
 // content-addressed registry that resolves a candidate's artifact_ref to its genome.
 export { ChampionStore } from './genome/champion_store'
 export { GenomeRegistry } from './genome/genome_registry'
+export {
+  SearchProposer,
+  type SearchProposerSpec,
+} from './proposer/search_proposer'
+export {
+  reconcileCandidateRiskTier,
+  type RiskTierReconciliation,
+} from './pipeline/risk_tier_reconciliation'
