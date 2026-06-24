@@ -447,6 +447,121 @@ describe('the 2-D North-Star matrix — pinned, with a STRICT interior optimum',
   })
 })
 
+// ---------------------------------------------------------------------------------------------------
+// PHASE 5 — the 3-D (cadence × spacing × batching) North-Star cube oracle.
+// ---------------------------------------------------------------------------------------------------
+
+/** The aggregate North Star a (cadence, spacing, batching) genome scores over the keystone corpus. */
+function aggregateNorthStar3d(cadence: number, spacing: number, batching: number): number {
+  const genome: StrategyGenome = makeGenome(cadence, spacing, batching)
+  let weighted = 0
+  let totalWeight = 0
+  for (const scenario of KEYSTONE_CORPUS) {
+    const run = makePlannerSimulator({
+      championGenome: genome,
+      candidateGenome: genome,
+      candidateArtifactRef: genomeArtifactRef(genome),
+      baseTimestamp: BASE_TS,
+    })
+    const events = run(scenario, 'candidate').productEvents
+    const comps = engine.computeMany(engine.metricCodes(), events, scenario.scenario_id)
+    const mv: Record<string, number | null> = {}
+    for (const c of comps) mv[c.metric_code] = c.value
+    const ratio = computeNorthStar(deriveNorthStarInputs(mv, scenario.couple), false).ratio
+    const weight = AGGREGATION_WEIGHTS[scenario.scenario_type as keyof typeof AGGREGATION_WEIGHTS] ?? 1
+    weighted += weight * ratio
+    totalWeight += weight
+  }
+  return weighted / totalWeight
+}
+
+/** The full 4×4×4 cube: cube[cadence][spacing][batching]. */
+function cube(): number[][][] {
+  return [0, 1, 2, 3].map((c) =>
+    [0, 1, 2, 3].map((s) => [0, 1, 2, 3].map((b) => Number(aggregateNorthStar3d(c, s, b).toFixed(4)))),
+  )
+}
+
+/** argmax cadence at a fixed (spacing, batching) (lowest cadence on a tie). */
+function argmaxCadenceAt(cb: number[][][], spacing: number, batching: number): number {
+  let best = 0
+  for (let c = 1; c <= 3; c += 1) {
+    if ((cb[c]?.[spacing]?.[batching] ?? -1) > (cb[best]?.[spacing]?.[batching] ?? -1)) best = c
+  }
+  return best
+}
+
+/** argmax batching at a fixed (cadence, spacing) (lowest batching on a tie). */
+function argmaxBatchingAt(cb: number[][][], cadence: number, spacing: number): number {
+  let best = 0
+  for (let b = 1; b <= 3; b += 1) {
+    if ((cb[cadence]?.[spacing]?.[b] ?? -1) > (cb[cadence]?.[spacing]?.[best] ?? -1)) best = b
+  }
+  return best
+}
+
+describe('the 3-D North-Star cube — interior on the NEW axis, non-separable, dominates every b=0 point', () => {
+  // HONEST-CLAIMS BOUNDARY (wolf): the cube optimum (cadence 3, spacing 1, batching 1) is INTERIOR on
+  // batching and spacing but sits on the cadence FACE (3). We therefore do NOT claim a "3-D interior
+  // optimum"; we claim exactly: interior on the NEW (batching) axis, genuinely NON-SEPARABLE (the optimal
+  // cadence flips with batching), and strictly DOMINATES every point the old 2-D search (batching pinned 0)
+  // can reach. The keystone proves the loop-level version (a full-box sweep escapes a coordinate-descent trap).
+  const OPT = { c: 3, s: 1, b: 1 }
+
+  it('the b=0 slice of the cube is byte-identical to the pinned 2-D matrix (backward-compat)', () => {
+    const cb = cube()
+    const b0 = [0, 1, 2, 3].map((c) => [0, 1, 2, 3].map((s) => cb[c]?.[s]?.[0] as number))
+    expect(b0).toEqual(matrix())
+  })
+
+  it('has a UNIQUE global optimum at (cadence 3, spacing 1, batching 1), STRICT over its axis neighbours', () => {
+    const cb = cube()
+    const gVal = cb[OPT.c]?.[OPT.s]?.[OPT.b] as number
+    // Interior on the NEW axis (batching) and on spacing; cadence is at the face (3) — see the boundary note.
+    expect(OPT.b).toBeGreaterThan(0)
+    expect(OPT.b).toBeLessThan(3)
+    expect(OPT.s).toBeGreaterThan(0)
+    expect(OPT.s).toBeLessThan(3)
+    // Strict over the 6 axis neighbours (the in-box ones; cadence+1 is out of box at the face).
+    const margins: number[] = []
+    for (const [dc, ds, db] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+      const n = cb[OPT.c + dc]?.[OPT.s + ds]?.[OPT.b + db]
+      if (n !== undefined) {
+        expect(gVal, `(${OPT.c + dc},${OPT.s + ds},${OPT.b + db}) must be < optimum`).toBeGreaterThan(n)
+        margins.push(gVal - n)
+      }
+    }
+    // Finite margin (not a knife-edge): smallest gap to an axis neighbour is ~0.0130.
+    expect(Math.min(...margins)).toBeGreaterThan(0.01)
+    // Unique global argmax of the whole cube.
+    const flat = cb.flat(2)
+    expect(Math.max(...flat)).toBe(gVal)
+    expect(flat.filter((v) => v === gVal).length).toBe(1)
+  })
+
+  it('REQUIRES the third knob: the cube optimum strictly beats EVERY batching-0 point', () => {
+    // The old 2-D search can only emit batching 0. The true optimum lives at batching 1, so any
+    // batching-0-locked search is strictly suboptimal — the formal reason the search MUST explore the 3rd
+    // dimension (the keystone proves the loop-level version: a full-box sweep escapes a CD trap at (2,1,0)).
+    const cb = cube()
+    const optimum = Math.max(...cb.flat(2))
+    const bestAtBatching0 = Math.max(...cb.flatMap((cs) => cs.map((sb) => sb[0] as number)))
+    expect(optimum).toBeGreaterThan(bestAtBatching0)
+  })
+
+  it('is NON-SEPARABLE in BOTH directions: optimal cadence depends on batching AND optimal batching on cadence', () => {
+    const cb = cube()
+    // Direction 1 — the optimal cadence FLIPS with batching at spacing 1: 2 at b=0 (the old 2-D optimum),
+    // 3 at b=1 (the digest dilutes a 2-reminder guest, so a higher cadence is needed to resolve it).
+    expect([0, 1, 2, 3].map((b) => argmaxCadenceAt(cb, 1, b))).toEqual([2, 3, 1, 1])
+    // Direction 2 — the optimal batching depends on cadence at spacing 1: a genuine 3-way interaction,
+    // not two independent caps sharing one axis. (At cadence 3 the digest wins; at low cadence it does not.)
+    const argbByCadence = [0, 1, 2, 3].map((c) => argmaxBatchingAt(cb, c, 1))
+    expect(new Set(argbByCadence).size).toBeGreaterThan(1)
+    expect(argmaxBatchingAt(cb, 3, 1)).toBe(1)
+  })
+})
+
 describe('anti-no-op — the dual of the determinism test (catches a candidate-blind simulator)', () => {
   it('flipping ONLY rsvp_reminder_cadence changes the event stream AND moves the metric (correct sign)', () => {
     // A simulator that ignored the genome would pass determinism, the oracle relations vacuously, and

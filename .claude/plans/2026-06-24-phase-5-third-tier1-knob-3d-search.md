@@ -100,7 +100,7 @@ environment, so `general-purpose` reviewers were framed with the **doddy** (secu
   - Tests: `risk_tier.test.ts` — a genome with `batching>0` still derives **tier 1**; `genome.test.ts` —
     content-hash re-baseline expected (hashes computed live, none pinned). `npm test` green.
 
-- [ ] **Step 2 — Wire batching into BOTH stages together + the model oracle (D2, the forge weld).**
+- [x] **Step 2 — Wire batching into BOTH stages together + the model oracle (D2, the forge weld).**
   - `stage_a_planner.ts`: `guestOutcome` reads `reminder_batching`; resolution via shared
     `effectiveNudges(delivered, batching) >= needed`; comfort via `feltTouches(received, batching)`. b=0 is
     a perfect reduction (assert by the preserved b=0 oracle).
