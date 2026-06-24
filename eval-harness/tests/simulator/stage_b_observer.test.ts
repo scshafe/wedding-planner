@@ -55,16 +55,21 @@ describe('Stage B — trusted RSVP-outcome authoring (reminder path, tier-1 geno
     expect(recorder.allCoupleSessions()).toHaveLength(0)
   })
 
-  it('agrees with the HONEST Stage A claimed resolution set (the gate-green prerequisite)', () => {
+  it('agrees with the HONEST Stage A claimed resolution set over the FULL 3-D box (the gate-green prerequisite)', () => {
+    // Phase 5: the sweep is now the whole cadence×spacing×batching cube (64 points). Stage A's reach
+    // dilution (effectiveNudges) and Stage B's trusted reminder-resolution MUST agree at every point, or
+    // an honest batched genome would self-veto on the integrity gate (suppressed/forged resolution).
     for (const cadence of [0, 1, 2, 3]) {
       for (const spacing of [0, 1, 2, 3]) {
-        const genome = makeGenome(cadence, spacing)
-        const trusted = new Set(
-          observeTrustedRecord(makeScenario('s', guests), genome)
-            .allRsvpOutcomes()
-            .map((r) => r.guest_id),
-        )
-        expect(honestResolvedGuestIds(genome, guests), `c${cadence} s${spacing}`).toEqual(trusted)
+        for (const batching of [0, 1, 2, 3]) {
+          const genome = makeGenome(cadence, spacing, batching)
+          const trusted = new Set(
+            observeTrustedRecord(makeScenario('s', guests), genome)
+              .allRsvpOutcomes()
+              .map((r) => r.guest_id),
+          )
+          expect(honestResolvedGuestIds(genome, guests), `c${cadence} s${spacing} b${batching}`).toEqual(trusted)
+        }
       }
     }
   })

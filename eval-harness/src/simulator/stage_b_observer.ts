@@ -4,6 +4,7 @@ import { TrustedRecorder } from '../trusted_recorder/trusted_recorder'
 import { type ScenarioDefinition } from '../scoring/offline_scorer'
 import {
   COUPLE_SESSION_ACTIVE_SECONDS,
+  effectiveNudges,
   escalationBudget,
   isCoupleResolvable,
   NEVER,
@@ -55,11 +56,17 @@ function resolvedStatus(guest: GuestPersona): 'yes' | 'no' {
   return guest.rsvp_truth.will_attend === 'no' ? 'no' : 'yes'
 }
 
-/** Whether reminders ALONE resolve this guest under the genome's cadence/spacing (Stage B's own calc). */
-function reminderResolves(guest: GuestPersona, cadence: number, spacing: number): boolean {
+/**
+ * Whether reminders ALONE resolve this guest under the genome's cadence/spacing/batching (Stage B's OWN
+ * calc, sharing only the FACTS with Stage A — never its emission path). PHASE-5: batching dilutes reach,
+ * so resolution requires `effectiveNudges(delivered, batching) >= needed` — the IDENTICAL computation
+ * Stage A applies. This mirror is load-bearing: without it an honest batched genome's claimed resolutions
+ * would diverge from the trusted record and the integrity gate would veto every honest tier-1 run.
+ */
+function reminderResolves(guest: GuestPersona, cadence: number, spacing: number, batching: number): boolean {
   const needed = REMINDERS_NEEDED[guest.rsvp_truth.response_latency] ?? NEVER
   const delivered = Math.min(cadence, spacingCapacity(spacing))
-  return needed !== NEVER && delivered >= needed
+  return needed !== NEVER && effectiveNudges(delivered, batching) >= needed
 }
 
 /**
@@ -84,12 +91,13 @@ export function observeTrustedRecord(
 
   const cadence = genome.parameters.rsvp_reminder_cadence
   const spacing = genome.parameters.reminder_spacing
+  const batching = genome.parameters.reminder_batching
   const autonomyThreshold = genome.parameters.autonomy_threshold
 
-  // Reminder-resolved guests (the same ground-truth need the cadence/spacing reach satisfies).
+  // Reminder-resolved guests (the same ground-truth need the cadence/spacing/batching reach satisfies).
   const pending: GuestPersona[] = []
   for (const guest of scenario.guests) {
-    if (reminderResolves(guest, cadence, spacing)) {
+    if (reminderResolves(guest, cadence, spacing, batching)) {
       recorder.recordRsvpOutcome({
         guest_id: guest.persona_id,
         rsvp_status: resolvedStatus(guest),

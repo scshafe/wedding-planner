@@ -10,7 +10,9 @@ import { buildEvent, EVENT_NAMES } from '@wedding-planner/telemetry'
 import { type ScenarioDefinition } from '../scoring/offline_scorer'
 import {
   COUPLE_SESSION_ACTIVE_SECONDS,
+  effectiveNudges,
   escalationBudget,
+  feltTouches,
   isCoupleResolvable,
   NEVER,
   REMINDERS_NEEDED,
@@ -47,6 +49,20 @@ import {
  *     (penalty(spacing) * nags(cadence)); the optimal cadence depends on spacing, and vice versa.
  * At spacing 0 the model is identical to Phase 2 (capacity(0) >= cadence_max, penalty == base), so the
  * Phase-2 anchored oracle values are preserved unchanged.
+ *
+ * PHASE-5 THIRD KNOB — `reminder_batching` (the delivery-grouping analogue of spacing). digestSize =
+ * batching + 1. Also FORGE-FREE: resolution still requires the ground-truth need met. Two-sided, via the
+ * SHARED digest fact (domain_facts.ts), and the SAME `ceil(x/digestSize)` operator on the two existing
+ * quantities — so batching 0 (digestSize 1) reduces EXACTLY to the Phase-3 model and the b=0 matrix slice
+ * is byte-identical:
+ *   - DOWNSIDE (reach dilution): a bundled digest lands as one effective nudge — resolution requires
+ *     effectiveNudges(delivered, batching) = ceil(delivered/digestSize) >= needed. Stage B applies the
+ *     IDENTICAL calc (it reads batching too), so honest runs agree and the integrity gate stays load-bearing.
+ *   - UPSIDE (comfort consolidation): feltTouches(remindersSent, batching) = ceil(remindersSent/digestSize)
+ *     fewer felt interruptions => fewer nags => gentler sentiment (a claimed-only signal; Stage B ignores it).
+ * The (cadence, spacing, batching) landscape is NON-SEPARABLE in 3-D: the optimal cadence depends on
+ * batching (the digest dilutes reach, so a higher cadence is needed to resolve a multi-reminder guest once
+ * its nudges are bundled) — pinned by the 3-D matrix test (metamorphic_oracle.test.ts).
  *
  * related: stage_b_observer.ts (the independent trusted record), planner_simulator.ts (wiring).
  */
@@ -113,19 +129,30 @@ interface GuestOutcome {
   readonly sentimentScore: number
 }
 
-/** Deterministically resolve one guest's RSVP outcome under a (cadence, spacing) genome. */
-function guestOutcome(guest: GuestPersona, cadence: number, spacing: number): GuestOutcome {
+/** Deterministically resolve one guest's RSVP outcome under a (cadence, spacing, batching) genome. */
+function guestOutcome(
+  guest: GuestPersona,
+  cadence: number,
+  spacing: number,
+  batching: number,
+): GuestOutcome {
   const needed = REMINDERS_NEEDED[guest.rsvp_truth.response_latency] ?? NEVER
   // Spacing caps how many of the cadence nudges actually fit in the window (the spacing downside).
   const delivered = Math.min(cadence, spacingCapacity(spacing))
-  // FORGE-FREE: resolution requires the ground-truth need to be MET by delivered nudges — never
-  // manufactured. A never-responder (needed === NEVER) can never resolve regardless of the genome.
-  const resolved = needed !== NEVER && delivered >= needed
+  // PHASE-5 batching: bundling DILUTES reach — `delivered` reminders carry only
+  // effectiveNudges = ceil(delivered/digestSize) effective nudges toward the ground-truth need.
+  // FORGE-FREE: resolution still requires the ground-truth need to be MET — never manufactured. A
+  // never-responder (needed === NEVER) can never resolve regardless of the genome. (Stage B applies the
+  // IDENTICAL effectiveNudges calc via the shared fact, so honest runs agree and the gate stays load-bearing.)
+  const resolved = needed !== NEVER && effectiveNudges(delivered, batching) >= needed
   // A resolved guest stops receiving reminders once they respond (at `needed`); an unresolved guest
   // (still pending, or a never-responder) receives the full delivered budget.
   const remindersSent = resolved ? needed : delivered
   const comfortCeiling = needed === NEVER ? 0 : Math.min(needed, COMFORT_CAP)
-  const nags = Math.max(0, remindersSent - comfortCeiling)
+  // PHASE-5 batching: bundling CONSOLIDATES interruptions — the `remindersSent` reminders are felt as
+  // feltTouches = ceil(remindersSent/digestSize) interruptions, each beyond comfort a nag. At b=0 this
+  // is remindersSent unchanged. (Comfort is a claimed-only signal; Stage B does not read this.)
+  const nags = Math.max(0, feltTouches(remindersSent, batching) - comfortCeiling)
   // Each nag is gentler at higher spacing (the spacing upside) — the multiplicative interaction.
   const sentimentScore = Math.max(0, Math.min(1, 1 - penaltyPerNag(spacing) * nags))
   return { resolved, remindersSent, sentimentScore }
@@ -135,6 +162,7 @@ function guestOutcome(guest: GuestPersona, cadence: number, spacing: number): Gu
 export const rsvpCadencePlanner: Planner = ({ scenario, genome, clock, ids }) => {
   const cadence = genome.parameters.rsvp_reminder_cadence
   const spacing = genome.parameters.reminder_spacing
+  const batching = genome.parameters.reminder_batching
   const events: EventEnvelope[] = []
 
   const emit = (
@@ -164,7 +192,7 @@ export const rsvpCadencePlanner: Planner = ({ scenario, genome, clock, ids }) =>
   const pending: GuestPersona[] = []
   for (const guest of scenario.guests) {
     const guestId = guest.persona_id
-    const outcome = guestOutcome(guest, cadence, spacing)
+    const outcome = guestOutcome(guest, cadence, spacing, batching)
 
     emit(EVENT_NAMES.guest_rsvp_requested, 'rsvp', 'ai', guestId, { guest_id: guestId })
     for (let i = 0; i < outcome.remindersSent; i += 1) {

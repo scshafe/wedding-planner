@@ -84,7 +84,7 @@ environment, so `general-purpose` reviewers were framed with the **doddy** (secu
 
 ## Steps (each: `npm run build && npm test && npm run lint` green before ticking + commit)
 
-- [ ] **Step 1 — Schema + risk map + domain facts + fixtures (required knob, behavior UNCHANGED at b=0).**
+- [x] **Step 1 — Schema + risk map + domain facts + fixtures (required knob, behavior UNCHANGED at b=0).**
   - `shared/schemas/strategy_genome_schema.json`: add `reminder_batching` (integer, 0..3) to `parameters`
     and to `required`; description = the D1 tier-1 flow framing. Regenerate types (`npm run gen:types`).
   - `shared/src/strategy/risk_tier.ts`: add `reminder_batching: 'planning_flow_orchestration'` with the

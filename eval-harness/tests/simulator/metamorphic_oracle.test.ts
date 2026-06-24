@@ -207,6 +207,127 @@ describe('anti-no-op — flipping ONLY reminder_spacing changes the stream AND m
   })
 })
 
+// ---------------------------------------------------------------------------------------------------
+// PHASE 5 — the third knob (reminder_batching) and its non-circular oracle.
+// ---------------------------------------------------------------------------------------------------
+
+/** Run the simulator at a (cadence, spacing, batching) genome over a scenario and return metrics. */
+function runCSB(cadence: number, spacing: number, batching: number, scenario: ScenarioDefinition): {
+  events: readonly EventEnvelope[]
+  metric: (code: string) => number | null
+} {
+  const genome = makeGenome(cadence, spacing, batching)
+  const run = makePlannerSimulator({
+    championGenome: genome,
+    candidateGenome: genome,
+    candidateArtifactRef: refFor(genome),
+    baseTimestamp: BASE_TS,
+  })
+  const events = run(scenario, 'candidate').productEvents
+  const computations = engine.computeMany(engine.metricCodes(), events, scenario.scenario_id)
+  const byCode = new Map(computations.map((c) => [c.metric_code, c.value]))
+  return { events, metric: (code) => byCode.get(code) ?? null }
+}
+
+describe('ANCHORED oracle — reminder_batching values reasoned by hand, not read from the model', () => {
+  it('batching DILUTES reach: a guest needing 2 reminders un-resolves once a digest bundles them', () => {
+    // digestSize = batching + 1; effectiveNudges = ceil(delivered / digestSize). The
+    // after_multiple_reminders guest needs 2. At cadence 2, spacing 0: delivered = 2.
+    //   b0 (digestSize 1): ceil(2/1) = 2 >= 2 -> RESOLVED
+    //   b1 (digestSize 2): ceil(2/2) = 1 <  2 -> NOT resolved (the bundle lands as one effective nudge)
+    // Hand-reasoned from the digest meaning, hardcoded — a sign-flip/off-by-one in the ceil fails this.
+    const scn = makeScenario('s_batch_reach', [
+      makeGuest('guest_immediate', 'immediate', 'yes'),
+      makeGuest('guest_many', 'after_multiple_reminders', 'yes'),
+    ])
+    expect(runCSB(2, 0, 0, scn).metric('rsvp_resolution_rate')).toBe(1.0) // both resolved
+    expect(runCSB(2, 0, 1, scn).metric('rsvp_resolution_rate')).toBe(0.5) // only the immediate guest
+  })
+
+  it('batching CONSOLIDATES interruptions: a lone never-responder feels fewer nags as it bundles', () => {
+    // feltTouches = ceil(received / digestSize); each touch beyond a comfort ceiling of 0 is a nag;
+    // penaltyPerNag(spacing 0) = 0.25. never-responder at cadence 2 absorbs delivered = 2 reminders.
+    //   b0: feltTouches ceil(2/1)=2 nags 2 -> 1 - 0.25*2 = 0.50
+    //   b1: feltTouches ceil(2/2)=1 nags 1 -> 1 - 0.25*1 = 0.75
+    //   b3: feltTouches ceil(2/4)=1 nags 1 -> 0.75 (digest bigger than the 2 reminders; still one touch)
+    const scn = makeScenario('s_batch_comfort', [makeGuest('guest_never', 'never', 'maybe_needs_nudge')])
+    expect(runCSB(2, 0, 0, scn).metric('guest_sentiment_score')).toBe(0.5)
+    expect(runCSB(2, 0, 1, scn).metric('guest_sentiment_score')).toBe(0.75)
+    expect(runCSB(2, 0, 3, scn).metric('guest_sentiment_score')).toBe(0.75)
+  })
+})
+
+describe('metamorphic — reminder_batching is a reach/comfort tradeoff (monotone, non-vacuous)', () => {
+  const BATCHINGS = [0, 1, 2, 3]
+
+  it('raising batching never RAISES rsvp_resolution_rate (reach dilution is monotone) AND strictly drops', () => {
+    const scn = makeScenario('s_batch_mono_reach', [
+      makeGuest('guest_immediate', 'immediate', 'yes'),
+      makeGuest('guest_many', 'after_multiple_reminders', 'yes'),
+    ])
+    const rates = BATCHINGS.map((b) => runCSB(2, 0, b, scn).metric('rsvp_resolution_rate') ?? 0)
+    for (let i = 1; i < rates.length; i += 1) {
+      expect(rates[i]).toBeLessThanOrEqual(rates[i - 1] as number)
+    }
+    // Non-vacuous: the relation must actually MOVE across the band (a no-op knob would be flat).
+    expect(rates[rates.length - 1]).toBeLessThan(rates[0] as number)
+  })
+
+  it('raising batching never LOWERS guest_sentiment_score where reach is constant (comfort) AND strictly rises', () => {
+    // A lone never-responder: reach is constant (never resolved), so the ONLY moving part is comfort —
+    // isolating the consolidation upside without the reach-flip confound.
+    const scn = makeScenario('s_batch_mono_comfort', [makeGuest('guest_never', 'never', 'maybe_needs_nudge')])
+    const sentiments = BATCHINGS.map((b) => runCSB(2, 0, b, scn).metric('guest_sentiment_score') ?? 0)
+    for (let i = 1; i < sentiments.length; i += 1) {
+      expect(sentiments[i]).toBeGreaterThanOrEqual(sentiments[i - 1] as number)
+    }
+    expect(sentiments[sentiments.length - 1]).toBeGreaterThan(sentiments[0] as number)
+  })
+})
+
+describe('anti-no-op — flipping ONLY reminder_batching changes the stream AND moves a metric', () => {
+  it('at fixed (cadence, spacing), raising batching changes the events and LOWERS resolution (dilution sign)', () => {
+    // The dual of the cadence/spacing anti-no-op for the third dimension: a simulator that ignored
+    // reminder_batching would pass determinism + plumbing then never explore the 3rd axis. Pair (b0,b1)
+    // at cadence 2, spacing 0 on a guest the bundle dilutes out (after_multiple_reminders).
+    const scn = makeScenario('s_batch_antinoop', [
+      makeGuest('guest_immediate', 'immediate', 'yes'),
+      makeGuest('guest_many', 'after_multiple_reminders', 'yes'),
+    ])
+    const a = runCSB(2, 0, 0, scn)
+    const b = runCSB(2, 0, 1, scn)
+    expect(JSON.stringify(a.events)).not.toBe(JSON.stringify(b.events))
+    expect(b.metric('rsvp_resolution_rate') as number).toBeLessThan(
+      a.metric('rsvp_resolution_rate') as number,
+    )
+  })
+})
+
+describe('boundary fixed-points for batching (domain truths no digest can change)', () => {
+  it('an all-immediate scenario resolves to 1.0 for EVERY batching level (0 reminders need no nudge)', () => {
+    // immediate needs 0 reminders; effectiveNudges(delivered, batching) >= 0 holds at any batching, so
+    // dilution can never un-resolve a zero-reminder guest.
+    const scn = makeScenario('s_batch_allimmediate', [
+      makeGuest('guest_a', 'immediate'),
+      makeGuest('guest_b', 'immediate', 'no'),
+    ])
+    for (const batching of [0, 1, 2, 3]) {
+      expect(runCSB(2, 1, batching, scn).metric('rsvp_resolution_rate')).toBe(1)
+    }
+  })
+
+  it('rsvp_resolution_rate stays in [0,1] across the batching band', () => {
+    const scn = makeScenario('s_batch_invariant')
+    for (const batching of [0, 1, 2, 3]) {
+      const rate = runCSB(2, 1, batching, scn).metric('rsvp_resolution_rate')
+      if (rate !== null) {
+        expect(rate).toBeGreaterThanOrEqual(0)
+        expect(rate).toBeLessThanOrEqual(1)
+      }
+    }
+  })
+})
+
 // The keystone corpus (same guest mix as the loop keystone): one immediate, one one-reminder, one
 // multi-reminder no-show, one never-responder, over a golden + an adversarial scenario.
 const KEYSTONE_GUESTS = [
