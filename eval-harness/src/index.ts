@@ -103,3 +103,13 @@ export {
   type ScenarioExecution,
   type ScoreCandidateOfflineArgs,
 } from './scoring/offline_scorer'
+
+// Planner simulator (Phase 2): the offline product, Stage A (claims) / Stage B (trusted record),
+// content-address-enforced. Turns the candidate-blind ProductRunner into a real, genome-driven one.
+export {
+  makePlannerSimulator,
+  GenomeArtifactRefMismatchError,
+  type PlannerSimulatorConfig,
+} from './simulator/planner_simulator'
+export { type Planner, type PlannerInput, rsvpCadencePlanner } from './simulator/stage_a_planner'
+export { observeTrustedRecord } from './simulator/stage_b_observer'
