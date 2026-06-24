@@ -46,6 +46,20 @@ commit on a branch — never a real-world action.
   persists (`claude login` once, interactively, on the server) or an API key in the environment
   (`ANTHROPIC_API_KEY`). Verify with:
   `claude --dangerously-skip-permissions -p "say OK" </dev/null` → prints `OK`.
+- **The specialist sub-agents and workflow skills the loop relies on.** The loop adversarially
+  verifies consequential work with sub-agents (`doddy`, `testineer`, `rigorous-architect`, `wolf`,
+  `proofreader`, `makeover`, `codd`, `cartographer`) and uses workflow skills (`executing-plans`,
+  `writing-plans`, `agent-first-engineering`, `session-handoff`). These live in your Claude Code
+  config, **not** in this repo. Provision them on the server one of two ways:
+  - **Sync your `~/.claude`** to the server (the simplest — brings agents *and* skills, plus your
+    auth). Most dotfile setups already do this.
+  - **or bundle them into the repo** under `.claude/agents/` (project-scoped) if you'd rather the
+    repo be fully self-contained — the loop will find them there. (Not done by default, to avoid
+    publishing your personal agent prompts without your say-so.)
+
+  The loop degrades gracefully if a *skill* is missing (CLAUDE.md describes the same workflows), but a
+  missing *specialist agent* means that review is skipped — so make sure at least the agents are
+  present for the loop's safety reviews to run.
 
 ### One-time setup
 ```bash
