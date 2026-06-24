@@ -47,7 +47,7 @@ Grounding files: `loop-orchestrator/proposer_design.md`, `loop-orchestrator/risk
   - Verify: `npm test` — all of the above pass; **no test asserts a hand-counted interior event total** (each assertion is a relation between two runs, a domain fixed-point, or an invariant).
   - Notes: this is the keystone *unit*-level guard against the "simulator models nothing real" / "candidate-blind" failure that passes every other test.
 
-- [ ] **Step 5: The `ChampionStore` + genome registry wiring (in `loop-orchestrator`).**
+- [x] **Step 5: The `ChampionStore` + genome registry wiring (in `loop-orchestrator`).**
   - An injected `ChampionStore` seeded with a champion genome (the "current product"); `current()` returns it, `promote(genome)` advances it. An injected content-addressed genome registry (`genomeHash → genome`, a plain Map passed in — no stateful singleton) the proposer writes and the simulator resolves. Document the offline-only simplification (promote on offline-accept; offline has no `promoted` transition).
   - Verify: `npm test` — tests assert seed→current, promote advances current, registry resolves a registered genome and rejects an unregistered/hash-mismatched ref.
 

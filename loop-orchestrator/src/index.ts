@@ -58,3 +58,8 @@ export {
   type OfflineLoopSummary,
   type LoopTerminationReason,
 } from './loop/offline_loop'
+
+// Strategy substrate (Phase 2): the champion (the standard a candidate must beat) + the
+// content-addressed registry that resolves a candidate's artifact_ref to its genome.
+export { ChampionStore } from './genome/champion_store'
+export { GenomeRegistry } from './genome/genome_registry'

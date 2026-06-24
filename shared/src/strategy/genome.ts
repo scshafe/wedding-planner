@@ -53,6 +53,16 @@ export function genomeArtifactRef(genome: StrategyGenome): string {
 }
 
 /**
+ * Extract the content hash from a genome artifact_ref, or null if the ref is not a `genome:` address.
+ * A null return is refuse-and-halt for a resolver — never a cue to fabricate or regenerate a ref.
+ */
+export function parseGenomeArtifactRef(artifactRef: string): string | null {
+  return artifactRef.startsWith(GENOME_ARTIFACT_REF_PREFIX)
+    ? artifactRef.slice(GENOME_ARTIFACT_REF_PREFIX.length)
+    : null
+}
+
+/**
  * The outcome of checking a genome against a committed `artifact_ref`. Three states, deliberately
  * distinguished so an enforcement caller cannot collapse `malformed_ref` into "regenerate the ref and
  * proceed" (which would re-derive the ref from whatever is about to run and always match — a no-op

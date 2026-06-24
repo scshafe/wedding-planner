@@ -48,6 +48,7 @@ export {
   assertValidGenome,
   canonicalGenomeHash,
   genomeArtifactRef,
+  parseGenomeArtifactRef,
   classifyGenomeArtifactRef,
   genomeMatchesArtifactRef,
   type GenomeArtifactRefVerdict,
