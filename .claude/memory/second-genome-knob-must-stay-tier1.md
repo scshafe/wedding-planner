@@ -40,3 +40,14 @@ falling with spacing) — so the optimal cadence depends on spacing and the 2-D 
 a corner. Escalation-as-tier-2 is still worth building LATER as the phase that makes the firewall's
 tier-2 human-gate + integrity forge-detection load-bearing — but as its own gated phase, never folded
 into the autonomous search.
+
+**UPDATE (Phase 4a, the split happened).** This deferred work was split into two phases on adversarial
+review. **Phase 4a built the tier-2 promotion GATE** ([[tier2-promotion-gate-is-load-bearing]]): the
+loop now PARKS any accepted tier-2 candidate absent an exogenous human approval, proven with an
+*injected* tier-2 candidate via the optional unwired `autonomy_threshold` knob — no escalation, no new
+simulator, no forge surface (which is exactly why folding escalation into the search was rejected again).
+**Phase 4b is the still-pending escalate-to-couple knob + forge-detection** — the headline P0 there is
+the metric-reads-claims seam (`offline_scorer` scores the CLAIMED event stream, so a forged couple-
+resolution must be tied back to a trusted record, not just a new escalation effect-kind), and it must
+also redefine the convergence certificate as "no PROMOTABLE point" (see
+[[search-convergence-certificate-semantics]] §4) before tier-2 enters the autonomous search.

@@ -1,8 +1,8 @@
 # Phase 4a — Make the tier-2 human-gate load-bearing (the promotion gate)
 
-**Status:** PLANNED — not started. **Branch:** continue on `build/phase-3-generalize-search` (Phase 3 is
-the open review artifact for `main`; 4a builds on it) or a fresh `build/phase-4a-tier2-gate` if 3 has
-merged. **Predecessor:** Phase 3 (generalized 2-D search) — complete.
+**Status:** COMPLETE — all 6 steps ticked (210 tests green). **Branch:** `build/phase-3-generalize-search`
+(Phase 3 is the open review artifact for `main`; 4a builds on it). **Predecessor:** Phase 3
+(generalized 2-D search) — complete.
 
 ## Why this phase (and why it is SPLIT from escalation)
 The handoff's recommended next work was "the tier-2 escalate-to-couple knob as its own gated phase —
@@ -102,7 +102,7 @@ rejection, not park.** [R-sec-P1-4, R-arch-P0-park]
 
 ## Steps (each: `npm run build && npm test && npm run lint` green before ticking + committing)
 
-- [ ] **Step 1 — the tier-2 genome knob (optional, unwired) + risk derivation (D2, D3).**
+- [x] **Step 1 — the tier-2 genome knob (optional, unwired) + risk derivation (D2, D3).**
   - `strategy_genome_schema.json`: add `autonomy_threshold` (integer, min 1, max 3) to
     `parameters.properties` (keep `additionalProperties:false`; do **NOT** add it to `required`). Pin its
     meaning in the description: tier-2 `commitment_autonomy`; presence elevates the whole genome to
@@ -117,7 +117,7 @@ rejection, not park.** [R-sec-P1-4, R-arch-P0-park]
     sorted; range 1..3 enforced (0 and 4 are schema-invalid). Confirm every existing fixture (tier-1)
     still validates unchanged — **no genome hash re-baseline** (optional absent param ⇒ identical hashes).
 
-- [ ] **Step 2 — the promotion seam goes tier-aware with a three-way outcome (D3, D6).**
+- [x] **Step 2 — the promotion seam goes tier-aware with a three-way outcome (D3, D6).**
   - In `offline_loop.ts`, replace the binary `accepted → onAccepted` with a three-way result. On an
     accepted candidate, re-resolve the genome from `artifact_ref` and re-derive tier via
     `deriveRiskTier` **at the seam** (never `candidate.risk_tier`). `tier ≤ 1` → promote path (today's
@@ -127,7 +127,7 @@ rejection, not park.** [R-sec-P1-4, R-arch-P0-park]
     `awaiting_oversight` when a run ends with a parked candidate and no promotion.
   - Assert: a tier-2 accept with no approvals leaves the champion unchanged (the rail).
 
-- [ ] **Step 3 — the `human_gate` consumer: exogenous approval + landing-key binding + idempotency
+- [x] **Step 3 — the `human_gate` consumer: exogenous approval + landing-key binding + idempotency
     (D4, D5, D6).**
   - Add a read-only approval source to the loop config: `approvals?: readonly OversightRecord[]` (or a
     small `ApprovalStore` with only `find(landingKey)` + `markSpent`). The loop NEVER constructs an
@@ -145,14 +145,14 @@ rejection, not park.** [R-sec-P1-4, R-arch-P0-park]
   - Validate every constructed/consumed `OversightRecord` against `oversight_record_schema.json` (use the
     schema registry; never redefine the shape).
 
-- [ ] **Step 4 — wire the gate through `genome_offline_loop.ts` + the non-self-approval guard (D4).**
+- [x] **Step 4 — wire the gate through `genome_offline_loop.ts` + the non-self-approval guard (D4).**
   - Thread the `approvals` config through `genome_offline_loop.ts`; `onAccepted` becomes the tier-aware
     seam from Step 2 (re-derive + branch), not a direct `promote`.
   - A structural test asserts there is no loop code path that constructs an approval (the approval type is
     consumed read-only; e.g. the loop module exports no approval constructor and the gate only calls
     `find`/`markSpent`). Document key-custody as the prod hardening (memory).
 
-- [ ] **Step 5 — THE KEYSTONE (the gate is load-bearing).**
+- [x] **Step 5 — THE KEYSTONE (the gate is load-bearing).**
   - **(a) no-approval parks:** an INJECTED tier-2 candidate (genome = optimal tier-1 knobs +
     `autonomy_threshold`) that PASSES the accept rule against a *suboptimal* champion is NOT promoted;
     champion unchanged; a `parked` transition is ledgered; terminal reason `awaiting_oversight`.
@@ -172,7 +172,7 @@ rejection, not park.** [R-sec-P1-4, R-arch-P0-park]
     EMPTY ⇒ the champion never becomes the tier-2 genome; the run terminates honestly (parked /
     `awaiting_oversight`), never `promoted`/`converged`-as-if-landed. [R-sec invariant 1]
 
-- [ ] **Step 6 — ADR + memory + handoff.**
+- [x] **Step 6 — ADR + memory + handoff.**
   - `docs/adr/0003-tier2-promotion-gate.md`: D1–D6 (the split, derived-tier-at-seam, exogenous approval,
     landing-key = genome‖champion, three-way outcome, certificate-stays-tier-1).
   - Memory: **tier-2-promotion-gate-is-load-bearing** (exogenous read-only approval; absent⇒park,

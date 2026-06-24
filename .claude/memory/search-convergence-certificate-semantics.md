@@ -42,3 +42,17 @@ were tuned to that matrix — never the North Star weights.
 so over the finite content-addressed genome box promotions are bounded and no champion recurs — true
 even with binding guards (a guard can reject but never make an accept non-monotone in North Star). The
 trajectory-relative tabu (keyed on champion hash) therefore cannot cycle.
+
+**4. DEFERRED FIX for 4b — `converged` must become "no PROMOTABLE point" once tier-2 enters the search.**
+Phase 4a added the tier-2 promotion gate ([[tier2-promotion-gate-is-load-bearing]]): an accepted tier-2
+candidate PARKS (not promoted) absent a human approval. This is safe in 4a because the autonomous search
+box is tier-1 only, so parking never happens mid-sweep and the certificate above is unchanged. But if 4b
+(or any phase) lets the autonomous proposer emit tier-2 (escalation>0) candidates, a parked point is
+**acceptable-but-not-promotable** — it passes the accept rule yet does not ratchet the champion. The
+current certificate ("no ACCEPTABLE point") would then FALSELY fire while a strictly-better point sits
+parked. Before that, redefine: **promotable = acceptable AND tier ≤ 1 (or approved)**; `converged` =
+"no PROMOTABLE point against the standing champion"; a parked-but-acceptable point gets a DISTINCT
+terminal (`awaiting_oversight`), never `converged`/`dry`. Also re-prove termination: split the bound into
+`promotions ≤ boxSize` (kept) and `parks` bounded per champion (a parked genome can re-surface once per
+distinct champion after a ratchet). The Phase-3 `accepts ≤ boxSize` runtime assertion will NOT hold once
+parks exist.
