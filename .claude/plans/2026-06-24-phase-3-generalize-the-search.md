@@ -119,7 +119,7 @@ so requiring it does NOT inflate any genome's tier. Cost: re-baseline fixtures/s
     (certificate) vs `dry` vs `budget_exhausted`, with the certificate's true meaning documented.
   - Assert the runtime invariants: `accepts ≤ boxSize`, no pair scored twice.
 
-- [ ] **Step 6 — THE KEYSTONE (the proof the generalization earns its keep).**
+- [x] **Step 6 — THE KEYSTONE (the proof the generalization earns its keep).**
   - **(a) old-algo-fails:** instantiate the OLD axis-aligned-distance-1 + global-tabu search (a faithful
     local reproduction in the test, ~30 lines) and assert it stalls at champion `S ≠ G` on the pinned
     non-separable landscape. *This test must be RED on the old algorithm* [R-search-P0-4].

@@ -7,8 +7,11 @@ import {
 } from '@wedding-planner/eval-harness'
 import {
   type CandidateChange,
+  canonicalGenomeHash,
+  deriveRiskTier,
   genomeArtifactRef,
   type GuestPersona,
+  type IdGenerator,
   ManualClock,
   SequentialIdGenerator,
   type StrategyGenome,
@@ -20,6 +23,8 @@ import {
   GenomeRegistry,
   HmacTransitionSigner,
   Ledger,
+  type Proposer,
+  type ProposerContext,
   runGenomeOfflineLoop,
   runOfflineSelection,
   SearchProposer,
@@ -302,5 +307,178 @@ describe('keystone — the full loop climbs to the interior optimum and ratchets
   it('BUDGET: a maxIterations cap below the search size stops with no certificate (budget_exhausted)', () => {
     const capped = runFullLoopWith(0, 0, { maxDryIterations: 20, maxIterations: 3 })
     expect(capped.summary.terminatedReason).toBe('budget_exhausted')
+  })
+})
+
+/**
+ * A faithful reproduction of the PRE-PHASE-3 search: 1-D (cadence-only, spacing PINNED at the seed),
+ * axis-aligned distance-1 ordering off the champion, with a GLOBAL tabu (one set, never cleared). This
+ * exists ONLY as a contrast fixture: the keystone below must be RED on this proposer and GREEN on the
+ * Phase-3 SearchProposer, or "the generalization earns its keep" is an untested claim.
+ */
+class LegacyOneDProposer implements Proposer {
+  private readonly globalTabu = new Set<string>()
+  private readonly pinnedSpacing: number
+
+  constructor(
+    private readonly clock: ManualClock,
+    private readonly ids: IdGenerator,
+    private readonly championStore: ChampionStore,
+    private readonly registry: GenomeRegistry,
+  ) {
+    this.pinnedSpacing = championStore.current().parameters.reminder_spacing
+  }
+
+  propose(context: ProposerContext): CandidateChange | null {
+    const base = this.championStore.current().parameters.rsvp_reminder_cadence
+    for (let distance = 1; distance <= 3; distance += 1) {
+      for (const cadence of [base + distance, base - distance]) {
+        if (cadence < 0 || cadence > 3) continue
+        const g: StrategyGenome = {
+          genome_id: `legacy_c${cadence}`,
+          parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: this.pinnedSpacing },
+        }
+        const hash = canonicalGenomeHash(g)
+        if (this.globalTabu.has(hash)) continue // GLOBAL tabu — never re-opens after a promotion
+        this.globalTabu.add(hash)
+        const artifactRef = this.registry.register(g)
+        return {
+          candidate_id: this.ids.next('cand'),
+          created_at: this.clock.now(),
+          author: 'ai_proposer',
+          hypothesis: {
+            target_capability: 'rsvp',
+            target_metric_code: 'rsvp_resolution_rate',
+            target_scenario_ids: ['golden_g', 'adv_a'],
+            expected_direction: 'increase',
+            guards_to_watch: ['guest_sentiment_score'],
+            rationale: `legacy cadence ${base}->${cadence} (iteration ${context.iteration})`,
+          },
+          change: {
+            change_type: 'flow',
+            summary: `legacy cadence ${cadence}`,
+            artifact_ref: artifactRef,
+            reversible: true,
+            capabilities_touched: ['rsvp'],
+          },
+          risk_tier: deriveRiskTier(g).tier,
+          status: 'proposed',
+        }
+      }
+    }
+    return null
+  }
+}
+
+describe('keystone — the generalization EARNS ITS KEEP (red on the old search, green on the new)', () => {
+  function loopWith(proposerFactory: (cs: ChampionStore, reg: GenomeRegistry) => Proposer, seedSpacing = 0) {
+    const championStore = new ChampionStore(genome2(0, seedSpacing))
+    const registry = new GenomeRegistry()
+    const ledger = new Ledger(new ManualClock(BASE_TS), new SequentialIdGenerator('ledgerEK'), new HmacTransitionSigner('phase3-key'))
+    const proposer = proposerFactory(championStore, registry)
+    const summary = runGenomeOfflineLoop({
+      proposer,
+      championStore,
+      registry,
+      corpus: CORPUS,
+      guards: [],
+      metricEngine: createMetricEngine(),
+      harnessVersion: 'h3',
+      baseTimestamp: BASE_TS,
+      ledger,
+      clock: new ManualClock(BASE_TS),
+      ids: new SequentialIdGenerator('loopEK'),
+      maxDryIterations: 20,
+    })
+    return { championStore, summary }
+  }
+
+  it('the OLD 1-D search STALLS at (cadence 2, spacing 0) — it cannot reach the spacing-1 optimum', () => {
+    const { championStore } = loopWith(
+      (cs, reg) => new LegacyOneDProposer(new ManualClock(BASE_TS), new SequentialIdGenerator('legacy'), cs, reg),
+    )
+    // The old search only moves cadence; spacing is pinned at the seed's 0. It climbs to cadence 2 but
+    // is STRUCTURALLY incapable of setting spacing 1 — so it ends strictly below the true optimum.
+    expect(championStore.current().parameters.rsvp_reminder_cadence).toBe(2)
+    expect(championStore.current().parameters.reminder_spacing).toBe(0)
+  })
+
+  it('the NEW 2-D search reaches the joint optimum (cadence 2, spacing 1) on the SAME landscape', () => {
+    const { championStore } = loopWith(
+      (cs, reg) => new SearchProposer(new ManualClock(BASE_TS), new SequentialIdGenerator('new'), cs, reg, {
+        target_capability: 'rsvp',
+        target_metric_code: 'rsvp_resolution_rate',
+        expected_direction: 'increase',
+        guards_to_watch: ['guest_sentiment_score'],
+        target_scenario_ids: ['golden_g', 'adv_a'],
+        change_type: 'flow',
+      }),
+    )
+    expect(championStore.current().parameters.rsvp_reminder_cadence).toBe(2)
+    expect(championStore.current().parameters.reminder_spacing).toBe(1) // the interaction win the old search misses
+  })
+
+  it('SPREAD-FIRST coverage beats champion-local coverage UNDER A BUDGET (the only place order matters)', () => {
+    // Under a full sweep the order is outcome-neutral; its value shows only under truncation. Compare
+    // the first K proposals' reach (max L1 distance from the seed champion) of the spread order vs a
+    // champion-local distance-1-first order. Spread must cover strictly farther within the same budget.
+    const K = 4
+    const championStore = new ChampionStore(genome2(0, 0))
+    const registry = new GenomeRegistry()
+    const proposer = new SearchProposer(new ManualClock(BASE_TS), new SequentialIdGenerator('cov'), championStore, registry, {
+      target_capability: 'rsvp',
+      target_metric_code: 'rsvp_resolution_rate',
+      expected_direction: 'increase',
+      guards_to_watch: [],
+      change_type: 'flow',
+    })
+    const l1 = (g: StrategyGenome) => g.parameters.rsvp_reminder_cadence + g.parameters.reminder_spacing // from (0,0)
+    let spreadReach = 0
+    for (let i = 0; i < K; i += 1) {
+      const g = registry.resolve((proposer.propose({ iteration: i, weakestCapability: 'rsvp', lessons: [] }) as CandidateChange).change.artifact_ref) as StrategyGenome
+      spreadReach = Math.max(spreadReach, l1(g))
+    }
+    // A champion-local (distance-1-first) order's first K points around (0,0) reach at most L1 = 2
+    // (e.g. (1,0),(0,1),(2,0),(1,1)). The spread order reaches farther.
+    const championLocalReachAtK = 2
+    expect(spreadReach).toBeGreaterThan(championLocalReachAtK)
+  })
+
+  it('GUARD-ACTIVE: converged means "no ACCEPTABLE point", not global optimum — and it still terminates', () => {
+    // With guest_sentiment_score a HARD guard, the joint optimum (cadence 2, spacing 1) is unreachable
+    // from the seed: every resolution-raising move regresses sentiment vs the seed and is vetoed. The
+    // loop must still TERMINATE (bounded promotions), and the certificate (if it converges) is honest:
+    // the champion is the best ACCEPTABLE point, not the global North-Star argmax (which is guarded out).
+    const championStore = new ChampionStore(genome2(0, 0))
+    const registry = new GenomeRegistry()
+    const ledger = new Ledger(new ManualClock(BASE_TS), new SequentialIdGenerator('ledgerG'), new HmacTransitionSigner('phase3-key'))
+    const proposer = new SearchProposer(new ManualClock(BASE_TS), new SequentialIdGenerator('guard'), championStore, registry, {
+      target_capability: 'rsvp',
+      target_metric_code: 'rsvp_resolution_rate',
+      expected_direction: 'increase',
+      guards_to_watch: ['guest_sentiment_score'],
+      target_scenario_ids: ['golden_g', 'adv_a'],
+      change_type: 'flow',
+    })
+    const summary = runGenomeOfflineLoop({
+      proposer,
+      championStore,
+      registry,
+      corpus: CORPUS,
+      guards: guardSpecsFor(['guest_sentiment_score']), // sentiment is now a HARD guard
+      metricEngine: createMetricEngine(),
+      harnessVersion: 'h3',
+      baseTimestamp: BASE_TS,
+      ledger,
+      clock: new ManualClock(BASE_TS),
+      ids: new SequentialIdGenerator('loopG'),
+      maxDryIterations: 20,
+    })
+    // It terminates (the bounded-promotions guarantee holds even with a binding guard)...
+    expect(['converged', 'dry']).toContain(summary.terminatedReason)
+    expect(summary.accepted).toBeLessThanOrEqual(proposer.boxSize)
+    // ...and the champion is NOT the global North-Star optimum (cadence 2, spacing 1) — it was vetoed.
+    const ended = championStore.current().parameters
+    expect(ended.rsvp_reminder_cadence === 2 && ended.reminder_spacing === 1).toBe(false)
   })
 })
