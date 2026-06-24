@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest'
  */
 
 function genome(cadence: number, genome_id = `g_${cadence}`): StrategyGenome {
-  return { genome_id, parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: 0 } }
+  return { genome_id, parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: 0, reminder_batching: 0 } }
 }
 
 describe('ChampionStore', () => {
@@ -28,9 +28,9 @@ describe('ChampionStore', () => {
   })
 
   it('validates the seed and any promoted genome (the weld)', () => {
-    expect(() => new ChampionStore({ genome_id: 'bad', parameters: { rsvp_reminder_cadence: 99, reminder_spacing: 0 } })).toThrow()
+    expect(() => new ChampionStore({ genome_id: 'bad', parameters: { rsvp_reminder_cadence: 99, reminder_spacing: 0, reminder_batching: 0 } })).toThrow()
     const store = new ChampionStore(genome(0))
-    expect(() => store.promote({ genome_id: 'bad', parameters: { rsvp_reminder_cadence: 9, reminder_spacing: 0 } })).toThrow()
+    expect(() => store.promote({ genome_id: 'bad', parameters: { rsvp_reminder_cadence: 9, reminder_spacing: 0, reminder_batching: 0 } })).toThrow()
   })
 })
 
@@ -61,6 +61,6 @@ describe('GenomeRegistry', () => {
 
   it('validates on register: an invalid genome can never be stored or resolved', () => {
     const registry = new GenomeRegistry()
-    expect(() => registry.register({ genome_id: 'bad', parameters: { rsvp_reminder_cadence: 42, reminder_spacing: 0 } })).toThrow()
+    expect(() => registry.register({ genome_id: 'bad', parameters: { rsvp_reminder_cadence: 42, reminder_spacing: 0, reminder_batching: 0 } })).toThrow()
   })
 })

@@ -38,9 +38,18 @@ export function makeGuest(
   }
 }
 
-/** A genome at a given (rsvp_reminder_cadence, reminder_spacing). Spacing defaults to 0 (tightly packed). */
-export function makeGenome(cadence: number, spacing = 0, genomeId = `g_c${cadence}_s${spacing}`): StrategyGenome {
-  return { genome_id: genomeId, parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: spacing } }
+/** A genome at a given (rsvp_reminder_cadence, reminder_spacing, reminder_batching). Spacing/batching
+ *  default to 0 (tightly packed, no consolidation) — the behavior-identical Phase-3 form. */
+export function makeGenome(
+  cadence: number,
+  spacing = 0,
+  batching = 0,
+  genomeId = `g_c${cadence}_s${spacing}_b${batching}`,
+): StrategyGenome {
+  return {
+    genome_id: genomeId,
+    parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: spacing, reminder_batching: batching },
+  }
 }
 
 /** A TIER-2 genome carrying the escalate-to-couple knob `autonomy_threshold` (Phase 4b; derives tier 2). */
@@ -48,13 +57,15 @@ export function makeTier2Genome(
   cadence: number,
   spacing: number,
   autonomyThreshold: number,
-  genomeId = `g_c${cadence}_s${spacing}_a${autonomyThreshold}`,
+  batching = 0,
+  genomeId = `g_c${cadence}_s${spacing}_b${batching}_a${autonomyThreshold}`,
 ): StrategyGenome {
   return {
     genome_id: genomeId,
     parameters: {
       rsvp_reminder_cadence: cadence,
       reminder_spacing: spacing,
+      reminder_batching: batching,
       autonomy_threshold: autonomyThreshold,
     },
   }

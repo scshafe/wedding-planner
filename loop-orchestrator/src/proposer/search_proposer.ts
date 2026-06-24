@@ -196,7 +196,13 @@ export class SearchProposer implements Proposer {
   private genomeFor(point: BoxPoint): StrategyGenome {
     return {
       genome_id: `g_search_c${point.cadence}_s${point.spacing}`,
-      parameters: { rsvp_reminder_cadence: point.cadence, reminder_spacing: point.spacing },
+      // Phase 5 Step 1: reminder_batching is REQUIRED, so the emitted genome must carry it. The box is
+      // still 2-D here (batching pinned 0); Step 4 promotes batching to a third enumerated box dimension.
+      parameters: {
+        rsvp_reminder_cadence: point.cadence,
+        reminder_spacing: point.spacing,
+        reminder_batching: 0,
+      },
     }
   }
 

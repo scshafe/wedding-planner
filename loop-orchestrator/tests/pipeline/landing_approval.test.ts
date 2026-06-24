@@ -17,7 +17,7 @@ import { humanApproval } from '../fixtures/oversight_fixtures'
 function g(cadence: number, spacing: number, autonomy?: number): StrategyGenome {
   return {
     genome_id: `g_${cadence}_${spacing}_${autonomy ?? 'x'}`,
-    parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: spacing, ...(autonomy === undefined ? {} : { autonomy_threshold: autonomy }) },
+    parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: spacing, reminder_batching: 0, ...(autonomy === undefined ? {} : { autonomy_threshold: autonomy }) },
   }
 }
 

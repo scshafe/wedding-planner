@@ -98,12 +98,15 @@ const CORPUS: readonly ScenarioDefinition[] = [
 ]
 
 function genome(cadence: number, genome_id = `g_${cadence}`): StrategyGenome {
-  return { genome_id, parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: 0 } }
+  return { genome_id, parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: 0, reminder_batching: 0 } }
 }
 
-/** A genome at an explicit (cadence, spacing) box point. */
-function genome2(cadence: number, spacing: number): StrategyGenome {
-  return { genome_id: `g_${cadence}_${spacing}`, parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: spacing } }
+/** A genome at an explicit (cadence, spacing) box point (batching pinned 0 — the 2-D slice; Step 5 drives b). */
+function genome2(cadence: number, spacing: number, batching = 0): StrategyGenome {
+  return {
+    genome_id: `g_${cadence}_${spacing}_${batching}`,
+    parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: spacing, reminder_batching: batching },
+  }
 }
 
 function scoreChallenger(championCadence: number, candidateCadence: number, guardCodes: string[] = []) {
@@ -336,7 +339,7 @@ class LegacyOneDProposer implements Proposer {
         if (cadence < 0 || cadence > 3) continue
         const g: StrategyGenome = {
           genome_id: `legacy_c${cadence}`,
-          parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: this.pinnedSpacing },
+          parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: this.pinnedSpacing, reminder_batching: 0 },
         }
         const hash = canonicalGenomeHash(g)
         if (this.globalTabu.has(hash)) continue // GLOBAL tabu — never re-opens after a promotion

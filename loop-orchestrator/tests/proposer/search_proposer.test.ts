@@ -35,7 +35,7 @@ const SPEC: SearchProposerSpec = {
 const BOX_SIZE = 16 // default 4×4 (cadence 0..3 × spacing 0..3)
 
 function genome(cadence: number, spacing = 0, genome_id = `g_${cadence}_${spacing}`): StrategyGenome {
-  return { genome_id, parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: spacing } }
+  return { genome_id, parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: spacing, reminder_batching: 0 } }
 }
 
 function makeProposer(champion: StrategyGenome = genome(0, 0)): {

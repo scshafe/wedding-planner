@@ -14,7 +14,7 @@
     "parameters": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["rsvp_reminder_cadence", "reminder_spacing"],
+      "required": ["rsvp_reminder_cadence", "reminder_spacing", "reminder_batching"],
       "description": "The behavioral knobs the planner simulator reads. CLOSED set: every parameter must appear in the genome->surface map (shared deriveRiskTier) or risk derivation fails closed. The canonical hash is computed over THIS object only. The tier-1 FLOW knobs are REQUIRED (no optional/default-as-no-op knobs): an absent-vs-disabled alias would let one behavior carry two content-addresses and defeat the dedupe key, so a new tier-1 knob re-baselines every genome hash by design. The tier-2 autonomy knob (autonomy_threshold) is the deliberate exception — it is OPTIONAL because its mere PRESENCE elevates the whole genome to tier-2 (it has no 0='off' value; its range starts at 1), so omitting it IS the canonical tier-1 form and there is no absent-vs-disabled alias. The autonomous search never emits it (it stays on the tier-1 box); a tier-2 genome is constructed only when a tier-2 change is genuinely proposed, and the promotion gate then requires human approval before it lands (Phase 4a).",
       "properties": {
         "rsvp_reminder_cadence": {
@@ -28,6 +28,12 @@
           "minimum": 0,
           "maximum": 3,
           "description": "How spread out the reminder nudges are in the rsvp_window (0 = tightly packed, 3 = very spread). More spacing makes each nudge gentler (a smaller guest_sentiment_score hit per nag) but fits FEWER nudges in the fixed window (delivered = min(cadence, capacity(spacing))), so it trades reminder reach for guest comfort. The TEMPORAL analogue of rsvp_reminder_cadence: a bounded flow/timing knob (WHEN nudges land, not WHAT they say), touching no comms-content, spend, booking, PII, or autonomy surface — so it derives to the SAME planning_flow_orchestration surface (tier 1). It manufactures no outcome: a guest still resolves only if its ground-truth need is met, so it adds no self-report-divergence surface."
+        },
+        "reminder_batching": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3,
+          "description": "How many of the planner's RSVP reminder nudges are CONSOLIDATED into a single digest send (digestSize = reminder_batching + 1). 0 = each reminder sent separately (today's behavior); 3 = bundle up to 4 reminders per digest. A two-sided flow tradeoff: bundling DILUTES reach (a digest lands as one effective nudge — effectiveNudges = ceil(delivered / digestSize) — so a guest resolves only if its ground-truth need is still met) but CONSOLIDATES interruptions (feltTouches = ceil(received / digestSize), so fewer nags, gentler guest_sentiment_score). The DELIVERY-GROUPING analogue of reminder_spacing: it governs how a FIXED, byte-identical reminder set is packaged for delivery (HOW MANY sends), not WHAT the messages say, who receives them, or how they are segmented — and it can only REDUCE send volume (the structural opposite of the tier-2 contact-volume trigger). So it derives to the SAME planning_flow_orchestration surface (tier 1). It manufactures no outcome: a never-responder still never resolves and resolution still requires the ground-truth need met, so it adds no self-report-divergence surface (Stage B mirrors the identical reach dilution via the shared digest fact). Its AUTHORITATIVE tier is derived from the surface map, never asserted here. TIER GUARD: a digest that VARIES message content/tone/segmentation, or any batching that INCREASES contact, would be guest_comms_content (tier 2), NOT this knob."
         },
         "autonomy_threshold": {
           "type": "integer",

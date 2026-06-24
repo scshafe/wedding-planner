@@ -16,17 +16,18 @@ import {
  * property — a candidate commits to exactly the genome that runs via artifact_ref = genome:<hash> —
  * and the non-spoofability of that hash (parameters-only, key-order-independent).
  *
- * Phase 3: the closed parameter set is now {rsvp_reminder_cadence, reminder_spacing}, both REQUIRED.
- * `cad(c, s)` builds a conforming parameters object; the firewall properties are unchanged.
+ * Phase 5: the closed parameter set is now {rsvp_reminder_cadence, reminder_spacing, reminder_batching},
+ * all three tier-1 flow knobs REQUIRED. `cad(c, s, b)` builds a conforming parameters object; the
+ * firewall properties are unchanged.
  */
 
 function genome(parameters: StrategyGenome['parameters'], genome_id = 'g_test'): StrategyGenome {
   return { genome_id, parameters }
 }
 
-/** A conforming parameters object at (cadence, spacing). */
-function cad(cadence: number, spacing = 0): StrategyGenome['parameters'] {
-  return { rsvp_reminder_cadence: cadence, reminder_spacing: spacing }
+/** A conforming parameters object at (cadence, spacing, batching). */
+function cad(cadence: number, spacing = 0, batching = 0): StrategyGenome['parameters'] {
+  return { rsvp_reminder_cadence: cadence, reminder_spacing: spacing, reminder_batching: batching }
 }
 
 describe('strategy_genome contract', () => {
@@ -39,9 +40,11 @@ describe('strategy_genome contract', () => {
     const registry = getSchemaRegistry()
     // additionalProperties:false + range bounds + required are the firewall: a proposer cannot
     // smuggle an unmapped knob or an out-of-band value past the contract.
-    expect(registry.validate('strategy_genome', genome({ rsvp_reminder_cadence: 9, reminder_spacing: 0 } as never)).valid).toBe(false)
+    expect(registry.validate('strategy_genome', genome(cad(9) as never)).valid).toBe(false)
     expect(registry.validate('strategy_genome', genome({ ...cad(1), sneaky: 1 } as never)).valid).toBe(false)
-    // A missing required parameter (only cadence, no spacing) is rejected: every knob is required.
+    // A missing required parameter is rejected: every tier-1 knob is required. (Only cadence+spacing,
+    // no batching; and only cadence, no spacing.)
+    expect(registry.validate('strategy_genome', { genome_id: 'g', parameters: { rsvp_reminder_cadence: 1, reminder_spacing: 0 } } as never).valid).toBe(false)
     expect(registry.validate('strategy_genome', { genome_id: 'g', parameters: { rsvp_reminder_cadence: 1 } } as never).valid).toBe(false)
     expect(registry.validate('strategy_genome', { genome_id: 'g', parameters: {} }).valid).toBe(false)
   })

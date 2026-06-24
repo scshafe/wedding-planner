@@ -68,6 +68,37 @@ export function spacingCapacity(spacing: number): number {
 }
 
 /**
+ * PHASE-5 reminder_batching FACT — the digest-consolidation operator, SHARED by both stages so Stage A's
+ * claim and Stage B's trusted record agree on which guests reminders resolve under batching. digestSize is
+ * the number of reminders bundled into one send: `batching + 1` (0 => 1 => no consolidation => identity).
+ * Both `effectiveNudges` and `feltTouches` are the SAME `ceil(x / digestSize)` digest operator applied to
+ * the two existing per-guest quantities — and both collapse to the identity at batching 0 (digestSize 1,
+ * `ceil(x/1) === x`), so the whole Phase-3 model is preserved unchanged on the b=0 slice.
+ */
+export function digestSize(batching: number): number {
+  return Math.max(1, batching + 1)
+}
+
+/**
+ * REACH dilution (the batching downside): a bundled digest lands as ONE effective nudge toward a guest's
+ * ground-truth need. So `delivered` scheduled reminders carry only `ceil(delivered / digestSize)` effective
+ * nudges — a guest resolves iff this still meets its `needed`. Manufactures no resolution (a never-responder
+ * still never resolves; this only ever REDUCES effective reach). Stage B applies this identical calc.
+ */
+export function effectiveNudges(delivered: number, batching: number): number {
+  return delivered <= 0 ? 0 : Math.ceil(delivered / digestSize(batching))
+}
+
+/**
+ * COMFORT consolidation (the batching upside): the `received` reminders a guest actually got are bundled
+ * into `ceil(received / digestSize)` felt interruptions — fewer felt touches => fewer nags => gentler
+ * guest_sentiment_score. Comfort is a CLAIMED-ONLY signal (no trusted backing), so only Stage A reads this.
+ */
+export function feltTouches(received: number, batching: number): number {
+  return received <= 0 ? 0 : Math.ceil(received / digestSize(batching))
+}
+
+/**
  * The true couple attention (seconds) one escalate-to-couple consumes — the per-escalation cost feeding
  * couple_active_minutes_total → effort_cost. A flat per-escalation cost keeps the value/cost tradeoff
  * legible: more escalations resolve more guests but spend proportionally more couple attention. SHARED

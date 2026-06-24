@@ -79,11 +79,11 @@ function scenario(id: string, type: ScenarioDefinition['scenario_type']): Scenar
 const CORPUS: readonly ScenarioDefinition[] = [scenario('golden_g', 'golden'), scenario('adv_a', 'adversarial')]
 
 /** The seed champion: a SUB-OPTIMAL tier-1 box corner, so the optimum-carrying tier-2 candidate beats it. */
-const SEED_CHAMPION: StrategyGenome = { genome_id: 'seed_0_0', parameters: { rsvp_reminder_cadence: 0, reminder_spacing: 0 } }
+const SEED_CHAMPION: StrategyGenome = { genome_id: 'seed_0_0', parameters: { rsvp_reminder_cadence: 0, reminder_spacing: 0, reminder_batching: 0 } }
 
 /** The tier-2 candidate genome: the tier-1 OPTIMUM (cadence 2, spacing 1) bundled with the tier-2 knob. */
 function tier2Candidate(autonomy = 1): StrategyGenome {
-  return { genome_id: `t2_${autonomy}`, parameters: { rsvp_reminder_cadence: 2, reminder_spacing: 1, autonomy_threshold: autonomy } }
+  return { genome_id: `t2_${autonomy}`, parameters: { rsvp_reminder_cadence: 2, reminder_spacing: 1, reminder_batching: 0, autonomy_threshold: autonomy } }
 }
 
 /** A proposer that emits ONE pre-built candidate genome (declaring `declaredTier`) then converges. */

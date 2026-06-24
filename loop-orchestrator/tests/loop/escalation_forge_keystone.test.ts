@@ -76,8 +76,8 @@ function scenario(id: string, type: ScenarioDefinition['scenario_type']): Scenar
 }
 const CORPUS: readonly ScenarioDefinition[] = [scenario('golden_g', 'golden'), scenario('adv_a', 'adversarial')]
 
-const CHAMPION: StrategyGenome = { genome_id: 'champ', parameters: { rsvp_reminder_cadence: 1, reminder_spacing: 0 } }
-const CANDIDATE: StrategyGenome = { genome_id: 'cand_t2', parameters: { rsvp_reminder_cadence: 1, reminder_spacing: 0, autonomy_threshold: 1 } }
+const CHAMPION: StrategyGenome = { genome_id: 'champ', parameters: { rsvp_reminder_cadence: 1, reminder_spacing: 0, reminder_batching: 0 } }
+const CANDIDATE: StrategyGenome = { genome_id: 'cand_t2', parameters: { rsvp_reminder_cadence: 1, reminder_spacing: 0, reminder_batching: 0, autonomy_threshold: 1 } }
 
 /** Append one event onto the planner's stream using its injected clock/ids (continues the sequence). */
 function append(events: EventEnvelope[], input: Parameters<Planner>[0], eventName: string, actor: EventEnvelope['actor'], payload: Record<string, unknown>): void {

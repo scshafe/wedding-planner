@@ -28,18 +28,18 @@ import { humanApproval } from '../fixtures/oversight_fixtures'
  * transition.
  */
 
-const SEED: StrategyGenome = { genome_id: 'seed', parameters: { rsvp_reminder_cadence: 0, reminder_spacing: 0 } }
+const SEED: StrategyGenome = { genome_id: 'seed', parameters: { rsvp_reminder_cadence: 0, reminder_spacing: 0, reminder_batching: 0 } }
 
 /** A tier-1 genome (omits autonomy_threshold). */
 function tier1Genome(cadence: number, spacing = 1): StrategyGenome {
-  return { genome_id: `g_${cadence}_${spacing}`, parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: spacing } }
+  return { genome_id: `g_${cadence}_${spacing}`, parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: spacing, reminder_batching: 0 } }
 }
 
 /** A tier-2 genome (carries autonomy_threshold — presence elevates the whole genome). */
 function tier2Genome(autonomy: number): StrategyGenome {
   return {
     genome_id: `g_t2_${autonomy}`,
-    parameters: { rsvp_reminder_cadence: 2, reminder_spacing: 1, autonomy_threshold: autonomy },
+    parameters: { rsvp_reminder_cadence: 2, reminder_spacing: 1, reminder_batching: 0, autonomy_threshold: autonomy },
   }
 }
 
@@ -194,7 +194,7 @@ describe('promotion gate — the exogenous human approval (Phase 4a Step 3)', ()
     const candidate = candidateFor(genome, 2)
     seedAcceptedEntry(ledger, candidate)
     // Approval was minted against a DIFFERENT champion than the current SEED — its key won't match.
-    const staleChampion: StrategyGenome = { genome_id: 'other', parameters: { rsvp_reminder_cadence: 3, reminder_spacing: 3 } }
+    const staleChampion: StrategyGenome = { genome_id: 'other', parameters: { rsvp_reminder_cadence: 3, reminder_spacing: 3, reminder_batching: 0 } }
     const approvals = new ApprovalStore([humanApproval(landingKeyFor(genome, staleChampion), true)])
 
     const outcome = runPromotionGate({ candidate, registry, championStore, ledger, approvals })

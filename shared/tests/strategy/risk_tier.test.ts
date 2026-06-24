@@ -18,7 +18,9 @@ import {
  */
 
 function genome(parameters: Record<string, number>, genome_id = 'g'): StrategyGenome {
-  return { genome_id, parameters: parameters as StrategyGenome['parameters'] }
+  // reminder_batching (Phase 5) is a REQUIRED tier-1 flow knob; default it to 0 so callers that only
+  // vary cadence/spacing/autonomy_threshold stay valid. A caller may still override it explicitly.
+  return { genome_id, parameters: { reminder_batching: 0, ...parameters } as StrategyGenome['parameters'] }
 }
 
 /** Read the inner `parameters` subschema straight from the on-disk contract (source of truth). */
@@ -31,12 +33,13 @@ function readParametersSchema(): { additionalProperties: unknown; properties: Re
 }
 
 describe('deriveRiskTier — derive from the genome, fail closed', () => {
-  it('derives the genome tier as the MAX over its parameters surfaces (both flow knobs -> tier 1)', () => {
-    const derived = deriveRiskTier(genome({ rsvp_reminder_cadence: 2, reminder_spacing: 1 }))
+  it('derives the genome tier as the MAX over its parameters surfaces (all flow knobs -> tier 1)', () => {
+    const derived = deriveRiskTier(genome({ rsvp_reminder_cadence: 2, reminder_spacing: 1, reminder_batching: 1 }))
     expect(derived.tier).toBe(1)
     expect(derived.touchedSurfaces).toContain('planning_flow_orchestration')
     // perParameter is sorted by parameter name (a stable audit artifact, insertion-order-independent).
     expect(derived.perParameter).toEqual([
+      { parameter: 'reminder_batching', surface: 'planning_flow_orchestration', tierFloor: 1 },
       { parameter: 'reminder_spacing', surface: 'planning_flow_orchestration', tierFloor: 1 },
       { parameter: 'rsvp_reminder_cadence', surface: 'planning_flow_orchestration', tierFloor: 1 },
     ])
@@ -60,7 +63,7 @@ describe('deriveRiskTier — derive from the genome, fail closed', () => {
 
   it('validates the genome first (the weld): an invalid genome throws before any tier is returned', () => {
     expect(() => deriveRiskTier(genome({ rsvp_reminder_cadence: 99, reminder_spacing: 0 }))).toThrow()
-    expect(() => deriveRiskTier({ genome_id: 'g', parameters: { rsvp_reminder_cadence: 1, reminder_spacing: 0, x: 2 } } as never)).toThrow()
+    expect(() => deriveRiskTier({ genome_id: 'g', parameters: { rsvp_reminder_cadence: 1, reminder_spacing: 0, reminder_batching: 0, x: 2 } } as never)).toThrow()
   })
 })
 
@@ -80,6 +83,7 @@ describe('autonomy_threshold — the first tier-2 knob (Phase 4a), optional by p
     // sorted, stable audit artifact; the tier-2 surface attribution is recorded per-parameter.
     expect(derived.perParameter).toEqual([
       { parameter: 'autonomy_threshold', surface: 'commitment_autonomy', tierFloor: 2 },
+      { parameter: 'reminder_batching', surface: 'planning_flow_orchestration', tierFloor: 1 },
       { parameter: 'reminder_spacing', surface: 'planning_flow_orchestration', tierFloor: 1 },
       { parameter: 'rsvp_reminder_cadence', surface: 'planning_flow_orchestration', tierFloor: 1 },
     ])
@@ -97,6 +101,16 @@ describe('autonomy_threshold — the first tier-2 knob (Phase 4a), optional by p
   it('the map entry is live (the drift guard above now requires it) and floors to tier 2', () => {
     expect(GENOME_PARAMETER_SURFACES.autonomy_threshold).toBe('commitment_autonomy')
     expect(SURFACE_TIER_FLOOR.commitment_autonomy).toBe(2)
+  })
+})
+
+describe('reminder_batching — the 3rd tier-1 flow knob (Phase 5)', () => {
+  it('maps to planning_flow_orchestration and a genome carrying batching>0 stays tier-1', () => {
+    expect(GENOME_PARAMETER_SURFACES.reminder_batching).toBe('planning_flow_orchestration')
+    for (const value of [0, 1, 2, 3]) {
+      const derived = deriveRiskTier(genome({ rsvp_reminder_cadence: 3, reminder_spacing: 1, reminder_batching: value }))
+      expect(derived.tier).toBe(1)
+    }
   })
 })
 

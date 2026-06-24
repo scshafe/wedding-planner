@@ -75,6 +75,18 @@ export const GENOME_PARAMETER_SURFACES: Readonly<Record<string, SensitivitySurfa
   // decide to consume couple time / take an action (commitment_autonomy, tier 2) just because it,
   // too, looks like "a small bounded scheduling number". See memory: second-genome-knob-must-stay-tier1.
   reminder_spacing: 'planning_flow_orchestration',
+  // reminder_batching (Phase 5) is the DELIVERY-GROUPING analogue of spacing: it sets HOW MANY of a
+  // FIXED, byte-identical reminder set are consolidated into one digest send (digestSize = batching+1).
+  // Tier-1 planning_flow_orchestration — but, per the doddy precedent guard, ONLY because it governs the
+  // GROUPING/PACKAGING of an already-decided reminder set, NOT its content/tone/wording/recipient set or
+  // segmentation, AND it can only REDUCE send volume (effectiveNudges = ceil(delivered/digestSize)) — the
+  // structural OPPOSITE of the tier-2 contact-volume trigger. It is bounded (0..3) and forge-free (Stage B
+  // mirrors the identical reach dilution via the shared digest fact; resolution still requires the
+  // ground-truth need met). TIER GUARD: this classification must NOT auto-launder a future knob that varies
+  // a digest's CONTENT/segmentation (guest_comms_content, tier 2) or that INCREASES contact frequency
+  // (guest_comms_content, tier 2) just because it, too, is "a small bounded delivery number". Bounded
+  // delivery-grouping of a fixed set != content authorship and != outreach volume.
+  reminder_batching: 'planning_flow_orchestration',
   // autonomy_threshold is the FIRST tier-2 knob (Phase 4a). It governs how much the planner acts on the
   // couple's behalf WITHOUT asking — an autonomy-governing threshold, i.e. the AI deciding to consume the
   // couple's scarce attention/authority. That is the commitment_autonomy surface (tier 2), NOT flow:
