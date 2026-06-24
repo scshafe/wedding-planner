@@ -8,6 +8,7 @@ import type {
 import { buildEvent, EVENT_NAMES } from '@wedding-planner/telemetry'
 
 import { type ScenarioDefinition } from '../scoring/offline_scorer'
+import { NEVER, REMINDERS_NEEDED } from './domain_facts'
 
 /**
  * @canonical stage_a_planner -- STAGE A of the planner simulator: the product's self-report.
@@ -55,16 +56,8 @@ export interface PlannerInput {
 /** Stage A: a pure mapping from (scenario, genome) to product events (claims only). */
 export type Planner = (input: PlannerInput) => readonly EventEnvelope[]
 
-/** Sentinel for a guest who never responds regardless of cadence. */
-const NEVER = Number.POSITIVE_INFINITY
-
-/** Reminders a guest needs before they resolve, from their ground-truth `response_latency`. */
-const REMINDERS_NEEDED: Readonly<Record<string, number>> = {
-  immediate: 0,
-  after_one_reminder: 1,
-  after_multiple_reminders: 2,
-  never: NEVER,
-}
+// NEVER + REMINDERS_NEEDED are the SHARED ground-truth facts (domain_facts.ts) — Stage B reads the
+// same constants so honest runs agree; each stage applies the genome policy by its own computation.
 
 /**
  * The most reminders a guest is comfortable receiving before it reads as nagging.

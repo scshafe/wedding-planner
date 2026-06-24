@@ -97,7 +97,7 @@ so a baseline that also failed integrity could not let a forge through.
 
 ## Steps (each: `npm run build && npm test && npm run lint` green before ticking + committing)
 
-- [ ] **Step 1 — the ground-truth fact + shared domain helper (no behavior; matrix byte-identical) (D5).**
+- [x] **Step 1 — the ground-truth fact + shared domain helper (no behavior; matrix byte-identical) (D5).**
   - `eval-harness/schemas/guest_persona_schema.json`: add an OPTIONAL `couple_resolvable` boolean to
     `rsvp_truth.properties` (keep `additionalProperties:false`; do NOT add to `required`). Pin the
     meaning: ground truth that the couple can personally resolve this guest when escalated (typically a

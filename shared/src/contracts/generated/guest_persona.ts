@@ -77,6 +77,10 @@ response_latency: ("immediate" | "after_one_reminder" | "after_multiple_reminder
  * Headcount this guest represents on a 'yes'.
  */
 party_size?: number
+/**
+ * OPTIONAL ground truth (Phase 4b): the couple can personally resolve this guest's RSVP when the planner escalates it to them (e.g. a close relative the couple will just call), even when reminders alone would not (typically a slow/never responder to AI nudges). This is a SCENARIO ground-truth fact — NEVER set by the genome or the product; the genome supplies only the escalate-to-couple POLICY (autonomy_threshold), not the FACT of resolvability. Absent (the default) means the couple cannot manufacture this guest's resolution, so escalating them costs couple attention without resolving — the honest planner does not claim a couple-resolution for such a guest, and the integrity gate vetoes one that does. Omitting it preserves pre-4b behavior exactly (no escalation surface).
+ */
+couple_resolvable?: boolean
 }
 /**
  * Scripted questions this guest will ask. Each carries the ground-truth answer so COMMS.FALSE_FACT_TO_GUEST and Q&A accuracy are deterministically checkable.
