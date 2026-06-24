@@ -524,7 +524,10 @@ describe('the 3-D North-Star cube — interior on the NEW axis, non-separable, d
     expect(OPT.s).toBeLessThan(3)
     // Strict over the 6 axis neighbours (the in-box ones; cadence+1 is out of box at the face).
     const margins: number[] = []
-    for (const [dc, ds, db] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+    const axisDeltas: ReadonlyArray<readonly [number, number, number]> = [
+      [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
+    ]
+    for (const [dc, ds, db] of axisDeltas) {
       const n = cb[OPT.c + dc]?.[OPT.s + ds]?.[OPT.b + db]
       if (n !== undefined) {
         expect(gVal, `(${OPT.c + dc},${OPT.s + ds},${OPT.b + db}) must be < optimum`).toBeGreaterThan(n)
