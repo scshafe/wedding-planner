@@ -29,6 +29,15 @@ export interface ProposerContext {
 export interface Proposer {
   /** Emit the next candidate, or null when the proposer has no more ideas for the current target. */
   propose(context: ProposerContext): CandidateChange | null
+  /**
+   * Optional terminal certificate (Phase 3). When propose() returns null, a proposer that searches a
+   * bounded space may report whether it CONVERGED — i.e. it exhausted the whole space against the
+   * standing baseline with nothing accepted — versus merely running out for some other reason. The
+   * loop turns a true return into the `converged` termination reason (a "no acceptable point against
+   * the standing champion" certificate), and a missing/false return into the generic
+   * `proposer_exhausted`. A proposer that generates indefinitely (e.g. the stub) omits it.
+   */
+  isConverged?(): boolean
 }
 
 export interface StubProposerSpec {

@@ -121,6 +121,18 @@ export class SearchProposer implements Proposer {
     return this.evaluatedCountFor(canonicalGenomeHash(champion)) >= this.boxSize - 1
   }
 
+  /**
+   * The convergence certificate the loop reads when propose() returns null: true iff the CURRENT
+   * standing champion has full box coverage — every other box point was proposed against it and (since
+   * an accept would have promoted away and reset coverage) none was accepted. This is a "no box point
+   * is acceptable against the standing champion" certificate, NOT a global North-Star optimum (with
+   * guards/golden conditions a higher-North-Star point can be vetoed and still leave the champion the
+   * best ACCEPTABLE point). Tracked per champion hash, so a mid-sweep promotion cannot falsely certify.
+   */
+  isConverged(): boolean {
+    return this.coverageCompleteFor(this.championStore.current())
+  }
+
   propose(context: ProposerContext): CandidateChange | null {
     const champion = this.championStore.current()
     const championHash = canonicalGenomeHash(champion)

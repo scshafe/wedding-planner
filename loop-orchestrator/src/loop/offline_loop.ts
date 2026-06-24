@@ -55,7 +55,27 @@ export interface OfflineLoopConfig {
   readonly onAccepted?: (candidate: CandidateChange) => void
 }
 
-export type LoopTerminationReason = 'dry' | 'budget_exhausted' | 'proposer_exhausted'
+/**
+ * Why the loop stopped (Phase-3 termination taxonomy):
+ *  - `converged`          — the proposer reported its bounded search space is EXHAUSTED against the
+ *                           standing champion with nothing accepted: a "no point is acceptable against
+ *                           the standing champion" certificate (NOT a global-optimum claim — guards or
+ *                           golden conditions can veto a higher-North-Star point). Only a proposer that
+ *                           implements `isConverged()` (the box search) can yield this.
+ *  - `proposer_exhausted` — the proposer returned null WITHOUT a convergence certificate (it simply ran
+ *                           out — e.g. a finite generator with no completeness claim).
+ *  - `budget_exhausted`   — `maxIterations` was hit first: no certificate, the champion is a best-so-far.
+ *  - `dry`                — `maxDryIterations` consecutive non-accepts before the search was exhausted:
+ *                           STALLED, not certified (run with maxDryIterations >= the search size to let
+ *                           a convergence certificate emerge instead).
+ *
+ * Termination is guaranteed: every accept requires a STRICT aggregate-North-Star improvement (accept
+ * condition 4), so the champion's North Star strictly increases on each promotion. Over a finite,
+ * content-addressed genome space that bounds the number of promotions (no champion can recur), and the
+ * proposer never re-proposes a (champion, genome) pair — so even with binding guards (which can reject
+ * but never make accept non-monotone in North Star) the loop cannot cycle.
+ */
+export type LoopTerminationReason = 'converged' | 'dry' | 'budget_exhausted' | 'proposer_exhausted'
 
 export interface OfflineLoopSummary {
   readonly iterations: number
@@ -110,7 +130,10 @@ export function runOfflineLoop(config: OfflineLoopConfig): OfflineLoopSummary {
 
     const candidate = config.proposer.propose({ iteration: iterations, weakestCapability, lessons })
     if (candidate === null) {
-      return summary('proposer_exhausted')
+      // A proposer that exhausts a bounded space against the standing champion CONVERGED; one that
+      // merely ran out did not. We reach here only with both caps un-tripped, so the certificate is
+      // genuine (the loop checks maxDry / maxIterations BEFORE proposing).
+      return summary(config.proposer.isConverged?.() ? 'converged' : 'proposer_exhausted')
     }
     proposed += 1
 

@@ -205,7 +205,11 @@ describe('keystone — negative arm: a regressing genome is rejected with a less
 })
 
 describe('keystone — the full loop climbs to the interior optimum and ratchets the champion', () => {
-  function runFullLoop(seedCadence: number, seedSpacing = 0) {
+  function runFullLoopWith(
+    seedCadence: number,
+    seedSpacing: number,
+    overrides: { maxDryIterations?: number; maxIterations?: number } = {},
+  ) {
     const championStore = new ChampionStore(genome2(seedCadence, seedSpacing))
     const registry = new GenomeRegistry()
     const ledger = new Ledger(
@@ -239,23 +243,32 @@ describe('keystone — the full loop climbs to the interior optimum and ratchets
       ledger,
       clock: new ManualClock(BASE_TS),
       ids: new SequentialIdGenerator('loopCtl'),
-      // >= boxSize so the final full sweep (all 15 others rejected) does not trip maxDry before the
+      // >= boxSize so the final full sweep (all others rejected) does not trip maxDry before the
       // proposer reports coverage-complete.
-      maxDryIterations: 20,
+      maxDryIterations: overrides.maxDryIterations ?? 20,
+      ...(overrides.maxIterations === undefined ? {} : { maxIterations: overrides.maxIterations }),
     })
     return { championStore, registry, ledger, summary, proposer }
   }
 
+  /** Run to convergence with the default (loose) caps. */
+  function runFullLoop(seedCadence: number, seedSpacing = 0) {
+    return runFullLoopWith(seedCadence, seedSpacing)
+  }
+
   it('climbs the 2-D box to the INTERIOR optimum (cadence 2, spacing 1) and ratchets the champion', () => {
-    const { championStore, ledger, summary } = runFullLoop(0, 0)
+    const { championStore, ledger, summary, proposer } = runFullLoop(0, 0)
 
     // The champion ratcheted to the North-Star-optimal box point (cadence 2, spacing 1) — a point that
     // the old 1-D (spacing-pinned) search could never have reached.
     expect(championStore.current().parameters.rsvp_reminder_cadence).toBe(2)
     expect(championStore.current().parameters.reminder_spacing).toBe(1)
     expect(summary.accepted).toBeGreaterThanOrEqual(1)
-    // It terminates because the box neighborhood is exhausted (the proposer reported coverage-complete).
-    expect(summary.terminatedReason).toBe('proposer_exhausted')
+    // It terminates with the CONVERGENCE CERTIFICATE: the box was exhausted against the standing
+    // champion with nothing acceptable (not a maxDry stall, not a budget cap).
+    expect(summary.terminatedReason).toBe('converged')
+    // The promotion count is bounded by the box (each accept strictly raises the champion North Star).
+    expect(summary.accepted).toBeLessThanOrEqual(proposer.boxSize)
 
     // Every ledger chain is intact.
     for (const entry of ledger.allEntries()) {
@@ -273,5 +286,21 @@ describe('keystone — the full loop climbs to the interior optimum and ratchets
     const { championStore } = runFullLoop(3, 3) // start at the opposite corner
     expect(championStore.current().parameters.rsvp_reminder_cadence).toBe(2)
     expect(championStore.current().parameters.reminder_spacing).toBe(1)
+  })
+
+  it('TAXONOMY: a tight maxDry STALLS (dry, no certificate); a loose maxDry CONVERGES (certificate)', () => {
+    // The distinction Phase 2 could not make. Same landscape + seed; only maxDryIterations differs.
+    // A tight budget trips on a run of non-accepts BEFORE the box is swept -> `dry` (stalled, NOT a
+    // certificate). A budget >= the box lets the proposer exhaust -> `converged` (the certificate).
+    const tight = runFullLoopWith(0, 0, { maxDryIterations: 2 })
+    expect(tight.summary.terminatedReason).toBe('dry')
+
+    const loose = runFullLoopWith(0, 0, { maxDryIterations: 20 })
+    expect(loose.summary.terminatedReason).toBe('converged')
+  })
+
+  it('BUDGET: a maxIterations cap below the search size stops with no certificate (budget_exhausted)', () => {
+    const capped = runFullLoopWith(0, 0, { maxDryIterations: 20, maxIterations: 3 })
+    expect(capped.summary.terminatedReason).toBe('budget_exhausted')
   })
 })

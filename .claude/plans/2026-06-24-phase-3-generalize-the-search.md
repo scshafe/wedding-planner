@@ -112,7 +112,7 @@ so requiring it does NOT inflate any genome's tier. Cost: re-baseline fixtures/s
   - Update `search_proposer.test.ts` for the 2-D behavior (re-centering after promotion in 2-D;
     trajectory-tabu re-eligibility; full-box coverage per champion).
 
-- [ ] **Step 5 — termination taxonomy in the loop (D5).**
+- [x] **Step 5 — termination taxonomy in the loop (D5).**
   - Proposer exposes its terminal signal: when it returns null, the per-champion coverage set is full
     ⇒ `converged`. Add `evaluatedAgainst` tracking + the `size === boxSize−1` gate.
   - Extend `LoopTerminationReason` / `OfflineLoopSummary` so the genome loop surfaces `converged`
