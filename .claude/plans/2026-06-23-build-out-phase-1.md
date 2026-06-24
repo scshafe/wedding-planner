@@ -61,7 +61,7 @@ engineering choices; keep the safety rails firm.
   - Implement the gates in `eval-harness/rubrics/gate_checks.md` (`COMMS.*`, `SPEND.*`, `INTEGRITY.SELF_REPORT_DIVERGENCE`, …) as pure functions over the *trusted* portion of the stream.
   - Verify: tests over the golden + adversarial scenarios (`eval-harness/scenarios/**`) assert each gate's expected pass/fail against the scenarios' encoded expected outcomes.
 
-- [ ] **Step 9: The North Star scoring model + grade_report.**
+- [x] **Step 9: The North Star scoring model + grade_report.**
   - Implement the offline accept rule verbatim from `eval-harness/scoring/scoring_model.md` (no golden regression; no new veto/FATAL; no counter-metric regression; aggregate North Star improves with adversarial ≥ golden) producing a `grade_report` (`eval-harness/schemas/grade_report_schema.json`). Treat `north_star_ratio` as the zero-inflated bounded ratio the spec describes (decompose; don't analyze as a raw mean).
   - Verify: a test scores a known candidate across the corpus and asserts the `grade_report` + accept/reject decision matches the rule in `scoring_model.md`.
   - Specialist: `testineer` *(the estimand and the accept-rule oracle are subtle; get the test strategy right).*

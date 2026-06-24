@@ -60,3 +60,29 @@ export {
 } from './gates/comms_gates'
 export { checkIntegrationSilentFailure, checkIntegrationDoubleBook } from './gates/integration_gates'
 export { runVetoGates, type GateRunResult } from './gates/gate_runner'
+
+// Scoring (North Star + the corpus accept rule + grade report)
+export {
+  computeNorthStar,
+  type NorthStar,
+  type NorthStarComponentInputs,
+} from './scoring/north_star'
+export {
+  evaluateAcceptRule,
+  weightedMeanRatio,
+  type AcceptDecision,
+  type ScenarioRunResult,
+  type ScenarioType,
+  type GuardSpec,
+} from './scoring/accept_rule'
+export {
+  buildGradeReport,
+  type BuildGradeReportInput,
+  type ScenarioTargetMetric,
+} from './scoring/grade_report_builder'
+export {
+  PLANNING_VALUE_WEIGHTS,
+  COUPLE_COST_WEIGHTS,
+  AGGREGATION_WEIGHTS,
+  ACCEPT_TOLERANCES,
+} from './scoring/scoring_constants'
