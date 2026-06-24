@@ -1,5 +1,11 @@
-import { makePlannerSimulator, type ScenarioDefinition } from '@wedding-planner/eval-harness'
-import { type EventEnvelope } from '@wedding-planner/shared'
+import {
+  AGGREGATION_WEIGHTS,
+  computeNorthStar,
+  deriveNorthStarInputs,
+  makePlannerSimulator,
+  type ScenarioDefinition,
+} from '@wedding-planner/eval-harness'
+import { type EventEnvelope, genomeArtifactRef, type StrategyGenome } from '@wedding-planner/shared'
 import { createMetricEngine } from '@wedding-planner/telemetry'
 import { describe, expect, it } from 'vitest'
 
@@ -134,6 +140,189 @@ describe('property invariants over the genome band', () => {
         expect(rate).toBeLessThanOrEqual(1)
       }
     }
+  })
+})
+
+// ---------------------------------------------------------------------------------------------------
+// PHASE 3 — the second knob (reminder_spacing) and the 2-D landscape oracle.
+// ---------------------------------------------------------------------------------------------------
+
+/** Run the simulator at a (cadence, spacing) genome over a scenario and return (events, metrics). */
+function runCS(cadence: number, spacing: number, scenario: ScenarioDefinition): {
+  events: readonly EventEnvelope[]
+  metric: (code: string) => number | null
+} {
+  const genome = makeGenome(cadence, spacing)
+  const run = makePlannerSimulator({
+    championGenome: genome,
+    candidateGenome: genome,
+    candidateArtifactRef: refFor(genome),
+    baseTimestamp: BASE_TS,
+  })
+  const events = run(scenario, 'candidate').productEvents
+  const computations = engine.computeMany(engine.metricCodes(), events, scenario.scenario_id)
+  const byCode = new Map(computations.map((c) => [c.metric_code, c.value]))
+  return { events, metric: (code) => byCode.get(code) ?? null }
+}
+
+describe('ANCHORED oracle — reminder_spacing values reasoned by hand, not read from the model', () => {
+  it('spacing softens each nag: a lone never-responder at cadence 2 lands 1 - penalty(spacing)*delivered', () => {
+    // never-responder absorbs `delivered = min(cadence, capacity(spacing))` nags against a comfort
+    // ceiling of 0. penalty(spacing) = 0.25*(1 - 0.25*spacing). Hand-reasoned, hardcoded:
+    //   s0: delivered min(2,3)=2, penalty 0.25    -> 1 - 0.25*2  = 0.50
+    //   s1: delivered min(2,3)=2, penalty 0.1875  -> 1 - 0.375   = 0.625
+    //   s2: delivered min(2,1)=1, penalty 0.125   -> 1 - 0.125   = 0.875  (capacity dropped to 1)
+    const scn = makeScenario('s_spacing_guard', [makeGuest('guest_never', 'never', 'maybe_needs_nudge')])
+    expect(runCS(2, 0, scn).metric('guest_sentiment_score')).toBe(0.5)
+    expect(runCS(2, 1, scn).metric('guest_sentiment_score')).toBe(0.625)
+    expect(runCS(2, 2, scn).metric('guest_sentiment_score')).toBe(0.875)
+  })
+
+  it('spacing caps reach: a guest needing 2 reminders is un-resolved once capacity drops below 2', () => {
+    // capacity(spacing) = [3,3,1,0][spacing]. The after_multiple_reminders guest needs 2 reminders.
+    // At cadence 2: delivered = min(2, capacity). s0/s1 (capacity 3) deliver 2 -> resolved; s2
+    // (capacity 1) delivers 1 < 2 -> NOT resolved. So spacing trades reach for comfort (the downside).
+    const scn = makeScenario('s_spacing_reach', [
+      makeGuest('guest_immediate', 'immediate', 'yes'),
+      makeGuest('guest_many', 'after_multiple_reminders', 'yes'),
+    ])
+    expect(runCS(2, 1, scn).metric('rsvp_resolution_rate')).toBe(1.0) // both resolved
+    expect(runCS(2, 2, scn).metric('rsvp_resolution_rate')).toBe(0.5) // only the immediate guest
+  })
+})
+
+describe('anti-no-op — flipping ONLY reminder_spacing changes the stream AND moves a metric', () => {
+  it('at a fixed cadence, raising spacing changes the events and RAISES guest_sentiment_score', () => {
+    // The dual of the cadence anti-no-op: a simulator that ignored reminder_spacing would pass
+    // determinism + plumbing then never explore the 2nd dimension. Pair (s0,s1) at cadence 2: same
+    // delivery (capacity 3 at both) but softer nags at s1, so sentiment strictly rises and the stream
+    // differs (fewer? no — same events, but sentiment payload differs), so compare metric + payload.
+    const scn = makeScenario('s_spacing_antinoop')
+    const a = runCS(2, 0, scn)
+    const b = runCS(2, 1, scn)
+    expect(JSON.stringify(a.events)).not.toBe(JSON.stringify(b.events))
+    expect(b.metric('guest_sentiment_score') as number).toBeGreaterThan(
+      a.metric('guest_sentiment_score') as number,
+    )
+  })
+})
+
+// The keystone corpus (same guest mix as the loop keystone): one immediate, one one-reminder, one
+// multi-reminder no-show, one never-responder, over a golden + an adversarial scenario.
+const KEYSTONE_GUESTS = [
+  makeGuest('guest_immediate', 'immediate', 'yes'),
+  makeGuest('guest_one', 'after_one_reminder', 'yes'),
+  makeGuest('guest_many', 'after_multiple_reminders', 'no'),
+  makeGuest('guest_never', 'never', 'maybe_needs_nudge'),
+]
+const KEYSTONE_CORPUS: readonly ScenarioDefinition[] = [
+  makeScenario('golden_g', KEYSTONE_GUESTS, 'golden'),
+  makeScenario('adv_a', KEYSTONE_GUESTS, 'adversarial'),
+]
+
+/** The aggregate North Star a genome scores over a corpus (the value the accept rule compares). */
+function aggregateNorthStar(cadence: number, spacing: number): number {
+  const genome: StrategyGenome = makeGenome(cadence, spacing)
+  let weighted = 0
+  let totalWeight = 0
+  for (const scenario of KEYSTONE_CORPUS) {
+    const run = makePlannerSimulator({
+      championGenome: genome,
+      candidateGenome: genome,
+      candidateArtifactRef: genomeArtifactRef(genome),
+      baseTimestamp: BASE_TS,
+    })
+    const events = run(scenario, 'candidate').productEvents
+    const comps = engine.computeMany(engine.metricCodes(), events, scenario.scenario_id)
+    const mv: Record<string, number | null> = {}
+    for (const c of comps) mv[c.metric_code] = c.value
+    const ratio = computeNorthStar(deriveNorthStarInputs(mv, scenario.couple), false).ratio
+    const weight = AGGREGATION_WEIGHTS[scenario.scenario_type as keyof typeof AGGREGATION_WEIGHTS] ?? 1
+    weighted += weight * ratio
+    totalWeight += weight
+  }
+  return weighted / totalWeight
+}
+
+function matrix(): number[][] {
+  return [0, 1, 2, 3].map((c) => [0, 1, 2, 3].map((s) => Number(aggregateNorthStar(c, s).toFixed(4))))
+}
+
+/** The argmax cadence at a fixed spacing column (lowest cadence on a tie). */
+function argmaxCadence(m: number[][], spacing: number): number {
+  let best = 0
+  for (let c = 1; c <= 3; c += 1) if ((m[c]?.[spacing] ?? -1) > (m[best]?.[spacing] ?? -1)) best = c
+  return best
+}
+
+describe('the 2-D North-Star matrix — pinned, with a STRICT interior optimum', () => {
+  // Pinned so model/constant drift is loud at CI time rather than silently moving the optimum.
+  const EXPECTED: number[][] = [
+    [0.5625, 0.5625, 0.5625, 0.5625], // cadence 0
+    [0.6823, 0.6888, 0.6953, 0.5625], // cadence 1
+    [0.776, 0.7956, 0.6953, 0.5625], // cadence 2
+    [0.75, 0.776, 0.6953, 0.5625], // cadence 3
+  ]
+
+  it('matches the pinned aggregate North-Star matrix over the keystone corpus', () => {
+    expect(matrix()).toEqual(EXPECTED)
+  })
+
+  it('has a UNIQUE, STRICT, INTERIOR optimum at (cadence 2, spacing 1)', () => {
+    const m = matrix()
+    const G = { c: 2, s: 1 }
+    const gVal = m[G.c]?.[G.s] as number
+    // Interior on BOTH axes (not a face/corner).
+    expect(G.c).toBeGreaterThan(0)
+    expect(G.c).toBeLessThan(3)
+    expect(G.s).toBeGreaterThan(0)
+    expect(G.s).toBeLessThan(3)
+    // Strictly beats ALL in-box axis AND diagonal neighbors (rules out a corner-in-disguise).
+    for (const dc of [-1, 0, 1]) {
+      for (const ds of [-1, 0, 1]) {
+        if (dc === 0 && ds === 0) continue
+        const nc = G.c + dc
+        const ns = G.s + ds
+        const neighbor = m[nc]?.[ns]
+        if (neighbor !== undefined) {
+          expect(gVal, `(${nc},${ns}) must be < optimum`).toBeGreaterThan(neighbor)
+        }
+      }
+    }
+    // It is the global argmax of the whole box.
+    const flat = m.flat()
+    expect(Math.max(...flat)).toBe(gVal)
+    expect(flat.filter((v) => v === gVal).length).toBe(1) // unique
+  })
+
+  it('is NON-SEPARABLE: the optimal cadence depends on the spacing', () => {
+    // argmax over cadence is 2 at spacing 1 but drops once capacity caps reach (spacing 2 -> capacity
+    // 1, so cadence >1 buys nothing and the cheapest cadence wins). A separable landscape would have a
+    // spacing-independent best cadence. This is the property a coordinate-by-coordinate intuition misses.
+    const m = matrix()
+    expect(argmaxCadence(m, 1)).toBe(2)
+    expect(argmaxCadence(m, 2)).toBeLessThan(2)
+  })
+
+  it('REQUIRES the second knob: the box optimum strictly beats every cadence-only (spacing 0) point', () => {
+    // The pre-Phase-3 search could only move cadence (spacing pinned at the seed's 0). The true optimum
+    // lives at spacing 1, so any spacing-0-locked search is strictly suboptimal — the formal reason the
+    // search MUST explore the second dimension (the keystone proves the loop-level version of this).
+    const m = matrix()
+    const boxOptimum = Math.max(...m.flat())
+    const bestAtSpacing0 = Math.max(...m.map((row) => row[0] as number))
+    expect(boxOptimum).toBeGreaterThan(bestAtSpacing0)
+  })
+
+  it('the interior optimum has a finite margin over its neighbours (not a knife-edge)', () => {
+    // A robustness proxy without constant-injection: the smallest gap to a neighbour is ~0.0196
+    // (the optimum 0.7956 over (c2,s0)=(c3,s1)=0.776). A non-trivial margin means small constant
+    // perturbations keep the optimum interior; the exact band is documented in stage_a_planner.
+    const m = matrix()
+    const gVal = m[2]?.[1] as number
+    const neighbours = [m[1]?.[1], m[3]?.[1], m[2]?.[0], m[2]?.[2]].filter((v): v is number => v !== undefined)
+    const smallestMargin = Math.min(...neighbours.map((v) => gVal - v))
+    expect(smallestMargin).toBeGreaterThan(0.01)
   })
 })
 

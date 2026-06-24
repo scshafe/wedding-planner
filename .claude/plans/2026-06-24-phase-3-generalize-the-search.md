@@ -90,7 +90,7 @@ so requiring it does NOT inflate any genome's tier. Cost: re-baseline fixtures/s
     the ground-truth-derived computation needs no Stage-B cross-check; a knob that authors an outcome
     does [R-arch-P0-2/P0-3, recorded as the rejected path].
 
-- [ ] **Step 3 — the oracle for the 2-D model.**
+- [x] **Step 3 — the oracle for the 2-D model.**
   - Extend `metamorphic_oracle.test.ts`: per-axis monotonicity where it holds; **anchored** values
     (hand-reasoned from latency labels × spacing, surviving a sign-flip/off-by-one); the multiplicative
     sentiment relation; anti-no-op for `reminder_spacing` (flipping only spacing changes the stream AND

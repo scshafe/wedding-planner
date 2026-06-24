@@ -88,11 +88,15 @@ const SENTIMENT_PENALTY_PER_NAG = 0.25
  * by editing the North Star weights. At spacing 0 both reduce to the Phase-2 model.
  */
 /**
- * Reminder window capacity at a spacing level: how many nudges fit in the fixed rsvp_window. cap(s) =
- * SPACING_CAPACITY_BASE - s, floored at 0 -> {3,2,1,0} for s in {0,1,2,3}. At s=0 it is >= the cadence
- * max (3), so spacing never caps delivery (Phase-2 behavior); higher spacing bites.
+ * Reminder window capacity by spacing level: how many nudges fit in the fixed rsvp_window. The window
+ * holds the full cadence budget (3) at tight/normal spacing (s0, s1); spacing the nudges widely (s2)
+ * leaves room for only one; very wide (s3) for none. The flat-then-sharp shape is deliberate: it keeps
+ * an INTERIOR spacing optimum (s1 — full reach AND softer nags) strictly above its neighbours rather
+ * than collapsing to a corner or a c2/c3 saturation tie (no guest needs >2 reminders, so a column with
+ * capacity >= 3 strictly punishes the cadence-3 overshoot, which a capped column cannot). The matrix
+ * test pins this; the constant-sensitivity test documents the band over which the interior optimum holds.
  */
-const SPACING_CAPACITY_BASE = 3
+const SPACING_CAPACITY: readonly number[] = [3, 3, 1, 0]
 /**
  * Fraction by which each spacing level softens a nag: penalty_per_nag = SENTIMENT_PENALTY_PER_NAG *
  * (1 - SPACING_RELIEF * spacing). At 0.25 the per-nag penalty is {0.25, 0.1875, 0.125, 0.0625} for
@@ -103,7 +107,7 @@ const SPACING_RELIEF = 0.25
 
 /** Nudges that fit in the window at a spacing level (the spacing downside). */
 function spacingCapacity(spacing: number): number {
-  return Math.max(0, SPACING_CAPACITY_BASE - spacing)
+  return SPACING_CAPACITY[spacing] ?? 0
 }
 
 /** Sentiment lost per nag at a spacing level (the spacing upside: gentler with more spacing). */
