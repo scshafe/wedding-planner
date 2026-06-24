@@ -22,6 +22,9 @@ export { type IdGenerator, SequentialIdGenerator } from './determinism/id_genera
 export { canonicalJson } from './serialization/canonical_json'
 export { sha256Hex, hmacSha256Hex, timingSafeEqualHex } from './crypto/hashing'
 
+// Immutability
+export { deepFreeze } from './deep_freeze'
+
 // Contracts (the 12 JSON Schema contracts as runtime validators)
 export {
   CONTRACT_DEFINITIONS,

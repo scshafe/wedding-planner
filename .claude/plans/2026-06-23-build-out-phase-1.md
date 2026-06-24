@@ -52,7 +52,7 @@ engineering choices; keep the safety rails firm.
   - Implement `ledger_entry` (`loop-orchestrator/schemas/ledger_entry_schema.json`): `entry_hash`/`prev_entry_hash` chaining, append-only, idempotent appends keyed by `candidate_id × from_state × to_state` (`loop-orchestrator/loop_architecture.md` "Failure and recovery").
   - Verify: tests prove (a) altering an earlier entry breaks the chain (tamper-evident), (b) a rewrite is rejected (append-only), (c) a re-driven identical append does not fork history.
 
-- [ ] **Step 7: The eval-harness trusted recorder (the integrity boundary).**
+- [x] **Step 7: The eval-harness trusted recorder (the integrity boundary).**
   - Implement the out-of-band trusted recorder that intercepts the (sandboxed) product's would-be effects and authors the TRUSTED fields (`verified`, committed totals), per `telemetry/README.md` "Integrity" and `loop-orchestrator/safety_and_governance.md` §1. The "product" is a sandbox stub in Phase 1.
   - Verify: a test shows a gate reads the trusted record (not a product-emitted field), and a product self-report that diverges from the trusted record raises `INTEGRITY.SELF_REPORT_DIVERGENCE`.
   - Specialist: `doddy` *(this is the project's #1 safety boundary — verify the implementation actually protects the graders' inputs, not just their code).*
@@ -84,3 +84,4 @@ The offline core runs end-to-end: a (stubbed) candidate is proposed, scored agai
 2. The production funnel — experiment engine, shadow/canary/ramp, the statistical decision rules (`loop-orchestrator/experiment_design.md`). **First real blast radius — heavily gated.**
 3. `agent-operations/` — the roster, the oversight loops, the *production* trusted-evidence channel (`agent-operations/oversight_loops.md`, `trusted_evidence_channel.md`).
 4. The action→surface/scope map (the named unbuilt dependency for operational tier-derivation).
+5. **Trusted-recorder feed-path brand** (from doddy's Step-7 review, deferred by scope): when the real interception layer replaces Phase-1's direct sandbox feed, brand `RecordCommitmentInput`/`RecordIntegrationActionInput` so a product-authored value cannot be passed into a trusted field by accident. The single highest-leverage thing to get right when interception lands ([[prod-trusted-evidence-channel]], [[integrity-gate-completeness-invariants]]).
