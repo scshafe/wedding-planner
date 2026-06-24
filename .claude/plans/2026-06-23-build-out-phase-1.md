@@ -48,7 +48,7 @@ engineering choices; keep the safety rails firm.
   - Implement the event envelope/payloads as runtime-validated types and the metric engine where a metric is `f(events filtered by wedding_id)` with **no ambient state/clock** (`telemetry/README.md` "Metrics own no state" / "Determinism"). Implement a handful of `metric_code`s from `telemetry/metric_catalog.md`.
   - Verify: a test replays a fixed event stream twice and asserts identical metric output (replayability); `event_id`/`occurred_at`/`seed` are injected, not read from a clock.
 
-- [ ] **Step 6: The append-only hash-chained ledger.**
+- [x] **Step 6: The append-only hash-chained ledger.**
   - Implement `ledger_entry` (`loop-orchestrator/schemas/ledger_entry_schema.json`): `entry_hash`/`prev_entry_hash` chaining, append-only, idempotent appends keyed by `candidate_id × from_state × to_state` (`loop-orchestrator/loop_architecture.md` "Failure and recovery").
   - Verify: tests prove (a) altering an earlier entry breaks the chain (tamper-evident), (b) a rewrite is rejected (append-only), (c) a re-driven identical append does not fork history.
 

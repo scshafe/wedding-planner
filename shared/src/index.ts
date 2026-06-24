@@ -18,6 +18,10 @@ export { REPO_ROOT, resolveFromRepoRoot } from './repo_root'
 export { type Clock, ManualClock } from './determinism/clock'
 export { type IdGenerator, SequentialIdGenerator } from './determinism/id_generator'
 
+// Serialization + crypto (deterministic; underpin the ledger hash chain + signatures)
+export { canonicalJson } from './serialization/canonical_json'
+export { sha256Hex, hmacSha256Hex, timingSafeEqualHex } from './crypto/hashing'
+
 // Contracts (the 12 JSON Schema contracts as runtime validators)
 export {
   CONTRACT_DEFINITIONS,
