@@ -30,3 +30,24 @@ export {
   type ContractValidationError,
   type ContractValidationResult,
 } from './contracts/schema_registry'
+
+// Generated contract types (clean-named surface over ./contracts/generated)
+export type {
+  EventEnvelope,
+  CommitmentPayload,
+  CommsFactAssertedPayload,
+  GuestQuestionAnsweredPayload,
+  IntegrationActionResultPayload,
+  ConstraintEvaluatedPayload,
+  CoupleDecisionPayload,
+  CouplePersona,
+  GuestPersona,
+  Scenario,
+  GradeReport,
+  CandidateChange,
+  LedgerEntry,
+  RolloutStage,
+  EscalationRecord,
+  OversightRecord,
+  TrustedFeed,
+} from './contracts/contract_types'

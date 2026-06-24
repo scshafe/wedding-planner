@@ -40,7 +40,7 @@ engineering choices; keep the safety rails firm.
   - Load all 12 `*/schemas/*.json` into ajv (do not copy/redefine them); a test compiles each and validates the existing sample instances (`eval-harness/personas/*.yaml`, `eval-harness/scenarios/**/*.yaml`) against their schemas.
   - Verify: a test asserts all 12 schemas compile under ajv and every sample persona/scenario validates.
 
-- [ ] **Step 4: Generate TypeScript types from the schemas.**
+- [x] **Step 4: Generate TypeScript types from the schemas.**
   - `json-schema-to-typescript` over the 12 schemas → typed contracts shared across packages.
   - Verify: `tsc` typechecks; a round-trip test constructs a typed `event_envelope` and `candidate_change` and validates them against ajv.
 
