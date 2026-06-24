@@ -1,0 +1,10 @@
+{
+  "name": "@wedding-planner/agent-operations",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "How the whole stack is run by a team of agents. Skeleton only in Phase 1 — the roster, oversight loops, and production trusted-evidence channel are deferred to a later phase, gated behind the offline core. Specs live alongside the code.",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

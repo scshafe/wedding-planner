@@ -1,0 +1,10 @@
+{
+  "name": "@wedding-planner/loop-orchestrator",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The recursive product-improvement loop: the append-only hash-chained ledger, the deterministic selector, the offline pipeline (recorder -> gates -> scoring -> ledger), and the minimal proposer. Production funnel is deferred to a later phase. Specs live alongside the code.",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "@wedding-planner/telemetry",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The instrumentation contract: the event stream and metrics-as-pure-functions over it. Specs live alongside the code in this directory (README.md, event_catalog.md, metric_catalog.md, vocabularies.md, schemas/).",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

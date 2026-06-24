@@ -32,7 +32,7 @@ engineering choices; keep the safety rails firm.
   - Non-binding suggestion (take it or override it): TypeScript + Claude Agent SDK + ajv — the 12 contracts are already JSON Schema, so ajv gives runtime validation and `json-schema-to-typescript` gives static types from the same source, and the Agent SDK (the proposer's substrate, `loop-orchestrator/README.md` "Implementation substrate") is first-class in TS. Python + pydantic is an equally legitimate choice. **Do not stop for human approval — decide, record why, and proceed.**
   - Verify: an ADR recording the choice + rationale exists in the repo.
 
-- [ ] **Step 2: Scaffold the project skeleton.**
+- [x] **Step 2: Scaffold the project skeleton.**
   - A workspace with one package per domain (`telemetry`, `eval-harness`, `loop-orchestrator`, `agent-operations`), a test runner (e.g. vitest), tsconfig, lint. Follow the `agent-first-engineering` skill conventions.
   - Verify: `npm run build` (tsc, no errors) and `npm test` (empty suite passes) both succeed.
 

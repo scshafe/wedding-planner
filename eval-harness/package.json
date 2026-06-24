@@ -1,0 +1,10 @@
+{
+  "name": "@wedding-planner/eval-harness",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The offline scoring substrate: the trusted recorder, the deterministic veto gates, the North Star scoring model, and the grade report. Specs live alongside the code (README.md, rubrics/, scoring/, scenarios/, personas/, schemas/).",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

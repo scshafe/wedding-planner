@@ -1,0 +1,32 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@wedding-planner/shared": ["shared/src/index.ts"],
+      "@wedding-planner/shared/*": ["shared/src/*"],
+      "@wedding-planner/telemetry": ["telemetry/src/index.ts"],
+      "@wedding-planner/telemetry/*": ["telemetry/src/*"],
+      "@wedding-planner/eval-harness": ["eval-harness/src/index.ts"],
+      "@wedding-planner/eval-harness/*": ["eval-harness/src/*"],
+      "@wedding-planner/loop-orchestrator": ["loop-orchestrator/src/index.ts"],
+      "@wedding-planner/loop-orchestrator/*": ["loop-orchestrator/src/*"],
+      "@wedding-planner/agent-operations": ["agent-operations/src/index.ts"],
+      "@wedding-planner/agent-operations/*": ["agent-operations/src/*"]
+    }
+  },
+  "include": [
+    "shared/src",
+    "shared/tests",
+    "telemetry/src",
+    "telemetry/tests",
+    "eval-harness/src",
+    "eval-harness/tests",
+    "loop-orchestrator/src",
+    "loop-orchestrator/tests",
+    "agent-operations/src",
+    "agent-operations/tests",
+    "scripts",
+    "vitest.config.ts"
+  ]
+}

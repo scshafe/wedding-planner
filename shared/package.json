@@ -1,0 +1,10 @@
+{
+  "name": "@wedding-planner/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cross-domain capabilities used by two or more domains: the schema registry/validator, generated contract types, determinism primitives, structured logging, the base error type, and hash-chain/signing helpers.",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

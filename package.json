@@ -1,0 +1,42 @@
+{
+  "name": "wedding-planner",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AI wedding planner that improves and operates itself under a team of agents. This workspace is the running code for the offline core (Phase 1); see docs/adr/ for the stack decision and .claude/plans/ for the build plan.",
+  "workspaces": [
+    "shared",
+    "telemetry",
+    "eval-harness",
+    "loop-orchestrator",
+    "agent-operations"
+  ],
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "gen:types": "tsx scripts/contracts/generate_contract_types.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.17.0",
+    "json-schema-to-typescript": "^15.0.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0",
+    "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "glob": "^11.0.0",
+    "js-yaml": "^4.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
