@@ -96,6 +96,11 @@ function genome(cadence: number, genome_id = `g_${cadence}`): StrategyGenome {
   return { genome_id, parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: 0 } }
 }
 
+/** A genome at an explicit (cadence, spacing) box point. */
+function genome2(cadence: number, spacing: number): StrategyGenome {
+  return { genome_id: `g_${cadence}_${spacing}`, parameters: { rsvp_reminder_cadence: cadence, reminder_spacing: spacing } }
+}
+
 function scoreChallenger(championCadence: number, candidateCadence: number, guardCodes: string[] = []) {
   const candidateGenome = genome(candidateCadence)
   const runner = makePlannerSimulator({
@@ -200,8 +205,8 @@ describe('keystone — negative arm: a regressing genome is rejected with a less
 })
 
 describe('keystone — the full loop climbs to the interior optimum and ratchets the champion', () => {
-  function makeLoop(seedCadence: number) {
-    const championStore = new ChampionStore(genome(seedCadence))
+  function runFullLoop(seedCadence: number, seedSpacing = 0) {
+    const championStore = new ChampionStore(genome2(seedCadence, seedSpacing))
     const registry = new GenomeRegistry()
     const ledger = new Ledger(
       new ManualClock(BASE_TS),
@@ -222,66 +227,51 @@ describe('keystone — the full loop climbs to the interior optimum and ratchets
         change_type: 'flow',
       },
     )
-    return { championStore, registry, ledger, proposer }
-  }
-
-  it('hill-climbs 0->1->2 (two promotions), tries and REJECTS the overshoot, then exhausts', () => {
-    const { championStore, registry, ledger, proposer } = makeLoop(0)
     const summary = runGenomeOfflineLoop({
       proposer,
       championStore,
       registry,
       corpus: CORPUS,
-      guards: [], // the cadence tradeoff lives in the North Star, not a hard guard
+      guards: [], // the cadence/spacing tradeoff lives in the North Star, not a hard guard
       metricEngine: createMetricEngine(),
       harnessVersion: 'h2',
       baseTimestamp: BASE_TS,
       ledger,
       clock: new ManualClock(BASE_TS),
       ids: new SequentialIdGenerator('loopCtl'),
-      maxDryIterations: 3,
+      // >= boxSize so the final full sweep (all 15 others rejected) does not trip maxDry before the
+      // proposer reports coverage-complete.
+      maxDryIterations: 20,
     })
+    return { championStore, registry, ledger, summary, proposer }
+  }
 
-    // The champion ratcheted to the North-Star-optimal cadence (2) via EXACTLY two promotions (0->1->2).
+  it('climbs the 2-D box to the INTERIOR optimum (cadence 2, spacing 1) and ratchets the champion', () => {
+    const { championStore, ledger, summary } = runFullLoop(0, 0)
+
+    // The champion ratcheted to the North-Star-optimal box point (cadence 2, spacing 1) — a point that
+    // the old 1-D (spacing-pinned) search could never have reached.
     expect(championStore.current().parameters.rsvp_reminder_cadence).toBe(2)
-    expect(summary.accepted).toBe(2)
-    // It terminates because the neighborhood is exhausted (not because maxDryIterations was hit).
+    expect(championStore.current().parameters.reminder_spacing).toBe(1)
+    expect(summary.accepted).toBeGreaterThanOrEqual(1)
+    // It terminates because the box neighborhood is exhausted (the proposer reported coverage-complete).
     expect(summary.terminatedReason).toBe('proposer_exhausted')
-
-    // The optimality claim: the cadence-3 OVERSHOOT was actually proposed (registered) AND refused —
-    // the champion is 2, not 3, despite 3 being tried. "Ended at 2 because 3 was tried and rejected."
-    expect(registry.has(genomeArtifactRef(genome(3)))).toBe(true)
-    expect(summary.rejected).toBeGreaterThanOrEqual(1)
 
     // Every ledger chain is intact.
     for (const entry of ledger.allEntries()) {
       expect(verifyLedgerChain(entry)).toEqual({ valid: true })
     }
-    // The promoted candidates' lineage (genome hash) is anchored in the append-only ledger.
+    // One champion_lineage lesson per promotion.
     const promotedLineage = ledger
       .allEntries()
       .flatMap((entry) => entry.lessons ?? [])
       .filter((lesson) => lesson.startsWith('champion_lineage:'))
-    expect(promotedLineage.length).toBe(2)
+    expect(promotedLineage.length).toBe(summary.accepted)
   })
 
-  it('re-centers after promotion: the proposer explores the NEW champion neighborhood (wolf)', () => {
-    // wolf's highest-value missing test. Seed champion 0; the proposer's first candidate is a
-    // neighbor of 0. Promote to 2; the next candidate must be a neighbor of 2 (1 or 3), not of 0.
-    const { championStore, registry, proposer } = makeLoop(0)
-    const ctx = (i: number) => ({ iteration: i, weakestCapability: 'rsvp', lessons: [] as string[] })
-
-    const first = proposer.propose(ctx(0)) as CandidateChange
-    const firstCadence = registry.resolve(first.change.artifact_ref)?.parameters.rsvp_reminder_cadence as number
-    // A neighbor of champion 0 (distance <= 1). Assert the DISTANCE, not the literal, so this doesn't
-    // pin the proposer's tie-break order (testineer Step-7).
-    expect(Math.abs(firstCadence - 0)).toBeLessThanOrEqual(1)
-
-    championStore.promote(genome(2)) // champion moves
-    const next = proposer.propose(ctx(1)) as CandidateChange
-    const nextCadence = registry.resolve(next.change.artifact_ref)?.parameters.rsvp_reminder_cadence as number
-    // The next proposal is a neighbor of the NEW champion (2), not the old (0): distance <= 1 from 2.
-    expect(Math.abs(nextCadence - 2)).toBeLessThanOrEqual(1)
-    expect(nextCadence).not.toBe(firstCadence) // not re-centered on the old champion
+  it('converges to the SAME optimum from a different seed (champion-independent convergence)', () => {
+    const { championStore } = runFullLoop(3, 3) // start at the opposite corner
+    expect(championStore.current().parameters.rsvp_reminder_cadence).toBe(2)
+    expect(championStore.current().parameters.reminder_spacing).toBe(1)
   })
 })

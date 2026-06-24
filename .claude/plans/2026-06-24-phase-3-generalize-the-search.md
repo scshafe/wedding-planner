@@ -102,7 +102,7 @@ so requiring it does NOT inflate any genome's tier. Cost: re-baseline fixtures/s
   - Add a constant-sensitivity test: perturb a model constant ±a stated margin, assert the optimum
     stays interior within a documented band (anti-brittleness; names the band honestly) [R-search-P1-6].
 
-- [ ] **Step 4 — generalize `SearchProposer` to 2-D (D4).**
+- [x] **Step 4 — generalize `SearchProposer` to 2-D (D4).**
   - Replace the 1-D distance-ordered enumeration with the fixed champion-independent spread-first box
     enumeration; perturb a copy of the champion's full parameters. Trajectory-relative tabu keyed
     `(championHash, genomeHash)`. Keep the content-addressing, registry, and honest
