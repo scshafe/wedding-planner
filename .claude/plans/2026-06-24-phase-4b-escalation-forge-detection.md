@@ -1,6 +1,6 @@
 # Phase 4b — Make INTEGRITY forge-detection load-bearing (escalate-to-couple + trusted RSVP-outcome reconciliation)
 
-**Status:** IN PROGRESS. **Branch:** `build/phase-3-generalize-search` (the open review artifact for
+**Status:** COMPLETE — all 6 steps ticked (234 tests green). **Branch:** `build/phase-3-generalize-search` (the open review artifact for
 `main`; 4a/4b build on it). **Predecessor:** Phase 4a — the tier-2 promotion gate (complete, 210 tests).
 
 ## Why this phase
@@ -173,7 +173,7 @@ so a baseline that also failed integrity could not let a forge through.
   - **(c) suppression:** a planner that suppresses a trusted couple-resolution / couple-session is caught
     (`suppressed_effect`).
 
-- [ ] **Step 6 — metamorphic relations (lean) + ADR + memory + handoff.**
+- [x] **Step 6 — metamorphic relations (lean) + ADR + memory + handoff.**
   - `metamorphic_oracle.test.ts`: add anchored, non-circular escalation relations — raising
     `autonomy_threshold` (with ≥1 `couple_resolvable` pending guest) raises `rsvp_resolution_rate` AND
     raises `couple_active_minutes_total` (effort_cost); the net North-Star effect is genome/scenario-

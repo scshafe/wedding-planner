@@ -46,8 +46,11 @@ review. **Phase 4a built the tier-2 promotion GATE** ([[tier2-promotion-gate-is-
 loop now PARKS any accepted tier-2 candidate absent an exogenous human approval, proven with an
 *injected* tier-2 candidate via the optional unwired `autonomy_threshold` knob — no escalation, no new
 simulator, no forge surface (which is exactly why folding escalation into the search was rejected again).
-**Phase 4b is the still-pending escalate-to-couple knob + forge-detection** — the headline P0 there is
-the metric-reads-claims seam (`offline_scorer` scores the CLAIMED event stream, so a forged couple-
-resolution must be tied back to a trusted record, not just a new escalation effect-kind), and it must
-also redefine the convergence certificate as "no PROMOTABLE point" (see
-[[search-convergence-certificate-semantics]] §4) before tier-2 enters the autonomous search.
+**UPDATE (Phase 4b, BUILT — [[escalation-forge-detection-load-bearing]]).** The escalate-to-couple knob +
+forge-detection shipped. The headline P0 (metric-reads-claims) was closed by reconciling EVERY claimed
+RSVP resolution (by guest_id, any cause — closing a pre-existing reminder-resolution hole too) and the
+couple-cost (field-level `active_seconds`) against a trusted record Stage B authors independently — so a
+forged resolution / shaved cost is a veto, not free score. Critically, escalation stayed **injected-only**
+(the search box is still pinned tier-1, with a guard test), exactly as this memory demanded — so the
+convergence-certificate "no PROMOTABLE point" redefinition ([[search-convergence-certificate-semantics]]
+§4) stays DEFERRED (no parked point arises mid-sweep). Tier-2 still never enters the autonomous search.

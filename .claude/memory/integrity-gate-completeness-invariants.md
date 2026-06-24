@@ -34,6 +34,15 @@ the other doesn't, satisfying a gate while staying invisible to suppression. The
 set is the COMPLETE outcome set (executed + auto_executed + failed) so a lie within a report is caught
 by the field diff rather than missed by suppression.
 
+**UPDATE (Phase 4b).** Both invariants now also govern the RSVP-resolution + couple-session effect
+families ([[escalation-forge-detection-load-bearing]]): `rsvp_status` and `active_seconds` are in the
+field-diff lists (a completeness test pins it), and `RSVP_RECEIVED_REPORT_EVENT_NAMES` /
+`COUPLE_SESSION_REPORT_EVENT_NAMES` are the shared reader-sets. This is the first time invariant 1 covers
+fields the North Star numerator/denominator actually read (resolution + couple cost) — so the coverage
+must equal not just the GATES' input surface but the metric-corroboration surface for any claimed metric
+a trusted record can back. (Model-output metrics with no trusted record — e.g. `guest_sentiment_score` —
+are out of scope by construction: nothing corroborates them, so there is no field to diff.)
+
 **Also (deferred to Phase 2):** the trusted recorder currently trusts its caller absolutely
 (`RecordCommitmentInput` carries every trusted field). Sound in Phase 1 (caller IS the sandbox). When
 the real interception layer lands, brand the record* input so a product-authored value cannot be

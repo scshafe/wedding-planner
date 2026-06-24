@@ -1,81 +1,77 @@
 # Handoff
 
-## Where things stand — Phase 4a (the tier-2 promotion gate) is BUILT ✅
-`.claude/plans/2026-06-24-phase-4a-tier2-promotion-gate.md` is **complete — all 6 steps ticked**, on
-branch **`build/phase-3-generalize-search`** (Phase 4a builds directly on the Phase-3 review artifact;
-the loop's merge-keeper advances `main` when green). Working tree clean.
-`npm run build && npm test && npm run lint` all green (**210 tests**, up from 183 at the start of this
-run). `main` contains Phase 1 + Phase 2; this branch is the review artifact for Phase 3 **and** Phase 4a.
+## Where things stand — Phase 4b (escalation forge-detection) is BUILT ✅
+`.claude/plans/2026-06-24-phase-4b-escalation-forge-detection.md` is **complete — all 6 steps ticked**,
+on branch **`build/phase-3-generalize-search`** (Phase 3 is the open review artifact for `main`; 4a + 4b
+build on it; the loop's merge-keeper advances `main` when green). Working tree clean.
+`npm run build && npm test && npm run lint` all green (**234 tests**, up from 210 at the start of this run).
+`main` contains Phase 1 + Phase 2; this branch is the review artifact for Phase 3 **and** 4a **and** 4b.
 
-**What changed:** the firewall's tier-2 human-gate went from documented-but-dormant (zero code
-consumers) to **load-bearing**. Before, the loop's only promotion seam was unconditional — a tier-2
-genome that honestly declared tier 2 auto-ratcheted the champion, i.e. the autonomous loop granting
-itself tier-2 autonomy (the rail breach the safety model forbids). Now the loop **parks** accepted
-tier-2 candidates pending an **exogenous** human approval it cannot mint.
-
-### Why this is 4a, not the escalation phase the prior handoff recommended
-The prior handoff recommended "the tier-2 escalate-to-couple knob as its own gated phase." Two
-adversarial design reviews (specialists not provisioned here — commit b1201fa; ran `general-purpose`
-reviewers, plus an adversarial review of the *implemented* gate) **converged on splitting** it: the
-tier-2 **gate** is a loop/safety concern needing zero new search dimensions / simulator / forge surface,
-and folding escalation into the autonomous search box would contradict committed memory
-([[second-genome-knob-must-stay-tier1]] — "never folded into the autonomous search"). So **4a = the
-gate** (this run); **4b = the escalate-to-couple knob + forge-detection** (next).
+**What changed:** the firewall's integrity gate (`INTEGRITY.SELF_REPORT_DIVERGENCE`) went from
+**effectively vacuous in the live loop** (it only reconciled commitment/integration effects, of which the
+RSVP model emits none) to **load-bearing**. The headline 4a→4b P0 — the scorer computes every metric over
+the CLAIMED event stream, so a forged couple-resolution / shaved couple-cost could inflate the North Star
+unchecked — is closed. 4a made the human-gate load-bearing; 4b makes the forge-detection load-bearing.
 
 ### What's new this phase (by step)
-- **Step 1** — `autonomy_threshold` (int 1..3), the first **tier-2** genome knob, mapped to
-  `commitment_autonomy`. **OPTIONAL** by presence (no 0='off' value ⇒ no absent-vs-disabled alias, **no
-  genome-hash re-baseline**); the autonomous search never emits it (stays tier-1), so it derives tier-2
-  only for *injected* candidates. Stage-A wiring + forge-detection deferred to 4b.
-- **Step 2** — `pipeline/promotion_gate.ts`: the seam re-derives the tier from the content-addressed
-  genome (never the declared `risk_tier`); `tier ≤ 1` lands, `tier ≥ 2` routes to `human_review`. The
-  loop outcome is now three-way (`promoted`/`parked`/`human_rejected`); only a landed promotion un-dries
-  the search. Promotions are now tamper-evidently ledgered (`offline_passed → promoted`).
-- **Step 3** — `pipeline/landing_approval.ts`: the EXOGENOUS, read-only `ApprovalStore` (the loop has no
-  approval constructor) + `landingKeyFor = sha256(genome_hash ‖ champion_hash)`, re-derived at the seam.
-  approved:true ⇒ land (decided_by human); approved:false ⇒ `human_rejected`; no/stale/wrong-genome
-  match ⇒ park. One-shot via `markSpent`. First live consumer of `oversight_record.human_gate`.
-- **Step 4** — the **non-self-approval rail**: a source scan asserts no production file authors a
-  `human_gate`/`reviewed_by:'human'` literal; `ApprovalStore`'s surface is exactly `{find, markSpent}`.
-- **Step 5** — the keystone (`tier2_gate_keystone.test.ts`): the RED/GREEN proof in one fact —
-  `accepted === 1` (a naive loop would land it) but `promoted === 0` / `parked === 1`. Plus
-  land-with-approval, reject-on-false, and under-declared-tier-2 rejected at the pre-score firewall.
-- **Step 6** — `docs/adr/0003`, two memory files, this handoff. **Plus** (from the implemented-gate
-  review, no P0s) two contract-hardening fixes: a schema `allOf` making `human_gate ⟹ reviewed_by:human`
-  a contract invariant, and an accurate `binds_landing_key` description.
+- **Step 1** — optional `couple_resolvable` ground-truth fact on `guest_persona` `rsvp_truth` (scenario
+  fact, never genome/product) + shared `domain_facts.ts` (the FACTS both simulator stages read). Matrix
+  byte-identical, no genome-hash re-baseline.
+- **Step 2** — trusted `TrustedRsvpOutcomeRecord` + `TrustedCoupleSessionRecord` families + recorder
+  methods; **Stage B now takes `(scenario, genome)`** and independently authors the trusted resolved set
+  (reminder ∪ couple-escalation) + couple cost — by its OWN computation, sharing only the FACTS, never
+  Stage A's emission path. Stage A unchanged here; gate not yet reconciling, so honest runs unaffected.
+- **Step 3** — the integrity gate gains `rsvp_resolution` + `couple_session` effect-kinds: reconciles
+  EVERY claimed `guest.rsvp.received` by `guest_id` (any cause — closing a PRE-EXISTING reminder-forge
+  hole) + `couple.session.ended` `active_seconds` (field-diff, `skipWhenClaimAbsent:false`). New shared
+  reader-sets in `report_event_names.ts`; completeness-invariant test. The firewall lands BEFORE Step-4
+  escalation (window-free order). Two loop fixtures had to author honest trusted outcomes — the firewall
+  correctly biting.
+- **Step 4** — Stage A escalate-to-couple behavior: `autonomy_threshold` escalates pending couple-
+  resolvable guests, emitting `couple.session.ended` (cost, `about_guest_id` join key) + `guest.rsvp.received`.
+  Box-is-tier-1 guard test: `search_proposer` NEVER emits `autonomy_threshold`.
+- **Step 5** — THE KEYSTONE (`escalation_forge_keystone.test.ts`): 5 arms, each the RED/GREEN fact "the
+  forge moves the claimed metric favourably but produces a NEW gate failure vs the honest baseline →
+  rejected": forged couple-resolution, reminder-labeled forge, shaved `active_seconds`, suppressed session,
+  and honest escalation that WINS on resolution yet PARKS at the tier-2 gate (firewalls compose).
+- **Step 6** — metamorphic escalation relations (resolution↑ AND effort_cost↑, not a free win) +
+  `docs/adr/0004` + memory ([[escalation-forge-detection-load-bearing]] + updates to three related files)
+  + this handoff.
 
-## Next action — Phase 4b (your call, recommended): the escalate-to-couple knob + forge-detection
-This is the sanctioned escalation phase ([[second-genome-knob-must-stay-tier1]] update). It makes the
-firewall's **integrity forge-detection** load-bearing (4a made the human-gate load-bearing). Wire the
-`autonomy_threshold`/escalation knob into Stage A, with Stage B independently observing couple-response
-ground truth and the integrity gate covering the new forge surface. **The headline P0 (from the security
-review):** `offline_scorer` scores the **CLAIMED** event stream — a forged couple-resolution must be
-tied back to a TRUSTED record, not just a new escalation effect-kind, or a product could lie its way to
-a higher North Star. And **before** tier-2 enters the autonomous *search*, redefine `converged` as "no
-PROMOTABLE point" ([[search-convergence-certificate-semantics]] §4) — a parked-but-acceptable point must
-not falsely certify convergence.
+## Next action — your call. Recommended: Phase 5 = the FORGE-FREE third tier-1 knob (stress the search)
+4a + 4b made BOTH tier-2 firewalls (human-gate, forge-detection) load-bearing. A clean, in-rails next
+phase that builds on the now-hardened substrate WITHOUT new tier-2 surface:
+- **A 3rd TIER-1, FORGE-FREE knob** (e.g. a channel/timing-of-day flow knob) to take the autonomous search
+  to 3-D — stresses the spread-first enumeration, the convergence certificate, and the non-separability
+  story at higher dimension. Per [[second-genome-knob-must-stay-tier1]] it MUST be tier-1
+  (`planning_flow_orchestration`) AND forge-free (manufactures no trusted outcome → Stage B unchanged), or
+  it breaks autonomous operation. This is `wolf`/`testineer` territory (landscape + metamorphic matrix).
 
-Alternative phases (also in-rails): a 3rd tier-1 knob to stress the search at higher dimension; or the
-real Claude-Agent-SDK proposer (needs API credentials → STOP-and-surface, the local-only rail).
+Alternatives (also in-rails):
+- **The deferred convergence redefinition** ([[search-convergence-certificate-semantics]] §4) — only worth
+  doing as the prelude to a phase that genuinely puts tier-2 in the autonomous search, which memory says
+  not to do; so this is low priority unless that policy changes.
+- **Decision-event reconciliation** (4b deferred, D2): if a future escalation model emits
+  `couple.decision.*` / `ai.decision.autonomous`, reconcile the counts that feed `autonomy_rate` /
+  `decision_reversal_rate` before emitting them.
+- **The real Claude-Agent-SDK proposer** (needs API credentials → STOP-and-surface, the local-only rail).
 
-## Non-obvious Phase-4a context (carry forward)
-- **The gate's load-bearing rail: the loop NEVER mints its own approval.** Approvals are exogenous
-  read-only input; absent ⇒ park. In real autonomous runs no approvals are supplied, so every tier-2
-  candidate parks — safe. See [[tier2-promotion-gate-is-load-bearing]].
-- **Two independent, fail-closed tier derivations:** the pre-score reconciliation (rejects
-  under-declaration before scoring) AND the promotion seam (re-derives from content at land time). A
-  `risk_tier` forged to 1 over a tier-2 genome is caught by both.
-- **The landing key binds (genome, champion).** A champion ratchet invalidates a stale approval (it must
-  be re-reviewed against the new baseline). `candidate_id` is the wrong key.
-- **Prod hardening deferred (recorded, not faked):** L4 key custody (a loop-forged `reviewed_by:human`
-  record must fail signature verification, `INTEGRITY.FORGED_CLEAR`). Offline, the structural
-  no-constructor rail stands in — consistent with [[prod-trusted-evidence-channel]].
-- **Residual audited items (deferred):** `ApprovalStore` last-wins on a duplicate landing key (flag at
-  construction later); crash-recovery replay must re-derive the landing key against the *original*
-  champion when that phase is wired.
+## Non-obvious Phase-4b context (carry forward)
+- **The integrity gate is now load-bearing in the LIVE loop, not just unit tests.** Before 4b it fired
+  only on synthetic commitment/integration events; now it reconciles the RSVP resolution numerator + couple
+  cost denominator that the North Star actually reads.
+- **Resolution is ONE concept keyed on `guest_id`, regardless of cause.** Do not re-split it by
+  `resolved_via` — that reopens the reminder-labeled forge. `resolved_via` is provenance only.
+- **`active_seconds` is field-diffed with `skipWhenClaimAbsent:false`** — partial under-reporting (not just
+  suppression) is the real cost forge; an absent/zero value vs positive trusted is a mismatch.
+- **Stage B shares the FACT (`domain_facts.ts`), never the claim path.** It must NEVER import Stage A's
+  `guestOutcome`/emission — that would re-vacuum the gate. `couple_resolvable` stays a SCENARIO fact.
+- **Escalation is INJECTED-only; the search box is pinned tier-1 (guard test).** The convergence
+  certificate is unchanged; its redefinition stays deferred. The 4a human-gate rail is untouched.
+- **`guest_sentiment_score` is still a claimed-only metric** (no trusted backing) — escalation doesn't
+  touch it; reconciling model-output metrics is out of scope (like `qa_accuracy_rate`).
 - **`npm run build` is still `tsc --noEmit`** (strict typecheck, no emit). No deployable runtime yet.
-- Durable facts: `MEMORY.md` index — Phase-4a added **[[tier2-promotion-gate-is-load-bearing]]** and a
-  §4 deferred-fix to **[[search-convergence-certificate-semantics]]**; still load-bearing:
-  [[second-genome-knob-must-stay-tier1]], [[genome-content-address-firewall]],
-  [[loop-trusted-evidence-boundary]], [[integrity-gate-completeness-invariants]],
-  [[accept-rule-composition-invariance]].
+- Durable facts: `MEMORY.md` index — 4b added **[[escalation-forge-detection-load-bearing]]** and updated
+  [[second-genome-knob-must-stay-tier1]], [[search-convergence-certificate-semantics]] §4,
+  [[integrity-gate-completeness-invariants]]. Still load-bearing: [[tier2-promotion-gate-is-load-bearing]],
+  [[genome-content-address-firewall]], [[loop-trusted-evidence-boundary]], [[accept-rule-composition-invariance]].

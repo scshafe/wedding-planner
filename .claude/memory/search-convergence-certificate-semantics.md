@@ -56,3 +56,10 @@ terminal (`awaiting_oversight`), never `converged`/`dry`. Also re-prove terminat
 `promotions ≤ boxSize` (kept) and `parks` bounded per champion (a parked genome can re-surface once per
 distinct champion after a ratchet). The Phase-3 `accepts ≤ boxSize` runtime assertion will NOT hold once
 parks exist.
+
+**UPDATE (Phase 4b — the redefinition STAYS deferred).** 4b built the escalate-to-couple knob +
+forge-detection ([[escalation-forge-detection-load-bearing]]) but kept escalation **injected-only**: the
+autonomous proposer's box stays tier-1 (cadence × spacing) and a guard test pins that `search_proposer`
+never emits `autonomy_threshold`. So no parked-but-acceptable point arises mid-sweep, `isConverged()`
+stays honest, and the certificate above is unchanged. This §4 fix is still pending — required only when a
+phase actually lets the autonomous proposer emit tier-2 (escalation>0) candidates.

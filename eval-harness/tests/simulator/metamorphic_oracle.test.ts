@@ -9,7 +9,7 @@ import { type EventEnvelope, genomeArtifactRef, type StrategyGenome } from '@wed
 import { createMetricEngine } from '@wedding-planner/telemetry'
 import { describe, expect, it } from 'vitest'
 
-import { makeGenome, makeGuest, makeScenario, refFor } from './simulator_fixtures'
+import { makeGenome, makeGuest, makeScenario, makeTier2Genome, refFor } from './simulator_fixtures'
 
 /**
  * Step 4: the NON-CIRCULAR oracle for the planner simulator. The simulator authors the very events
@@ -342,5 +342,36 @@ describe('anti-no-op — the dual of the determinism test (catches a candidate-b
     expect(b.metric('rsvp_resolution_rate') as number).toBeGreaterThan(
       a.metric('rsvp_resolution_rate') as number,
     )
+  })
+})
+
+describe('metamorphic — escalate-to-couple is a value/cost tradeoff, NOT a free win (Phase 4b)', () => {
+  // A scenario where ONE never-responder is couple-resolvable: reminders alone can never resolve it
+  // (rate stuck at 1/2), so any lift MUST come from escalation. The relations are reasoned from the
+  // domain — escalation resolves a guest (value) by spending the couple's attention (cost) — not read
+  // from the simulator's arithmetic.
+  const guests = [
+    makeGuest('g_immediate', 'immediate', 'yes'),
+    makeGuest('g_relative', 'never', 'yes', true),
+  ]
+  function run(genome: StrategyGenome): (code: string) => number | null {
+    const r = makePlannerSimulator({ championGenome: genome, candidateGenome: genome, candidateArtifactRef: genomeArtifactRef(genome), baseTimestamp: BASE_TS })
+    const comps = engine.computeMany(engine.metricCodes(), r(makeScenario('s_esc', guests), 'candidate').productEvents, 's_esc')
+    const byCode = new Map(comps.map((c) => [c.metric_code, c.value]))
+    return (code) => byCode.get(code) ?? null
+  }
+
+  it('escalation RAISES the resolution numerator (a guest reminders can never reach now resolves)', () => {
+    const tier1 = run(makeGenome(3, 0)) // even max cadence can't resolve a never-responder
+    const tier2 = run(makeTier2Genome(3, 0, 1))
+    expect(tier1('rsvp_resolution_rate')).toBe(0.5) // only g_immediate
+    expect(tier2('rsvp_resolution_rate')).toBe(1) // + g_relative via the couple
+  })
+
+  it('escalation RAISES the couple-effort cost (the denominator term) — so it is not free', () => {
+    const tier1 = run(makeGenome(3, 0))
+    const tier2 = run(makeTier2Genome(3, 0, 1))
+    expect(tier1('couple_active_minutes_total')).toBe(0) // no escalation, no couple attention spent
+    expect(tier2('couple_active_minutes_total') as number).toBeGreaterThan(0) // the escalation cost is real
   })
 })
