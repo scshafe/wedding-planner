@@ -9,6 +9,7 @@ import {
   type CandidateChange,
   canonicalGenomeHash,
   classifyGenomeArtifactRef,
+  deriveRiskTier,
   ManualClock,
   SequentialIdGenerator,
   type StrategyGenome,
@@ -86,6 +87,22 @@ describe('SearchProposer — emits valid, content-addressed, honestly-tiered can
     const candidate = proposer.propose(ctx(0)) as CandidateChange
     expect(candidate.risk_tier).toBe(1)
     expect(reconcileCandidateRiskTier(candidate, registry).ok).toBe(true)
+  })
+
+  // PHASE 4b — the box-is-tier-1 guard (the structural enforcement of
+  // [[second-genome-knob-must-stay-tier1]]). The autonomous search may NEVER emit the tier-2
+  // escalate-to-couple knob; escalation is exercised only by INJECTED candidates. This pins it as a
+  // regression-proof invariant, not a prose intention: EVERY genome the proposer enumerates carries no
+  // `autonomy_threshold` and derives tier 1 — so the tier-1 search can never exercise the tier-2
+  // escalation path Stage A now wires.
+  it('NEVER emits a tier-2 genome: every box point lacks autonomy_threshold and derives tier 1', () => {
+    const { proposer, registry } = makeProposer()
+    const genomes = drain(proposer, registry)
+    expect(genomes.length).toBe(BOX_SIZE - 1) // full box minus the champion
+    for (const g of genomes) {
+      expect(g.parameters.autonomy_threshold, `${g.genome_id} must not carry the tier-2 knob`).toBeUndefined()
+      expect(deriveRiskTier(g).tier).toBe(1)
+    }
   })
 })
 

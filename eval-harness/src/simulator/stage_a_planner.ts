@@ -8,7 +8,14 @@ import type {
 import { buildEvent, EVENT_NAMES } from '@wedding-planner/telemetry'
 
 import { type ScenarioDefinition } from '../scoring/offline_scorer'
-import { NEVER, REMINDERS_NEEDED, spacingCapacity } from './domain_facts'
+import {
+  COUPLE_SESSION_ACTIVE_SECONDS,
+  escalationBudget,
+  isCoupleResolvable,
+  NEVER,
+  REMINDERS_NEEDED,
+  spacingCapacity,
+} from './domain_facts'
 
 /**
  * @canonical stage_a_planner -- STAGE A of the planner simulator: the product's self-report.
@@ -154,6 +161,7 @@ export const rsvpCadencePlanner: Planner = ({ scenario, genome, clock, ids }) =>
     clock.advance(1000)
   }
 
+  const pending: GuestPersona[] = []
   for (const guest of scenario.guests) {
     const guestId = guest.persona_id
     const outcome = guestOutcome(guest, cadence, spacing)
@@ -167,6 +175,8 @@ export const rsvpCadencePlanner: Planner = ({ scenario, genome, clock, ids }) =>
         guest_id: guestId,
         rsvp_status: resolvedStatus(guest),
       })
+    } else {
+      pending.push(guest)
     }
     emit(EVENT_NAMES.guest_sentiment_sampled, 'comms_personalization', 'system', guestId, {
       guest_id: guestId,
@@ -174,5 +184,52 @@ export const rsvpCadencePlanner: Planner = ({ scenario, genome, clock, ids }) =>
     })
   }
 
+  emitEscalations(genome, pending, emit)
   return events
+}
+
+/**
+ * PHASE 4b — escalate-to-couple (the tier-2 `autonomy_threshold` behavior). For guests still pending
+ * after reminders, the planner acts on the couple's behalf WITHOUT asking: it escalates the first
+ * `escalationBudget(threshold)` still-pending, couple-resolvable guests (deterministic persona order)
+ * to the couple. Each escalation CLAIMS a couple session (the cost → couple_active_minutes_total) and a
+ * couple-resolution (the value → rsvp_resolution_rate). Stage A computes this BY ITS OWN slicing over
+ * the shared facts — Stage B re-derives the same honest set independently, and the integrity gate
+ * vetoes any deviation (a forged couple-resolution / shaved cost). A genome WITHOUT `autonomy_threshold`
+ * escalates nothing, so the tier-1 search box never exercises this path (the box stays tier-1).
+ */
+function emitEscalations(
+  genome: StrategyGenome,
+  pending: readonly GuestPersona[],
+  emit: (
+    eventName: string,
+    capability: EventEnvelope['capability'],
+    actor: EventEnvelope['actor'],
+    guestId: string,
+    payload: Record<string, unknown>,
+  ) => void,
+): void {
+  const autonomyThreshold = genome.parameters.autonomy_threshold
+  if (autonomyThreshold === undefined) {
+    return
+  }
+  const candidates = pending
+    .filter((guest) => isCoupleResolvable(guest))
+    .sort((a, b) => a.persona_id.localeCompare(b.persona_id))
+  const budget = escalationBudget(autonomyThreshold)
+  for (let i = 0; i < candidates.length && i < budget; i += 1) {
+    const guest = candidates[i] as GuestPersona
+    const guestId = guest.persona_id
+    // The couple spends attention resolving this guest (the escalate-to-couple cost). about_guest_id is
+    // the harness-derivable join key the integrity gate reconciles the trusted cost against.
+    emit(EVENT_NAMES.couple_session_ended, 'rsvp', 'couple', guestId, {
+      session_id: `cs_${guestId}`,
+      about_guest_id: guestId,
+      active_seconds: COUPLE_SESSION_ACTIVE_SECONDS,
+    })
+    emit(EVENT_NAMES.guest_rsvp_received, 'rsvp', 'guest', guestId, {
+      guest_id: guestId,
+      rsvp_status: resolvedStatus(guest),
+    })
+  }
 }

@@ -145,7 +145,7 @@ so a baseline that also failed integrity could not let a forge through.
     honest Stage A's reminder-resolution claims for every scenario). This is the firewall landing with no
     forge surface yet enabled — the window-free order. [arch-C3]
 
-- [ ] **Step 4 — Stage A escalation behavior (the forge surface) — now fully guarded (D1, D2, D5).**
+- [x] **Step 4 — Stage A escalation behavior (the forge surface) — now fully guarded (D1, D2, D5).**
   - `stage_a_planner.ts`: read `genome.parameters.autonomy_threshold`; for guests still pending after
     reminders, escalate the `couple_resolvable` ones per the threshold policy (more at higher threshold).
     Each escalation emits `couple.session.ended` (with `active_seconds` = the true couple cost) and, for a
