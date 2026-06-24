@@ -52,6 +52,15 @@ export {
   genomeMatchesArtifactRef,
   type GenomeArtifactRefVerdict,
 } from './strategy/genome'
+export {
+  SURFACE_TIER_FLOOR,
+  GENOME_PARAMETER_SURFACES,
+  UnmappedGenomeParameterError,
+  deriveRiskTier,
+  type SensitivitySurface,
+  type ParameterSurface,
+  type GenomeRiskDerivation,
+} from './strategy/risk_tier'
 
 // Generated contract types (clean-named surface over ./contracts/generated)
 export type {

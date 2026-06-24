@@ -17,7 +17,7 @@ genome_id: string
  */
 parameters: {
 /**
- * Number of RSVP reminder nudges the planner sends a still-pending guest before the rsvp_window closes. Higher resolves more RSVPs (moves rsvp_resolution_rate up) but past a comfort threshold reads as nagging and depresses guest_sentiment_score (its paired guard). Tier 0 (no spend/comms-content/autonomy surface).
+ * Number of RSVP reminder nudges the planner sends a still-pending guest before the rsvp_window closes. Higher resolves more RSVPs (moves rsvp_resolution_rate up) but past a comfort threshold reads as nagging and depresses guest_sentiment_score (its paired guard). A bounded, non-binding cadence/flow knob: touches no spend/booking/PII/autonomy surface. Its AUTHORITATIVE risk tier is derived from the genome->surface map (shared deriveRiskTier), NOT restated here — this schema does not assert a tier it cannot enforce.
  */
 rsvp_reminder_cadence: number
 }
