@@ -209,13 +209,12 @@ boundary), wolf (stats/aggregation), rigorous-architect (design), and testineer 
   (P2) read-seam invariant test added (a wrong-case enum is both gate-vetoed AND scored incorrect). No
   P0/P1 — no way to inflate qa_accuracy_rate while passing the gate. 293 green.
 
-- [ ] **Step 7 — Audit existing fixtures + wire qa into completeness end-to-end.**
-  `qa_accuracy_rate` is already in the completeness mean (`metric_normalization.ts:43`); confirm the
-  full honest suite stays green (question-free fixtures → qa null → completeness unchanged). **Grep
-  every test/fixture for a bare `guest.question.answered`** emission: any hand-built recorder test that
-  emits one needs both a matching trusted `recordQaOutcome` AND a populated `answerable_by_expected`
-  (the `skipWhenClaimAbsent:false` field-diff vetoes an omission). The whole suite green; the pinned
-  cube/matrix unchanged.
+- [x] **Step 7 — Audit existing fixtures + wire qa into completeness end-to-end.**
+  DONE — `qa_accuracy_rate` already feeds the completeness mean. Audit: NO bare `guest.question.answered`
+  emission exists outside the honest planner (which always pairs with Stage B's `recordQaOutcome`); the
+  only hand-built emissions are in `integrity_qa.test.ts` (deliberately paired/unpaired per arm). The
+  question-bearing YAML personas are loaded by `corpus_loader` but used in NO test, so no pipeline run
+  emits qa events. Cube/matrix pins unchanged (30/30); full suite 293 green.
 
 - [ ] **Step 8 — THE keystone: a Q&A forge does not pay (a tier-1 candidate forges qa it cannot honestly achieve).**
   New `loop-orchestrator/tests/loop/qa_forge_keystone.test.ts`. **REVISED per wolf's P0:** the original
