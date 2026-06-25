@@ -29,6 +29,7 @@ export {
   type BudgetSnapshotPayload,
   type PlanFinalizedPayload,
   type RsvpStatus,
+  type CategoryBookingStatus,
   readCoupleSessionEndedPayload,
   readGuestRsvpRequestedPayload,
   readGuestRsvpReceivedPayload,

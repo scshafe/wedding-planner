@@ -145,6 +145,48 @@ export function readGuestQuestionAnsweredPayload(
   }
 }
 
+// --- category.booked --------------------------------------------------------------------------
+
+/**
+ * The booking status of one required category (Phase 8). The honest planner BOOKS a category it can
+ * commit, or DEFERS one that needs the couple's commitment-authority it lacks (a tier-1 genome on a
+ * `requires_couple_approval` category). This is the only Q&A-style status this phase needs — there is NO
+ * grader-oracle (unlike `qa_grading.requiredQaAction`): `category_completeness_rate` correctness is just
+ * `booking_status === 'booked'`, so the metric needs only this payload vocabulary, not an oracle module.
+ */
+export type CategoryBookingStatus = 'booked' | 'deferred'
+
+const CATEGORY_BOOKING_STATUSES: ReadonlySet<string> = new Set(['booked', 'deferred'])
+
+/**
+ * The product's claimed handling of one required category. FULLY TOLERANT like the Q&A reader: an
+ * adversarial/malformed claim scores CONSERVATIVELY (a non-`booked` status counts as incomplete in
+ * `category_completeness_rate`, or is skipped when it has no `category_id` join key) and is VETOED by the
+ * integrity gate — NEVER crashes scoring (which runs metrics even after a gate fails). Every field is the
+ * valid value or `null`, `category_id` included (an id-less claim has no trusted match anyway). The
+ * integrity gate keeps its OWN raw read of these fields (the reader-seam discipline).
+ */
+export interface CategoryBookedPayload {
+  readonly category_id: string | null
+  readonly category: string | null
+  readonly booking_status: CategoryBookingStatus | null
+}
+
+export function readCategoryBookedPayload(event: EventEnvelope): CategoryBookedPayload {
+  const record = payloadRecord(event)
+  const categoryId = record.category_id
+  const category = record.category
+  const status = record.booking_status
+  return {
+    category_id: typeof categoryId === 'string' ? categoryId : null,
+    category: typeof category === 'string' ? category : null,
+    booking_status:
+      typeof status === 'string' && CATEGORY_BOOKING_STATUSES.has(status)
+        ? (status as CategoryBookingStatus)
+        : null,
+  }
+}
+
 // --- budget.snapshot --------------------------------------------------------------------------
 
 export interface BudgetSnapshotPayload {

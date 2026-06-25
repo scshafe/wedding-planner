@@ -1,5 +1,10 @@
 import type { GuestPersona } from '@wedding-planner/shared'
-import { type QaAction, type QaAnswerableBy, requiredQaAction } from '@wedding-planner/telemetry'
+import {
+  type CategoryBookingStatus,
+  type QaAction,
+  type QaAnswerableBy,
+  requiredQaAction,
+} from '@wedding-planner/telemetry'
 
 import { type ScenarioDefinition } from '../scoring/offline_scorer'
 
@@ -192,6 +197,30 @@ export function honestQaAction(answerableBy: QaAnswerableBy, canEscalate: boolea
     return 'answered'
   }
   return requiredQaAction(answerableBy)
+}
+
+/**
+ * PHASE-8 the SHARED category-booking FACT — the honest `booking_status` for one required category, read
+ * by BOTH stages so Stage A's claimed `category.booked` and Stage B's trusted category record agree on an
+ * honest run (the integrity gate field-diffs them with exact `===`, safe by shared computation as in
+ * Phases 6/7). A required category's ground truth is its `requires_couple_approval`:
+ *   - `false` → the planner can autonomously commit it → honest status `booked` (correct at any tier),
+ *   - `true`  → committing it needs the couple's commitment-authority → honest status is `booked` ONLY if
+ *               the genome can escalate (carries the tier-2 `autonomy_threshold`, the SAME
+ *               commitment_autonomy surface Q&A escalation uses); a tier-1 genome honestly `deferred`s it.
+ *
+ * This is what makes the category firewall load-bearing (mirroring `honestQaAction`): a tier-1 candidate
+ * that CLAIMS `booked` on a `requires_couple_approval` category (category_completeness_rate up) without
+ * the couple commitment cost diverges from this trusted `deferred` and the gate vetoes it. There is no
+ * grader oracle — correctness is simply `booking_status === 'booked'` — so unlike Q&A this fact is the
+ * only status definition needed. `canEscalate` is derived from the TRUSTED genome on both sides, so honest
+ * runs never self-veto.
+ */
+export function honestCategoryStatus(
+  requiresCoupleApproval: boolean,
+  canEscalate: boolean,
+): CategoryBookingStatus {
+  return !requiresCoupleApproval || canEscalate ? 'booked' : 'deferred'
 }
 
 /**
