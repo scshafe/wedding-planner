@@ -53,6 +53,13 @@ export interface PromotionGateConfig {
    * never authored. Absent (the autonomous default), every tier-2 candidate parks — the safe outcome.
    */
   readonly approvals?: ApprovalStore
+  /**
+   * Optional provenance note stamped onto a PARK ledger transition (Phase 11, doddy P2). Lets a park
+   * self-identify its origin so an advisory-exploration park (which never entered the auto-loop) can
+   * never be mistaken for a real auto-loop park awaiting approval, even if the entries were ever read
+   * outside their isolated ledger. The auto-landing loop omits it; the advisory pass sets it.
+   */
+  readonly parkProvenanceNote?: string
 }
 
 /**
@@ -164,12 +171,13 @@ function rejectAtHumanGate(
 /** Withhold a tier-2+ candidate pending oversight: ledger the park, do NOT ratchet the champion. */
 function parkCandidate(config: PromotionGateConfig, derivedTier: number): 'parked' {
   const { candidate, ledger } = config
+  const provenance = config.parkProvenanceNote === undefined ? '' : ` [${config.parkProvenanceNote}]`
   ledger.append({
     candidate_id: candidate.candidate_id,
     from_state: STAGES.human_review,
     to_state: STAGES.parked,
     decided_by: DECIDED_BY.deterministic_selector,
-    rationale: `no exogenous human approval present for the landing; parked pending oversight (tier-${derivedTier})`,
+    rationale: `no exogenous human approval present for the landing; parked pending oversight (tier-${derivedTier})${provenance}`,
     evidence_ref: candidate.change.artifact_ref,
   })
   ledger.setFinalDisposition(candidate.candidate_id, FINAL_DISPOSITIONS.parked)

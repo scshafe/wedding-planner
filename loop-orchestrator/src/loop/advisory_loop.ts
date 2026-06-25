@@ -194,6 +194,9 @@ export function runAdvisoryLoop(config: AdvisoryLoopConfig): AdvisoryLoopResult 
         championStore: config.championStore,
         ledger: config.ledger,
         approvals,
+        // Self-identify the park (doddy P2): even read outside its isolated ledger, an advisory park can
+        // never be mistaken for a real auto-loop park awaiting approval.
+        parkProvenanceNote: 'advisory exploration — never entered the auto-loop',
       }),
   })
 

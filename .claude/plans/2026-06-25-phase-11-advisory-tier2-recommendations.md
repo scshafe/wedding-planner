@@ -115,7 +115,7 @@ property: the firewall path is identical to production.
   the recommendation set; (d) the cross-value-regression candidate (vision-up but rsvp-down) is rejected
   by the value guard; (e) honest tier-2 candidates ARE surfaced with positive `north_star_delta`.
 
-- [ ] **Step 5 — doddy boundary re-review** of the built code (not just the design): trace that no
+- [x] **Step 5 — doddy boundary re-review** of the built code (not just the design): trace that no
   shared reference leaks, `approvals:[]` is enforced, and the forged-candidate exclusion holds against
   the real seams. Apply findings.
 

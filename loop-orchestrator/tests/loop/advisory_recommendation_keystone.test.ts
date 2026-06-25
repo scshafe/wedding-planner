@@ -99,11 +99,20 @@ function runAdvisory(opts: { guardMetrics?: readonly string[]; planner?: Planner
 
 describe('keystone — the advisory pass PARKS (never lands) and surfaces honest recommendations', () => {
   it('PARKS-NEVER-PROMOTES: every accepted tier-2 candidate parks; champion never ratchets', () => {
-    const { championStore, result } = runAdvisory()
+    const { championStore, ledger, result } = runAdvisory()
     expect(result.summary.promoted).toBe(0) // the rail: no tier-2 candidate lands autonomously
     expect(result.summary.parked).toBeGreaterThan(0)
     expect(result.summary.parked).toBe(result.summary.accepted) // every accept parked
     expect(championStore.current()).toBe(ADVISORY_CHAMPION) // identity: the champion was never promoted away
+    // The park ledger transition self-identifies its advisory provenance (doddy P2) — it can never be
+    // mistaken for a real auto-loop park awaiting approval, even read outside its isolated ledger.
+    const parkRationales = ledger
+      .allEntries()
+      .flatMap((e) => e.state_transitions)
+      .filter((t) => t.to_state === 'parked')
+      .map((t) => t.rationale)
+    expect(parkRationales.length).toBeGreaterThan(0)
+    expect(parkRationales.every((r) => r.includes('advisory exploration'))).toBe(true)
   })
 
   it('HONEST SURFACED: the honest companions become recommendations with a positive North-Star delta', () => {
