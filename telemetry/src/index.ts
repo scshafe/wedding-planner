@@ -23,6 +23,8 @@ export { buildEvent, type BuildEventInput, EVENT_ID_PREFIX } from './events/even
 export { type TelemetryEvent, validateEventStream, forWedding } from './events/event_stream'
 export {
   type CoupleSessionEndedPayload,
+  type CoupleSessionReason,
+  COUPLE_SESSION_REASONS,
   type GuestRsvpRequestedPayload,
   type GuestRsvpReceivedPayload,
   type GuestSentimentSampledPayload,

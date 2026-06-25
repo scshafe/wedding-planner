@@ -102,12 +102,17 @@ key twice). Findings folded into the steps below:
    must incur NO couple cost. (Predicate simplifies: booking session iff `requires_couple_approval &&
    canEscalate`; qa session iff `answerable_by === 'requires_couple' && canEscalate`.) Unit-test the
    approval-free-booked → no-session case.
-2. **The "keystone helpers" the handoff named (`forgeWouldWinAbsentGate`, `onlyIntegrityFailed`,
-   `category_forge_keystone.test.ts`) DO NOT EXIST in code** — the handoff described them
-   aspirationally. Phase 8 actually established load-bearingness as a DECOMPOSITION: a shared-fact test
-   pinning the honest gap (`category_facts.test.ts`), a Stage-A≡B agreement test (`stage_category.test.ts`),
-   and gate-level forge detection (`integrity_category.test.ts`). **Match that real pattern** — do NOT
-   build North-Star counterfactual helpers. (Removes the old Step 8 back-port; nothing to back-port.)
+2. **CORRECTION (the architect lens AND my own first grep searched only `eval-harness/` — both missed
+   the keystones, which live in `loop-orchestrator/tests/loop/`).** The handoff was ACCURATE:
+   `category_forge_keystone.test.ts` (and `qa_forge_keystone.test.ts`) exist there and DO define
+   `forgeWouldWinAbsentGate` + `onlyIntegrityFailed` as LOCAL helpers (not exported) using
+   `scoreCandidateOffline` + a `liar` planner that mutates ONLY the candidate's events. So Phase 9's
+   load-bearingness is proven by BOTH layers, matching Phase 8: (a) gate-level forge detection
+   (extend `integrity_rsvp_couple.test.ts`, the `detectCoupleSessionDivergences` arms) AND (b) a full
+   North-Star keystone `couple_cost_forge_keystone.test.ts` in `loop-orchestrator/tests/loop/` mirroring
+   `category_forge_keystone.test.ts` (assert: metric moved, `forgeWouldWinAbsentGate`, `onlyIntegrityFailed`,
+   `accepted=false`). The Step 8 back-port to the Phase-6 sentiment keystone IS still pending (the helpers
+   exist in qa/category keystones but NOT in `sentiment_forge_keystone.test.ts`) — so it is restored.
 3. **Relabel safety comes from the composite key itself, not a separate reason-diff:** a claimed
    `(reason', about_id)` that mismatches the trusted reason MISSES the lookup → `forged_effect`, and the
    trusted `(reason, about_id)` goes unclaimed → `suppressed_effect`. So a reason-relabel is caught as
@@ -179,21 +184,23 @@ key twice). Findings folded into the steps below:
   per-guest key could not represent it). (c) Read-seam test: the metric reader
   (`readCoupleSessionEndedPayload`, session_id+active_seconds only) and the gate reader agree on an honest
   reason-bearing stream; `couple_active_minutes_total` sums all reasons.
-- [ ] **Step 7 — Gate-level forge tests** (mirror `integrity_category.test.ts`), in
-  `tests/gates/integrity_couple_session.test.ts` (or extend `integrity_rsvp_couple.test.ts`): for
-  booking_approval AND qa_escalation, a tier-2 honest run that then (i) **shaves** `active_seconds`
-  (present-but-lower) → field_mismatch veto; (ii) **suppresses** the session (drops the event) →
-  suppressed_effect veto; (iii) **forges** a phantom session (no trusted) → forged_effect veto; (iv)
-  **duplicates** the composite key → one forged_effect; (v) **relabels** the reason → forged + suppressed.
-  Each asserts the divergence is detected (the gate would veto). The honest companion reconciles clean.
-  **testineer lens** review.
-- [ ] **Step 8 — ADR 0009 + memory + handoff.** ADR documenting the generalized cost surface, the
-  load-bearing argument, the relabel/uniform-magnitude analysis (Step 0 finding 3), and the corrected
-  keystone decomposition (no North-Star counterfactual helpers — finding 2). Memory
+- [ ] **Step 7 — Forge keystone (both layers).** (a) Gate-level: extend `integrity_rsvp_couple.test.ts`
+  with the new-reason arms (shave → field_mismatch; suppress → suppressed_effect; forged → forged_effect;
+  reason-relabel → forged + suppressed). DONE for RSVP in Commit A; add booking_approval / qa_escalation
+  coverage. (b) Full North-Star keystone `loop-orchestrator/tests/loop/couple_cost_forge_keystone.test.ts`
+  mirroring `category_forge_keystone.test.ts`: a TIER-2 champion vs a TIER-2 candidate that honestly books
+  the approval category AND escalates the question (same outcomes), then SHAVES then SUPPRESSES the
+  booking_approval / qa_escalation couple cost. Each arm: `couple_active_minutes_total` strictly DOWN →
+  aggregate ratio strictly UP, `forgeWouldWinAbsentGate(r) === true`, `onlyIntegrityFailed(r) === true`,
+  `accepted === false`. Honest companion gate-clean. **testineer lens** review.
+- [ ] **Step 8 — Back-port `forgeWouldWinAbsentGate` + `onlyIntegrityFailed`** to
+  `sentiment_forge_keystone.test.ts` (the helpers exist in qa/category keystones but not there yet — the
+  handoff's lever 3). Low-effort hardening; do if green.
+- [ ] **Step 9 — ADR 0009 + memory + handoff.** ADR documenting the generalized cost surface, the
+  load-bearing argument, the relabel/uniform-magnitude analysis (Step 0 finding 3), and the keystone
+  decomposition (gate-level + full North-Star, both in the established pattern). Memory
   `[[couple-attention-cost-generalization]]` indexed in MEMORY.md; register any guard-direction constants
-  (inert); update `.claude/handoff.local.md` (note: the prior handoff's `forgeWouldWinAbsentGate` /
-  `onlyIntegrityFailed` helper names were aspirational, never in code; the quality capstone is now
-  unblocked).
+  (inert); update `.claude/handoff.local.md` (note the quality capstone is now unblocked).
 
 ## Verification (every step)
 

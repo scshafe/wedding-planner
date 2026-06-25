@@ -1,4 +1,5 @@
 import type { EventEnvelope } from '@wedding-planner/shared'
+import { COUPLE_SESSION_REASONS, type CoupleSessionReason } from '@wedding-planner/telemetry'
 
 import {
   type TrustedCommitmentRecord,
@@ -318,53 +319,78 @@ function detectRsvpOutcomeDivergences(
 }
 
 /**
- * PHASE 4b — reconcile the product's claimed couple-attention sessions (the escalate-to-couple COST)
- * against the trusted couple-session record. Each `couple.session.ended` carries the escalated guest it
- * was about (`about_guest_id`, the harness-derivable join key). The scorer sums claimed `active_seconds`
- * into the `couple_active_minutes_total → effort_cost` denominator — so PARTIAL under-reporting (a
- * present session with shaved active_seconds) is the real attack, defeated by the field-level diff with
- * `skipWhenClaimAbsent:false` (an absent/non-numeric active_seconds against a positive trusted cost is a
- * mismatch, not a skip). forged: a claimed session the trusted record never observed; suppressed: a
- * trusted session the product never reported.
+ * PHASE 4b (generalized PHASE 9) — reconcile the product's claimed couple-attention sessions (the
+ * escalate-to-couple COST) against the trusted couple-session record. Each `couple.session.ended`
+ * carries WHY the couple was consulted (`session_reason`) and WHAT it was about (`about_id`) — the
+ * harness-derivable composite join key. The scorer SUMS claimed `active_seconds` into the
+ * `couple_active_minutes_total → effort_cost` denominator regardless of reason, so the attacks are:
+ *   - shave: a present session with under-reported `active_seconds` (the real cost forge) — defeated by
+ *     the field-level diff with `skipWhenClaimAbsent:false` (an absent/non-numeric active_seconds
+ *     against a positive trusted cost is a mismatch, not a skip);
+ *   - suppress: drop a session the sandbox observed (lowers the sum) — caught as suppressed_effect;
+ *   - forge: claim a session (or a reason/about_id pair) the trusted record never observed — forged_effect;
+ *   - reason-relabel: claim `(reason', about_id)` for a trusted `(reason, about_id)` — the composite key
+ *     MISSES (forged) AND the trusted session goes unclaimed (suppressed), so it is doubly caught. With
+ *     today's uniform `active_seconds` a relabel is cost-neutral anyway; the key keeps it caught even if
+ *     a future phase differentiates per-reason magnitudes (which must keep `session_reason` in the key).
+ *
+ * NO duplicate-as-forge arm (deliberate asymmetry from category/sentiment): the metric SUMS sessions, so
+ * a duplicate ADDS couple cost — self-harm for the forger, not a lift — and an honest run never duplicates
+ * a `(reason, about_id)`. A repeat claim just reconciles again (harmless).
  */
 function detectCoupleSessionDivergences(
   productEvents: readonly EventEnvelope[],
   recorder: TrustedRecorder,
 ): SelfReportDivergence[] {
   const divergences: SelfReportDivergence[] = []
-  const claimedGuestIds = new Set<string>()
+  const claimedKeys = new Set<string>()
 
   for (const event of productEvents.filter((e) => COUPLE_SESSION_REPORT_EVENT_NAMES.has(e.event_name))) {
     const payload = asRecord(event)
-    const guestId = readString(payload, 'about_guest_id')
-    if (guestId === null) {
+    const aboutId = readString(payload, 'about_id')
+    if (aboutId === null) {
       divergences.push({
         kind: 'forged_effect',
         effect_kind: 'couple_session',
         effect_id: event.event_id,
-        field: 'about_guest_id',
+        field: 'about_id',
         claimed: null,
         trusted: null,
-        detail: 'product reported a couple session with no about_guest_id (no trusted join key)',
+        detail: 'product reported a couple session with no about_id (no trusted join key)',
       })
       continue
     }
-    claimedGuestIds.add(guestId)
-    const trusted = recorder.coupleSession(guestId)
+    const reasonRaw = readString(payload, 'session_reason')
+    if (reasonRaw === null || !COUPLE_SESSION_REASONS.has(reasonRaw)) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'couple_session',
+        effect_id: event.event_id,
+        field: 'session_reason',
+        claimed: reasonRaw,
+        trusted: null,
+        detail: `product reported a couple session with an absent/unknown session_reason (${String(reasonRaw)})`,
+      })
+      continue
+    }
+    const reason = reasonRaw as CoupleSessionReason
+    const key = `${reason}/${aboutId}`
+    claimedKeys.add(key)
+    const trusted = recorder.coupleSession(reason, aboutId)
     if (trusted === undefined) {
       divergences.push({
         kind: 'forged_effect',
         effect_kind: 'couple_session',
-        effect_id: guestId,
+        effect_id: key,
         field: null,
         claimed: 'couple attention spent',
-        trusted: 'no couple session observed for this guest',
-        detail: `product reports a couple session for guest ${guestId}, but the trusted record observed none`,
+        trusted: 'no couple session observed for this (reason, about_id)',
+        detail: `product reports a ${reason} couple session about ${aboutId}, but the trusted record observed none`,
       })
       continue
     }
     divergences.push(
-      ...fieldDivergences('couple_session', guestId, [
+      ...fieldDivergences('couple_session', key, [
         {
           field: 'active_seconds',
           claimed: readNumber(payload, 'active_seconds'),
@@ -376,15 +402,16 @@ function detectCoupleSessionDivergences(
   }
 
   for (const trusted of recorder.allCoupleSessions()) {
-    if (!claimedGuestIds.has(trusted.guest_id)) {
+    const key = `${trusted.session_reason}/${trusted.about_id}`
+    if (!claimedKeys.has(key)) {
       divergences.push({
         kind: 'suppressed_effect',
         effect_kind: 'couple_session',
-        effect_id: trusted.guest_id,
+        effect_id: key,
         field: null,
         claimed: 'no event emitted',
-        trusted: `couple spent ${trusted.active_seconds}s on this escalation`,
-        detail: `trusted record observed a couple session for guest ${trusted.guest_id}, but the product emitted no couple.session.ended`,
+        trusted: `couple spent ${trusted.active_seconds}s on this ${trusted.session_reason}`,
+        detail: `trusted record observed a ${trusted.session_reason} couple session about ${trusted.about_id}, but the product emitted no couple.session.ended`,
       })
     }
   }

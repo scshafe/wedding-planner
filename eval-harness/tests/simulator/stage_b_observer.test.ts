@@ -143,9 +143,9 @@ describe('Stage B — couple escalation authoring (tier-2 genome)', () => {
     expect(recorder.rsvpOutcome('g_relative')?.rsvp_status).toBe('yes')
     expect(recorder.rsvpOutcome('g_stranger')).toBeUndefined()
 
-    // The escalation consumed exactly one couple session (the cost), keyed by the escalated guest.
+    // The escalation consumed exactly one couple session (the cost), keyed by (reason, about_id).
     const sessions = recorder.allCoupleSessions()
-    expect(sessions.map((s) => s.guest_id)).toEqual(['g_relative'])
+    expect(sessions.map((s) => `${s.session_reason}/${s.about_id}`)).toEqual(['rsvp_escalation/g_relative'])
     expect(sessions[0]?.active_seconds).toBeGreaterThan(0)
   })
 

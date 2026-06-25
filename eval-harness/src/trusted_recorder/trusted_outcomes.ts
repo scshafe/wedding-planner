@@ -12,6 +12,7 @@
 
 import {
   type CategoryBookingStatus,
+  type CoupleSessionReason,
   type QaAction,
   type QaAnswerableBy,
 } from '@wedding-planner/telemetry'
@@ -93,17 +94,25 @@ export interface TrustedRsvpOutcomeRecord {
 export type RecordRsvpOutcomeInput = TrustedRsvpOutcomeRecord
 
 /**
- * What the harness observed for one couple-attention session the planner consumed by ESCALATING a guest
- * to the couple (Phase 4b). Each escalation consumes the couple's scarce attention — the cost side of
- * the escalate-to-couple tradeoff — and feeds `couple_active_minutes_total → effort_cost` (the North
- * Star denominator), which the scorer computes over CLAIMED `couple.session.ended` events. Keyed by the
- * escalated guest_id (harness-derivable, never a product-chosen opaque id) so a claimed session joins to
- * its trusted cost; the gate field-diffs `active_seconds` so partial under-reporting is a veto, not a
- * skip. Authored by Stage B from the genome policy + ground truth alone.
+ * What the harness observed for one couple-attention session the planner consumed by ESCALATING to the
+ * couple (Phase 4b, generalized Phase 9). Each escalation consumes the couple's scarce attention — the
+ * cost side of the escalate-to-couple tradeoff — and feeds `couple_active_minutes_total → effort_cost`
+ * (the North Star denominator), which the scorer SUMS over CLAIMED `couple.session.ended` events
+ * regardless of reason. Keyed by the composite `(session_reason, about_id)` (both harness-derivable,
+ * never a product-chosen opaque id) so a claimed session joins to its trusted cost AND one `about_id`
+ * (e.g. a guest) can carry more than one escalation reason without colliding. The gate field-diffs
+ * `active_seconds` so partial under-reporting is a veto, not a skip; a reason-relabel misses the join
+ * (forged) and leaves the trusted session unclaimed (suppressed). Authored by Stage B from the genome
+ * policy + ground truth alone.
+ *
+ * `about_id` is the escalation TARGET, by reason: a guest_id (`rsvp_escalation`), a question_id
+ * (`qa_escalation`), or a category_id (`booking_approval`).
  */
 export interface TrustedCoupleSessionRecord {
-  /** The guest whose escalation consumed this couple session (the join key). */
-  readonly guest_id: string
+  /** Why the couple spent attention — the join-key discriminator (Phase 9). */
+  readonly session_reason: CoupleSessionReason
+  /** The escalation target this session was about — guest_id / question_id / category_id (the join key). */
+  readonly about_id: string
   /** The true couple attention spent on this escalation, in seconds (the cost the gate reconciles). */
   readonly active_seconds: number
 }

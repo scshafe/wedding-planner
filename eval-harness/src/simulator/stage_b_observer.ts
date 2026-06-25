@@ -156,7 +156,8 @@ export function observeTrustedRecord(
     for (let i = 0; i < candidates.length && i < budget; i += 1) {
       const guest = candidates[i] as GuestPersona
       recorder.recordCoupleSession({
-        guest_id: guest.persona_id,
+        session_reason: 'rsvp_escalation',
+        about_id: guest.persona_id,
         active_seconds: COUPLE_SESSION_ACTIVE_SECONDS,
       })
       recorder.recordRsvpOutcome({

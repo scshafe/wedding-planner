@@ -80,23 +80,26 @@ describe('integrity — RSVP resolution reconciliation (the claimed numerator)',
 describe('integrity — couple-session cost reconciliation (the claimed denominator)', () => {
   const trustedSession = (): TrustedRecorder => {
     const recorder = new TrustedRecorder()
-    recorder.recordCoupleSession({ guest_id: 'g_relative', active_seconds: 600 })
+    recorder.recordCoupleSession({ session_reason: 'rsvp_escalation', about_id: 'g_relative', active_seconds: 600 })
     return recorder
   }
+  const session = (payload: Record<string, unknown>): Record<string, unknown> => ({
+    session_id: 'cs_1',
+    session_reason: 'rsvp_escalation',
+    about_id: 'g_relative',
+    active_seconds: 600,
+    ...payload,
+  })
 
   it('passes when a claimed session matches the trusted cost', () => {
     const emit = makeBuilder()
-    const events = [
-      emit(EVENT_NAMES.couple_session_ended, { session_id: 'cs_1', about_guest_id: 'g_relative', active_seconds: 600 }),
-    ]
+    const events = [emit(EVENT_NAMES.couple_session_ended, session({}))]
     expect(checkIntegritySelfReportDivergence(events, trustedSession()).passed).toBe(true)
   })
 
   it('VETOES partial under-reporting of active_seconds (the real cost forge)', () => {
     const emit = makeBuilder()
-    const events = [
-      emit(EVENT_NAMES.couple_session_ended, { session_id: 'cs_1', about_guest_id: 'g_relative', active_seconds: 1 }),
-    ]
+    const events = [emit(EVENT_NAMES.couple_session_ended, session({ active_seconds: 1 }))]
     const divs = kinds(detectSelfReportDivergence(events, trustedSession()), 'couple_session')
     expect(divs[0]?.kind).toBe('field_mismatch')
     expect(divs[0]?.field).toBe('active_seconds')
@@ -104,7 +107,7 @@ describe('integrity — couple-session cost reconciliation (the claimed denomina
 
   it('VETOES an absent active_seconds (skipWhenClaimAbsent:false — not a skip)', () => {
     const emit = makeBuilder()
-    const events = [emit(EVENT_NAMES.couple_session_ended, { session_id: 'cs_1', about_guest_id: 'g_relative' })]
+    const events = [emit(EVENT_NAMES.couple_session_ended, session({ active_seconds: undefined }))]
     const divs = kinds(detectSelfReportDivergence(events, trustedSession()), 'couple_session')
     expect(divs[0]?.kind).toBe('field_mismatch')
     expect(divs[0]?.field).toBe('active_seconds')
@@ -112,13 +115,28 @@ describe('integrity — couple-session cost reconciliation (the claimed denomina
 
   it('VETOES a forged session (no trusted session) and one with no join key', () => {
     const emit = makeBuilder()
-    const forged = [emit(EVENT_NAMES.couple_session_ended, { session_id: 'cs_x', about_guest_id: 'g_none', active_seconds: 600 })]
+    const forged = [emit(EVENT_NAMES.couple_session_ended, session({ about_id: 'g_none' }))]
     expect(kinds(detectSelfReportDivergence(forged, trustedSession()), 'couple_session')[0]?.kind).toBe('forged_effect')
 
-    const noKey = [emit(EVENT_NAMES.couple_session_ended, { session_id: 'cs_y', active_seconds: 600 })]
+    const noKey = [emit(EVENT_NAMES.couple_session_ended, session({ about_id: undefined }))]
     const d = kinds(detectSelfReportDivergence(noKey, trustedSession()), 'couple_session')[0]
     expect(d?.kind).toBe('forged_effect')
-    expect(d?.field).toBe('about_guest_id')
+    expect(d?.field).toBe('about_id')
+  })
+
+  it('VETOES a reason-relabel (claim a different reason for the trusted about_id) as forged + suppressed', () => {
+    const emit = makeBuilder()
+    const events = [emit(EVENT_NAMES.couple_session_ended, session({ session_reason: 'qa_escalation' }))]
+    const divs = kinds(detectSelfReportDivergence(events, trustedSession()), 'couple_session')
+    expect(divs.map((d) => d.kind).sort()).toEqual(['forged_effect', 'suppressed_effect'])
+  })
+
+  it('VETOES an absent/unknown session_reason (no trusted join key)', () => {
+    const emit = makeBuilder()
+    const events = [emit(EVENT_NAMES.couple_session_ended, session({ session_reason: 'bogus' }))]
+    const d = kinds(detectSelfReportDivergence(events, trustedSession()), 'couple_session')[0]
+    expect(d?.kind).toBe('forged_effect')
+    expect(d?.field).toBe('session_reason')
   })
 
   it('detects a suppressed couple session (trusted cost, no claim)', () => {
@@ -135,10 +153,10 @@ describe('integrity — completeness invariant: the metric-read fields ARE diffe
     const emit = makeBuilder()
     const recorder = new TrustedRecorder()
     recorder.recordRsvpOutcome({ guest_id: 'g1', rsvp_status: 'no', resolved_via: 'couple' })
-    recorder.recordCoupleSession({ guest_id: 'g1', active_seconds: 600 })
+    recorder.recordCoupleSession({ session_reason: 'rsvp_escalation', about_id: 'g1', active_seconds: 600 })
     const events = [
       emit(EVENT_NAMES.guest_rsvp_received, { guest_id: 'g1', rsvp_status: 'yes' }), // lies: yes vs no
-      emit(EVENT_NAMES.couple_session_ended, { session_id: 'cs', about_guest_id: 'g1', active_seconds: 1 }), // lies: 1 vs 600
+      emit(EVENT_NAMES.couple_session_ended, { session_id: 'cs', session_reason: 'rsvp_escalation', about_id: 'g1', active_seconds: 1 }), // lies: 1 vs 600
     ]
     const divs = detectSelfReportDivergence(events, recorder)
     const fields = new Set(divs.filter((d) => d.kind === 'field_mismatch').map((d) => d.field))

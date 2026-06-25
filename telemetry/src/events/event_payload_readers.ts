@@ -43,6 +43,28 @@ function requireNumber(event: EventEnvelope, field: string): number {
 
 // --- couple.session.ended -------------------------------------------------------------------
 
+/**
+ * Why the couple spent attention on a session — the join-key DISCRIMINATOR the integrity gate keys a
+ * couple session on, alongside its `about_id` (Phase 9). The couple-attention cost (the North-Star
+ * denominator) is incurred whenever the planner ESCALATES to the couple, which it does for three
+ * reasons: resolving an RSVP (`rsvp_escalation`, Phase 4b), handling a `requires_couple` question
+ * (`qa_escalation`, Phase 7's deferred cost), or securing approval on a `requires_couple_approval`
+ * booking (`booking_approval`, Phase 8's deferred cost). Reconciling per `(reason, about_id)` lets one
+ * guest carry more than one escalation reason without the keys colliding (the per-guest key did).
+ *
+ * NOTE the metric reader below deliberately does NOT read this — `couple_active_minutes_total` SUMS
+ * `active_seconds` across every session regardless of reason. `session_reason`/`about_id` are
+ * integrity-JOIN fields the gate reads via its own raw reads (the reader-seam discipline), never the
+ * metric. Keep this reader at session_id + active_seconds so it cannot throw on a reason-bearing event.
+ */
+export type CoupleSessionReason = 'rsvp_escalation' | 'qa_escalation' | 'booking_approval'
+
+export const COUPLE_SESSION_REASONS: ReadonlySet<string> = new Set([
+  'rsvp_escalation',
+  'qa_escalation',
+  'booking_approval',
+])
+
 export interface CoupleSessionEndedPayload {
   readonly session_id: string
   readonly active_seconds: number

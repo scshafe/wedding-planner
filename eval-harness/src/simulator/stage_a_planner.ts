@@ -259,11 +259,13 @@ function emitEscalations(
   for (let i = 0; i < candidates.length && i < budget; i += 1) {
     const guest = candidates[i] as GuestPersona
     const guestId = guest.persona_id
-    // The couple spends attention resolving this guest (the escalate-to-couple cost). about_guest_id is
-    // the harness-derivable join key the integrity gate reconciles the trusted cost against.
+    // The couple spends attention resolving this guest (the escalate-to-couple cost). (session_reason,
+    // about_id) is the harness-derivable composite join key the integrity gate reconciles the trusted
+    // cost against (Phase 9 generalized the per-guest key so one guest can carry >1 escalation reason).
     emit(EVENT_NAMES.couple_session_ended, 'rsvp', 'couple', guestId, {
       session_id: `cs_${guestId}`,
-      about_guest_id: guestId,
+      session_reason: 'rsvp_escalation',
+      about_id: guestId,
       active_seconds: COUPLE_SESSION_ACTIVE_SECONDS,
     })
     emit(EVENT_NAMES.guest_rsvp_received, 'rsvp', 'guest', guestId, {

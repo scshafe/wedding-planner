@@ -1,4 +1,5 @@
 import { deepFreeze } from '@wedding-planner/shared'
+import { type CoupleSessionReason } from '@wedding-planner/telemetry'
 
 import { EvalHarnessError } from '../eval_harness_error'
 import {
@@ -61,13 +62,23 @@ function qaCompositeKey(guestId: string, questionId: string): string {
   return JSON.stringify([guestId, questionId])
 }
 
+/**
+ * The composite key for a couple-attention session (Phase 9). One `about_id` (e.g. a guest) can carry
+ * more than one escalation reason, so the trusted record is keyed by `(session_reason, about_id)`.
+ * `JSON.stringify` of the tuple is collision-free and printable; the key format stays internal to the
+ * recorder (callers reach a record via `coupleSession(reason, aboutId)`).
+ */
+function coupleSessionCompositeKey(reason: CoupleSessionReason, aboutId: string): string {
+  return JSON.stringify([reason, aboutId])
+}
+
 export class TrustedRecorder {
   private readonly commitmentsById = new Map<string, TrustedCommitmentRecord>()
   private readonly integrationActionsById = new Map<string, TrustedIntegrationActionRecord>()
   private readonly constraintsById = new Map<string, TrustedConstraintDetermination>()
   private readonly guestMessagesById = new Map<string, TrustedGuestMessageRecord>()
   private readonly rsvpOutcomesByGuestId = new Map<string, TrustedRsvpOutcomeRecord>()
-  private readonly coupleSessionsByGuestId = new Map<string, TrustedCoupleSessionRecord>()
+  private readonly coupleSessionsByCompositeKey = new Map<string, TrustedCoupleSessionRecord>()
   private readonly sentimentObservationsByGuestId = new Map<string, TrustedSentimentObservationRecord>()
   private readonly qaOutcomesByCompositeKey = new Map<string, TrustedQaOutcomeRecord>()
   private readonly categoryBookingsByCategoryId = new Map<string, TrustedCategoryBookingRecord>()
@@ -172,21 +183,23 @@ export class TrustedRecorder {
   }
 
   /**
-   * Record the harness-observed couple-attention session one escalation consumed (Phase 4b). Append-only,
-   * one per escalated guest. Feeds the integrity gate's couple-cost reconciliation (the trusted backing
-   * for the claimed effort_cost denominator). Throws DUPLICATE_EFFECT on a repeat for the same guest.
+   * Record the harness-observed couple-attention session one escalation consumed (Phase 4b, generalized
+   * Phase 9). Append-only, one per `(session_reason, about_id)`. Feeds the integrity gate's couple-cost
+   * reconciliation (the trusted backing for the claimed effort_cost denominator). Throws DUPLICATE_EFFECT
+   * on a repeat for the same `(reason, about_id)`.
    */
   recordCoupleSession(input: RecordCoupleSessionInput): TrustedCoupleSessionRecord {
-    this.assertNotSealed('couple_session', input.guest_id)
-    if (this.coupleSessionsByGuestId.has(input.guest_id)) {
+    const key = coupleSessionCompositeKey(input.session_reason, input.about_id)
+    this.assertNotSealed('couple_session', key)
+    if (this.coupleSessionsByCompositeKey.has(key)) {
       throw new EvalHarnessError(
         'TRUSTED_RECORDER.DUPLICATE_EFFECT',
-        `Guest ${input.guest_id} already has a recorded couple session; the trusted record is append-only.`,
-        { context: { guest_id: input.guest_id } },
+        `Couple session ${input.session_reason}/${input.about_id} already recorded; the trusted record is append-only.`,
+        { context: { session_reason: input.session_reason, about_id: input.about_id } },
       )
     }
     const record = deepFreeze<TrustedCoupleSessionRecord>({ ...input })
-    this.coupleSessionsByGuestId.set(input.guest_id, record)
+    this.coupleSessionsByCompositeKey.set(key, record)
     return record
   }
 
@@ -268,14 +281,14 @@ export class TrustedRecorder {
     return [...this.rsvpOutcomesByGuestId.values()]
   }
 
-  /** The trusted couple session for one escalated guest, or undefined if none was observed. */
-  coupleSession(guestId: string): TrustedCoupleSessionRecord | undefined {
-    return this.coupleSessionsByGuestId.get(guestId)
+  /** The trusted couple session for one `(reason, about_id)`, or undefined if none was observed. */
+  coupleSession(reason: CoupleSessionReason, aboutId: string): TrustedCoupleSessionRecord | undefined {
+    return this.coupleSessionsByCompositeKey.get(coupleSessionCompositeKey(reason, aboutId))
   }
 
   /** All trusted couple sessions (escalation costs). Feeds the integrity couple-cost reconciliation. */
   allCoupleSessions(): readonly TrustedCoupleSessionRecord[] {
-    return [...this.coupleSessionsByGuestId.values()]
+    return [...this.coupleSessionsByCompositeKey.values()]
   }
 
   /** The trusted sentiment observation for one guest, or undefined if none was observed. */
