@@ -203,6 +203,37 @@ export interface TrustedCategoryBookingRecord {
 
 export type RecordCategoryBookingInput = TrustedCategoryBookingRecord
 
+/**
+ * What the harness independently observed about the product's VISION ALIGNMENT for one booked,
+ * vision-sensitive category (Phase 10) — the trusted backing for the claimed `vision_match_rate` (the only
+ * `planning_value.quality` rubric backed offline). The product claims its alignment via
+ * `category.vision.aligned` (vision_match_score); the scorer means it into `vision_match_rate`. This is the
+ * trusted backing — Stage B re-derives, from the trusted genome's CONSULT capability ALONE (via the shared
+ * `honestVisionMatch` fact), the honest score, never from the product's claim. One is recorded per booked
+ * vision-sensitive category, keyed by `category_id`.
+ *
+ * The honest score is GENOME-DEPENDENT and ORTHOGONAL to completeness: a vision-sensitive category is
+ * aligned to the couple's vision (`ALIGNED`, 1.0) only by a genome that can CONSULT the couple (the tier-2
+ * `autonomy_threshold` — the SAME commitment_autonomy surface category/Q&A escalation uses, consuming a
+ * `vision_consult` couple session); a tier-1 genome books with a `DEFAULT` selection (0.5). The category is
+ * booked EITHER way (vision-sensitivity is independent of `requires_couple_approval`), so this is a genuine
+ * orthogonal value axis, not a re-skin of completeness. This is what makes the firewall load-bearing: a
+ * tier-1 candidate that CLAIMS the aligned score it cannot earn diverges from this trusted `DEFAULT` →
+ * field_mismatch → veto. Only `vision_match_score` is field-diffed (the metric reads category_id + score).
+ *
+ * Like sentiment/Q&A/category, this backs a GRADER input (the North-Star numerator), not a VETO-GATE
+ * input — it extends the firewall without changing the integrity-gate completeness invariant. The COST side
+ * (the `vision_consult` couple session) rides Phase 9's per-`(reason, about_id)` couple-session
+ * reconciliation unchanged — no new gate code for the cost.
+ */
+export interface TrustedVisionAlignmentRecord {
+  readonly category_id: string
+  /** The honest [0,1] alignment under the trusted genome policy; the gate diffs the claimed score against this. */
+  readonly vision_match_score: number
+}
+
+export type RecordVisionAlignmentInput = TrustedVisionAlignmentRecord
+
 /** Grader-side determination of whether one hard constraint is satisfied by the final plan. */
 export interface TrustedConstraintDetermination {
   readonly constraint_id: string

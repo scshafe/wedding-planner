@@ -12,6 +12,7 @@ import {
   type RecordQaOutcomeInput,
   type RecordRsvpOutcomeInput,
   type RecordSentimentObservationInput,
+  type RecordVisionAlignmentInput,
   type TrustedCategoryBookingRecord,
   type TrustedCommitmentRecord,
   type TrustedConstraintDetermination,
@@ -21,6 +22,7 @@ import {
   type TrustedQaOutcomeRecord,
   type TrustedRsvpOutcomeRecord,
   type TrustedSentimentObservationRecord,
+  type TrustedVisionAlignmentRecord,
 } from './trusted_outcomes'
 
 /**
@@ -82,6 +84,7 @@ export class TrustedRecorder {
   private readonly sentimentObservationsByGuestId = new Map<string, TrustedSentimentObservationRecord>()
   private readonly qaOutcomesByCompositeKey = new Map<string, TrustedQaOutcomeRecord>()
   private readonly categoryBookingsByCategoryId = new Map<string, TrustedCategoryBookingRecord>()
+  private readonly visionAlignmentsByCategoryId = new Map<string, TrustedVisionAlignmentRecord>()
   private runningCommittedCents = 0
   private sealed = false
 
@@ -269,6 +272,35 @@ export class TrustedRecorder {
   /** All trusted category bookings. Feeds the integrity category reconciliation. */
   allCategoryBookings(): readonly TrustedCategoryBookingRecord[] {
     return [...this.categoryBookingsByCategoryId.values()]
+  }
+
+  /**
+   * Record the harness-observed honest VISION ALIGNMENT of one booked, vision-sensitive category (Phase 10).
+   * Append-only, one per `category_id`. Feeds the integrity gate's vision reconciliation (the trusted backing
+   * for the claimed `vision_match_rate` → planning_value.quality). Throws DUPLICATE_EFFECT on a repeat.
+   */
+  recordVisionAlignment(input: RecordVisionAlignmentInput): TrustedVisionAlignmentRecord {
+    this.assertNotSealed('vision_alignment', input.category_id)
+    if (this.visionAlignmentsByCategoryId.has(input.category_id)) {
+      throw new EvalHarnessError(
+        'TRUSTED_RECORDER.DUPLICATE_EFFECT',
+        `Category ${input.category_id} already has a recorded vision alignment; the trusted record is append-only.`,
+        { context: { category_id: input.category_id } },
+      )
+    }
+    const record = deepFreeze<TrustedVisionAlignmentRecord>({ ...input })
+    this.visionAlignmentsByCategoryId.set(input.category_id, record)
+    return record
+  }
+
+  /** The trusted vision alignment for one category_id, or undefined if none was observed. */
+  visionAlignment(categoryId: string): TrustedVisionAlignmentRecord | undefined {
+    return this.visionAlignmentsByCategoryId.get(categoryId)
+  }
+
+  /** All trusted vision alignments. Feeds the integrity vision reconciliation. */
+  allVisionAlignments(): readonly TrustedVisionAlignmentRecord[] {
+    return [...this.visionAlignmentsByCategoryId.values()]
   }
 
   /** The trusted RSVP outcome for one guest, or undefined if the harness observed no resolution. */

@@ -97,6 +97,23 @@ describe('trusted recorder — authorship and immutability', () => {
     recorder.recordCategoryBooking(input)
     expect(() => recorder.recordCategoryBooking(input)).toThrowError(/DUPLICATE_EFFECT|append-only/)
   })
+
+  it('records and retrieves a vision alignment, keyed by category_id (Phase 10)', () => {
+    const recorder = new TrustedRecorder()
+    recorder.recordVisionAlignment({ category_id: 'cat_venue', vision_match_score: 1 })
+    recorder.recordVisionAlignment({ category_id: 'cat_decor', vision_match_score: 0.5 })
+    expect(recorder.visionAlignment('cat_venue')?.vision_match_score).toBe(1)
+    expect(recorder.visionAlignment('cat_decor')?.vision_match_score).toBe(0.5)
+    expect(recorder.visionAlignment('cat_missing')).toBeUndefined()
+    expect(recorder.allVisionAlignments()).toHaveLength(2)
+  })
+
+  it('rejects a duplicate vision alignment (append-only)', () => {
+    const recorder = new TrustedRecorder()
+    const input = { category_id: 'cat_venue', vision_match_score: 1 }
+    recorder.recordVisionAlignment(input)
+    expect(() => recorder.recordVisionAlignment(input)).toThrowError(/DUPLICATE_EFFECT|append-only/)
+  })
 })
 
 describe('integrity boundary — gates read trusted, divergence is caught', () => {

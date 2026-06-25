@@ -28,6 +28,8 @@ export {
   type RecordGuestMessageInput,
   type TrustedSentimentObservationRecord,
   type RecordSentimentObservationInput,
+  type TrustedVisionAlignmentRecord,
+  type RecordVisionAlignmentInput,
   type VerifiedStatus,
 } from './trusted_recorder/trusted_outcomes'
 
