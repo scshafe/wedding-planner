@@ -53,5 +53,6 @@ events, so `autonomy_rate`/`decision_reversal_rate` gain no uncovered forge surf
 
 **Deferred (recorded, not faked):** decision-event reconciliation (escalation emits none by design); the
 convergence redefinition until tier-2 enters the search; prod key-custody for the trusted feed (offline
-single-authorship recorder stands in, [[prod-trusted-evidence-channel]]); `guest_sentiment_score` remains
-a claimed-only metric (escalation doesn't touch it; reconciling model-output metrics is out of scope).
+single-authorship recorder stands in, [[prod-trusted-evidence-channel]]). **`guest_sentiment_score` was
+a claimed-only metric here (D7) — Phase 6 CLOSED that gap**: it is now trusted-backed (5th integrity
+effect kind), see [[sentiment-trusted-reconciliation]]. `qa_accuracy_rate` stays claimed-only (no model).

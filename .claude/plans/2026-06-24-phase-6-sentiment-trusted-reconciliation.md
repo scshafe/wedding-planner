@@ -66,7 +66,7 @@ boundary) and wolf (float/aggregation) lenses (named subagents are not provision
 
 ## Steps
 
-- [ ] **Step 1 — Extract the sentiment model into a SHARED FACT (behavior-identical refactor).**
+- [x] **Step 1 — Extract the sentiment model into a SHARED FACT (behavior-identical refactor).**
   Move `COMFORT_CAP`, `SENTIMENT_PENALTY_PER_NAG`, `SPACING_RELIEF`, `penaltyPerNag`, a new
   `comfortCeiling(needed)`, and `honestSentimentScore(needed, delivered, resolved, spacing, batching)`
   into `domain_facts.ts` (alongside `effectiveNudges`/`feltTouches`, with a docblock that this is now
@@ -75,7 +75,7 @@ boundary) and wolf (float/aggregation) lenses (named subagents are not provision
   pinned slice + every anchored sentiment value must pass **unchanged**. No new test in this step
   beyond confirming the suite stays byte-green.
 
-- [ ] **Step 2 — Trusted sentiment observation type + recorder method.**
+- [x] **Step 2 — Trusted sentiment observation type + recorder method.**
   `trusted_outcomes.ts`: `TrustedSentimentObservationRecord { guest_id; sentiment_score }` +
   `RecordSentimentObservationInput`, with a docblock explaining it backs the `guest_sentiment_score`
   metric the scorer computes over the CLAIMED stream. `trusted_recorder.ts`:
@@ -83,7 +83,7 @@ boundary) and wolf (float/aggregation) lenses (named subagents are not provision
   append-only (DUPLICATE_EFFECT on repeat guest), sealed-guard, deep-frozen — mirroring
   `recordCoupleSession`. Tests: append-only + sealed + retrieval (extend the recorder hardening tests).
 
-- [ ] **Step 3 — Stage B authors a trusted sentiment observation for EVERY guest.**
+- [x] **Step 3 — Stage B authors a trusted sentiment observation for EVERY guest.**
   Extend `observeTrustedRecord`: for each guest compute `(needed, delivered, resolved)` by Stage B's
   OWN logic (it already computes these in `reminderResolves` — factor a small local helper, do NOT
   import Stage A) and `recordSentimentObservation({ guest_id, sentiment_score: honestSentimentScore(...) })`.
@@ -93,7 +93,7 @@ boundary) and wolf (float/aggregation) lenses (named subagents are not provision
   64-point cube × representative latencies (immediate / after_one / after_multiple / never), so honest
   runs are gate-clean.
 
-- [ ] **Step 4 — Integrity gate: the 5th reconciled effect kind `guest_sentiment`.**
+- [x] **Step 4 — Integrity gate: the 5th reconciled effect kind `guest_sentiment`.**
   `report_event_names.ts`: `SENTIMENT_REPORT_EVENT_NAMES = { guest.sentiment.sampled }` with the
   reader-seam docblock. `integrity_gate.ts`: add `'guest_sentiment'` to the `effect_kind` union and a
   `detectSentimentDivergences` keyed on `guest_id` — **forged** (claimed sample, no trusted obs →
@@ -103,14 +103,14 @@ boundary) and wolf (float/aggregation) lenses (named subagents are not provision
   (`integrity_*` / `veto_gates`): each of the three forges yields a divergence of the right kind; an
   honest stream is clean.
 
-- [ ] **Step 5 — Audit & fix existing fixtures that emit sentiment against a sentiment-free recorder.**
+- [x] **Step 5 — Audit & fix existing fixtures that emit sentiment against a sentiment-free recorder.**
   The new forged-check fires when a `guest.sentiment.sampled` claim has no trusted observation. Tests
   using `observeTrustedRecord` get the trusted side for free (Step 3); audit the **hand-built**-recorder
   tests (`integrity_rsvp_couple`, `integrity_hardening`, `integrity_boundary`, `veto_gates`,
   `planner_simulator`, `offline_pipeline`, `rsvp_corpus` fixture) and add the matching trusted
   observation wherever an honest sentiment sample is emitted. Whole suite green.
 
-- [ ] **Step 6 — THE keystone: a sentiment forge does not pay (tier-1, integrity is the sole stopper).**
+- [x] **Step 6 — THE keystone: a sentiment forge does not pay (tier-1, integrity is the sole stopper).**
   New `loop-orchestrator/tests/loop/sentiment_forge_keystone.test.ts` (mirrors the dilution-forge
   keystone). A tier-1 candidate whose HONEST `guest_sentiment_score` does not beat the champion; a
   lying Stage A that **inflates** sampled sentiment (arm A) and one that **suppresses** the nagged
@@ -119,7 +119,7 @@ boundary) and wolf (float/aggregation) lenses (named subagents are not provision
   park — the candidate is tier-1, so INTEGRITY is the only stopper. Companion arm: the honest
   sentiment candidate is gate-clean (the veto targets the lie, not the model).
 
-- [ ] **Step 7 — ADR 0006 + memory + handoff.**
+- [x] **Step 7 — ADR 0006 + memory + handoff.**
   `docs/adr/0006-sentiment-trusted-reconciliation.md` (decision, the grader-input-vs-gate-input
   distinction, the shared-fact bit-identity argument, quality/qa_accuracy deferrals). New memory
   `[[sentiment-trusted-reconciliation]]`; update [[escalation-forge-detection-load-bearing]] (D7 now

@@ -30,8 +30,10 @@ search dies). The Phase-4b guest_id resolution reconciliation already covers the
 surface → **no new integrity effect-kind**. A tier-1 dilution-forge keystone arm
 (`escalation_forge_keystone.test.ts`) proves the gate bites: a lying Stage A claiming a
 batching-diluted-away resolution is vetoed and not accepted (this is the SOLE stopper — the candidate is
-tier-1, so there is no promotion-gate park). **`guest_sentiment_score` stays claimed-only/unreconciled**
-(like `qa_accuracy_rate`); batching ENLARGES that unreconciled value — an acknowledged, pre-accepted deferral.
+tier-1, so there is no promotion-gate park). Batching's COMFORT upside flows entirely through
+`guest_sentiment_score`, which Phase 5 left claimed-only — **Phase 6 then gave it a trusted backing**
+(the comfort consolidation is now reconciled, the enlarged forge surface closed): see
+[[sentiment-trusted-reconciliation]]. (`qa_accuracy_rate` stays claimed-only — no Q&A simulator model.)
 
 **The landscape (honest-claims boundary — do NOT overclaim).** Unique strict optimum at **(cadence 3,
 spacing 1, batching 1) = 0.8151**, interior on batching(1) and spacing(1) but on the cadence FACE (3).
