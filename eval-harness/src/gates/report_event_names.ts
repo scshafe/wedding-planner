@@ -85,3 +85,19 @@ export const QA_ANSWERED_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
 export const CATEGORY_BOOKED_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
   EVENT_NAMES.category_booked,
 ])
+
+/**
+ * PHASE 10. The product reports its VISION ALIGNMENT for a booked, vision-sensitive category via
+ * `category.vision.aligned` — the claim the `vision_match_rate` metric means (the only
+ * `planning_value.quality` rubric backed offline). The integrity gate reconciles each (by `category_id`)
+ * against the trusted vision alignment Stage B authors per booked vision-sensitive category, field-diffing
+ * `vision_match_score` (so a tier-1 candidate that CLAIMS the aligned 1.0 it cannot earn — honest 0.5,
+ * it could not consult — without the `vision_consult` couple cost is vetoed), with a duplicate-claim check
+ * (a per-category mean is gamed by re-emitting a high claim) and a suppression check. The join key
+ * `category_id` defends the denominator; `vision_match_score` defends the numerator. ORTHOGONAL to
+ * `category.booked` (the completeness axis) — a separate event + effect kind. The COST side (the
+ * `vision_consult` couple session) rides Phase 9's couple-session reconciliation, NOT this set.
+ */
+export const VISION_ALIGNED_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
+  EVENT_NAMES.category_vision_aligned,
+])

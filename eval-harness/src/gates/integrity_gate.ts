@@ -15,6 +15,7 @@ import {
   QA_ANSWERED_REPORT_EVENT_NAMES,
   RSVP_RECEIVED_REPORT_EVENT_NAMES,
   SENTIMENT_REPORT_EVENT_NAMES,
+  VISION_ALIGNED_REPORT_EVENT_NAMES,
 } from './report_event_names'
 
 /**
@@ -42,7 +43,7 @@ import {
 
 export interface SelfReportDivergence {
   readonly kind: 'forged_effect' | 'field_mismatch' | 'suppressed_effect'
-  readonly effect_kind: 'commitment' | 'integration' | 'rsvp_resolution' | 'couple_session' | 'guest_sentiment' | 'qa_outcome' | 'category_booking'
+  readonly effect_kind: 'commitment' | 'integration' | 'rsvp_resolution' | 'couple_session' | 'guest_sentiment' | 'qa_outcome' | 'category_booking' | 'vision_alignment'
   readonly effect_id: string
   readonly field: string | null
   readonly claimed: unknown
@@ -717,6 +718,99 @@ function detectCategoryBookingDivergences(
 }
 
 /**
+ * PHASE 10 — reconcile the product's claimed VISION ALIGNMENTS against the trusted vision record. Every
+ * `category.vision.aligned` is a claim the scorer means into `vision_match_rate` (the only present
+ * `planning_value.quality` rubric). The trusted record (Stage B) holds the honest `vision_match_score` for
+ * every booked, vision-sensitive category. Keyed on `category_id`. The reconciliation is what makes the
+ * VALUE firewall load-bearing: a TIER-1 candidate cannot CONSULT the couple (honest score `DEFAULT` 0.5),
+ * so a CLAIM of an `ALIGNED` 1.0 (quality up) without the `vision_consult` couple cost diverges from the
+ * trusted 0.5 → field_mismatch. Mirrors `detectCategoryBookingDivergences` exactly (a separate, orthogonal
+ * surface): the JOIN KEY `category_id` defends the DENOMINATOR (forged — a claim for a category the trusted
+ * record never observed, OR a DUPLICATE claim for an already-claimed category_id, checked BEFORE the trusted
+ * lookup — and suppressed — a trusted alignment with no claim); the field `vision_match_score` defends the
+ * NUMERATOR (`skipWhenClaimAbsent:false` — an absent/non-numeric score against a trusted value is a veto,
+ * since the honest planner always emits it and the metric reads it). Like sentiment/Q&A/category this backs
+ * a GRADER input, not a VETO-GATE input. The COST side (the `vision_consult` couple session) is reconciled
+ * by `detectCoupleSessionDivergences`, NOT here.
+ */
+function detectVisionAlignmentDivergences(
+  productEvents: readonly EventEnvelope[],
+  recorder: TrustedRecorder,
+): SelfReportDivergence[] {
+  const divergences: SelfReportDivergence[] = []
+  const claimedCategoryIds = new Set<string>()
+
+  for (const event of productEvents.filter((e) => VISION_ALIGNED_REPORT_EVENT_NAMES.has(e.event_name))) {
+    const payload = asRecord(event)
+    const categoryId = readString(payload, 'category_id')
+    if (categoryId === null) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'vision_alignment',
+        effect_id: event.event_id,
+        field: 'category_id',
+        claimed: null,
+        trusted: null,
+        detail: 'product reported a vision alignment with no category_id (no trusted join key)',
+      })
+      continue
+    }
+    if (claimedCategoryIds.has(categoryId)) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'vision_alignment',
+        effect_id: categoryId,
+        field: null,
+        claimed: 'a second vision alignment for this category',
+        trusted: 'only one vision alignment observed for this category',
+        detail: `product reported a duplicate vision alignment for category ${categoryId}; the trusted record observed exactly one (a per-category mean is gamed by re-emitting a high claim to dilute low ones)`,
+      })
+      continue
+    }
+    claimedCategoryIds.add(categoryId)
+    const trusted = recorder.visionAlignment(categoryId)
+    if (trusted === undefined) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'vision_alignment',
+        effect_id: categoryId,
+        field: null,
+        claimed: 'vision aligned',
+        trusted: 'no such vision-sensitive booked category observed',
+        detail: `product reports a vision alignment for category ${categoryId}, but the trusted record observed no such vision-sensitive booked category`,
+      })
+      continue
+    }
+    divergences.push(
+      ...fieldDivergences('vision_alignment', categoryId, [
+        {
+          field: 'vision_match_score',
+          claimed: readNumber(payload, 'vision_match_score'),
+          trusted: trusted.vision_match_score,
+          skipWhenClaimAbsent: false,
+        },
+      ]),
+    )
+  }
+
+  for (const trusted of recorder.allVisionAlignments()) {
+    if (!claimedCategoryIds.has(trusted.category_id)) {
+      divergences.push({
+        kind: 'suppressed_effect',
+        effect_kind: 'vision_alignment',
+        effect_id: trusted.category_id,
+        field: null,
+        claimed: 'no event emitted',
+        trusted: `vision alignment ${trusted.vision_match_score}`,
+        detail: `trusted record observed a vision alignment for category ${trusted.category_id}, but the product emitted no category.vision.aligned`,
+      })
+    }
+  }
+
+  return divergences
+}
+
+/**
  * Find every divergence between the product's self-reported events and the trusted record.
  * Pure function of (product events, trusted recorder).
  */
@@ -732,6 +826,7 @@ export function detectSelfReportDivergence(
     ...detectSentimentDivergences(productEvents, recorder),
     ...detectQaDivergences(productEvents, recorder),
     ...detectCategoryBookingDivergences(productEvents, recorder),
+    ...detectVisionAlignmentDivergences(productEvents, recorder),
   ]
 }
 
