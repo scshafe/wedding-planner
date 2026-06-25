@@ -152,6 +152,9 @@ export const qaAccuracyRate: MetricFunction = (events) => {
   const answers = events
     .filter((event) => event.event_name === EVENT_NAMES.guest_question_answered)
     .map((event) => readGuestQuestionAnsweredPayload(event))
+    // An id-less claim has no question to be the answer TO — it cannot inflate the rate (the integrity
+    // gate vetoes it as forged), so it is excluded from the denominator rather than crashing scoring.
+    .filter((a) => a.guest_id !== null && a.question_id !== null)
   if (answers.length === 0) {
     return computation(METRIC_CODES.qa_accuracy_rate, null, { answered: 0 })
   }

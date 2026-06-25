@@ -10,6 +10,7 @@ import {
   COMMITMENT_REPORT_EVENT_NAMES,
   COUPLE_SESSION_REPORT_EVENT_NAMES,
   INTEGRATION_REPORT_EVENT_NAMES,
+  QA_ANSWERED_REPORT_EVENT_NAMES,
   RSVP_RECEIVED_REPORT_EVENT_NAMES,
   SENTIMENT_REPORT_EVENT_NAMES,
 } from './report_event_names'
@@ -39,7 +40,7 @@ import {
 
 export interface SelfReportDivergence {
   readonly kind: 'forged_effect' | 'field_mismatch' | 'suppressed_effect'
-  readonly effect_kind: 'commitment' | 'integration' | 'rsvp_resolution' | 'couple_session' | 'guest_sentiment'
+  readonly effect_kind: 'commitment' | 'integration' | 'rsvp_resolution' | 'couple_session' | 'guest_sentiment' | 'qa_outcome'
   readonly effect_id: string
   readonly field: string | null
   readonly claimed: unknown
@@ -485,6 +486,111 @@ function detectSentimentDivergences(
 }
 
 /**
+ * PHASE 7 — reconcile the product's claimed Q&A HANDLING against the trusted Q&A record. Every
+ * `guest.question.answered` is a claim the scorer scores into `qa_accuracy_rate` (correct iff
+ * `action_taken` matches the required action for `answerable_by_expected`). The trusted record (Stage B)
+ * holds the honest handling for EVERY scripted question. Keyed on the composite (guest_id, question_id),
+ * so a guest's multiple questions never collide. The reconciliation is what makes the Q&A firewall
+ * load-bearing: a TIER-1 candidate cannot escalate a `requires_couple` question (honest action is
+ * `answered`, incorrect), so a CLAIM of `action_taken='escalated'` (qa correct) without the couple cost
+ * diverges from the trusted `answered` → field_mismatch. Both fields the metric reads are diffed:
+ *   - forged: a claimed answer for a (guest,question) the trusted record never observed (phantom), OR a
+ *     DUPLICATE claim for an already-claimed (guest,question) — a per-question rate is gamed by
+ *     re-emitting a CORRECT answer to dilute wrong ones, so a 2nd claim is a forge (checked BEFORE the
+ *     trusted lookup, mirroring the sentiment duplicate guard, so it yields ONE forged_effect);
+ *   - field_mismatch: a wrong `action_taken` OR a relabelled `answerable_by_expected`
+ *     (`skipWhenClaimAbsent:false` — an absent/blank field against a trusted value is a veto, since the
+ *     honest planner always emits both and the metric reads both);
+ *   - suppressed: a trusted question with no claim — dropping a question the planner gets WRONG would
+ *     otherwise raise the claims-only rate, so the suppression is a veto, not a free metric lift.
+ */
+function detectQaDivergences(
+  productEvents: readonly EventEnvelope[],
+  recorder: TrustedRecorder,
+): SelfReportDivergence[] {
+  const divergences: SelfReportDivergence[] = []
+  const claimedKeys = new Set<string>()
+
+  for (const event of productEvents.filter((e) => QA_ANSWERED_REPORT_EVENT_NAMES.has(e.event_name))) {
+    const payload = asRecord(event)
+    const guestId = readString(payload, 'guest_id')
+    const questionId = readString(payload, 'question_id')
+    if (guestId === null || questionId === null) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'qa_outcome',
+        effect_id: event.event_id,
+        field: guestId === null ? 'guest_id' : 'question_id',
+        claimed: null,
+        trusted: null,
+        detail: 'product reported a question answer with no guest_id/question_id (no trusted join key)',
+      })
+      continue
+    }
+    const key = `${guestId}|${questionId}`
+    if (claimedKeys.has(key)) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'qa_outcome',
+        effect_id: key,
+        field: null,
+        claimed: 'a second answer for this question',
+        trusted: 'only one Q&A outcome observed for this question',
+        detail: `product reported a duplicate answer for question ${key}; the trusted record observed exactly one (a per-question rate is gamed by re-emitting a correct answer)`,
+      })
+      continue
+    }
+    claimedKeys.add(key)
+    const trusted = recorder.qaOutcome(guestId, questionId)
+    if (trusted === undefined) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'qa_outcome',
+        effect_id: key,
+        field: null,
+        claimed: 'question answered',
+        trusted: 'no such question observed for this guest',
+        detail: `product reports answering question ${key}, but the trusted record observed no such question`,
+      })
+      continue
+    }
+    divergences.push(
+      ...fieldDivergences('qa_outcome', key, [
+        {
+          field: 'action_taken',
+          claimed: readString(payload, 'action_taken'),
+          trusted: trusted.action_taken,
+          skipWhenClaimAbsent: false,
+        },
+        {
+          field: 'answerable_by_expected',
+          claimed: readString(payload, 'answerable_by_expected'),
+          trusted: trusted.answerable_by,
+          skipWhenClaimAbsent: false,
+        },
+      ]),
+    )
+  }
+
+  for (const trusted of recorder.allQaOutcomes()) {
+    const key = `${trusted.guest_id}|${trusted.question_id}`
+    if (!claimedKeys.has(key)) {
+      divergences.push({
+        kind: 'suppressed_effect',
+        effect_kind: 'qa_outcome',
+        effect_id: key,
+        field: null,
+        claimed: 'no event emitted',
+        trusted: `question handled ${trusted.action_taken} (${trusted.answerable_by})`,
+        detail: `trusted record observed question ${key}, but the product emitted no guest.question.answered`,
+      })
+    }
+  }
+
+  return divergences
+}
+
+/**
  * Find every divergence between the product's self-reported events and the trusted record.
  * Pure function of (product events, trusted recorder).
  */
@@ -498,6 +604,7 @@ export function detectSelfReportDivergence(
     ...detectRsvpOutcomeDivergences(productEvents, recorder),
     ...detectCoupleSessionDivergences(productEvents, recorder),
     ...detectSentimentDivergences(productEvents, recorder),
+    ...detectQaDivergences(productEvents, recorder),
   ]
 }
 

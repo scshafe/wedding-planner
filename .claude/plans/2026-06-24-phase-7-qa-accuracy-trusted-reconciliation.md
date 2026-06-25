@@ -200,13 +200,14 @@ boundary), wolf (stats/aggregation), rigorous-architect (design), and testineer 
   honest Stage A claim for every (answerable_by ∈ {ai,couple,refuse}) × (tier-1, tier-2) combination,
   so honest runs are gate-clean.
 
-- [ ] **Step 6 — Integrity gate: the 6th reconciled effect kind `qa_outcome`.**
-  `report_event_names.ts`: `QA_ANSWERED_REPORT_EVENT_NAMES = { guest.question.answered }` with the
-  reader-seam docblock. `integrity_gate.ts`: add `'qa_outcome'` to the `effect_kind` union and
-  `detectQaDivergences` keyed by `guest_id|question_id` — forged (no trusted question / duplicate
-  composite key), field_mismatch (`action_taken` AND `answerable_by_expected`, `skipWhenClaimAbsent:
-  false`), suppressed (trusted question, no claim). Wire into `detectSelfReportDivergence`. Unit tests:
-  each arm yields the right kind; an honest stream (tier-1 AND tier-2) is clean.
+- [x] **Step 6 — Integrity gate: the 6th reconciled effect kind `qa_outcome`.**
+  DONE — `QA_ANSWERED_REPORT_EVENT_NAMES` + `detectQaDivergences` keyed by composite (guest_id,
+  question_id): forged (phantom / duplicate-before-trusted-lookup), field_mismatch on BOTH `action_taken`
+  and `answerable_by_expected` (`skipWhenClaimAbsent:false`), suppressed. `integrity_qa.test.ts` pins all
+  arms incl. honest-clean. **doddy review (APPROVE-WITH-CHANGES)** applied: (P2) the metric reader is now
+  fully tolerant of id-less events (skipped, gate owns them) so a malformed claim can't crash scoring;
+  (P2) read-seam invariant test added (a wrong-case enum is both gate-vetoed AND scored incorrect). No
+  P0/P1 — no way to inflate qa_accuracy_rate while passing the gate. 293 green.
 
 - [ ] **Step 7 — Audit existing fixtures + wire qa into completeness end-to-end.**
   `qa_accuracy_rate` is already in the completeness mean (`metric_normalization.ts:43`); confirm the
@@ -216,24 +217,30 @@ boundary), wolf (stats/aggregation), rigorous-architect (design), and testineer 
   (the `skipWhenClaimAbsent:false` field-diff vetoes an omission). The whole suite green; the pinned
   cube/matrix unchanged.
 
-- [ ] **Step 8 — THE keystone: a Q&A forge does not pay (tier-1 claims tier-2-grade handling).**
-  New `loop-orchestrator/tests/loop/qa_forge_keystone.test.ts`. Corpus with a guest carrying a
-  `requires_couple` question. Champion = a TIER-2 genome (escalates → qa 1.0, pays couple cost).
-  Candidate = a TIER-1 genome; its HONEST qa < 1.0 (answers the requires_couple question wrong) so it
-  does NOT win honestly. Use an **empty guard set** (`guardSpecsFor([])`, mirroring the sentiment
-  keystone) so the qa guard-regression of an honest tier-1 vs a tier-2 baseline does not mask the
-  integrity claim — INTEGRITY must be the demonstrated stopper. Forge arms (lying Stage A,
-  candidate-only): (a) claim `action_taken='escalated'` (qa up to 1.0, no couple cost — the headline
-  forge); (b) **suppress** the wrong answer (drops a 0 from the rate); (c) **duplicate** a correct
-  answer to re-weight; (d) lie about `answerable_by_expected` to relabel the couple-question as
-  AI-answerable (forges correctness via the required-action mapping, not just the field). Each moves
-  `qa_accuracy_rate` favourably (RED) yet yields a NEW integrity failure and is rejected (GREEN).
-  Companion: the honest tier-1 candidate is gate-CLEAN (the veto targets the lie, not the model) — it
-  simply does not win. NOTE: the `scoreCandidateOffline` path applies NO tier/promotion park (that
-  lives in `loop-orchestrator/.../promotion_gate.ts`, invoked by `genome_offline_loop.ts`), so
-  integrity is trivially the sole gate in this harness; the candidate's tier-1 status is what makes it
-  the sole stopper in the full loop too. (Do not add promotion-gate verification language — this path
-  doesn't run it.)
+- [ ] **Step 8 — THE keystone: a Q&A forge does not pay (a tier-1 candidate forges qa it cannot honestly achieve).**
+  New `loop-orchestrator/tests/loop/qa_forge_keystone.test.ts`. **REVISED per wolf's P0:** the original
+  tier-1-candidate-vs-tier-2-champion framing was VACUOUS — the QA `escalated` action carries no modeled
+  couple cost, so a tier-1 forge only TIES a tier-2 champion (both ratio 1.0 on an immediate
+  question-guest) → rejected by accept-rule condition 4 (no aggregate improvement), NOT by the integrity
+  gate. Modeling+reconciling a QA-escalation couple cost would fix it but conflicts with the RSVP-escalation
+  couple-session key (one session per guest) — deferred as future work. Instead use **tier-1 champion vs
+  tier-1 forging candidate** (mirroring the sentiment keystone's two-tier-1-genomes shape): both honest
+  qa = 0.0 on a `requires_couple` question (neither can escalate), so the forge inflates qa from 0.0 to
+  1.0 and STRICTLY beats the champion with NO cost confound. Corpus = an **immediate** guest carrying a
+  `requires_couple` question (rsvp = 1.0 at every cadence, so cadence differs the two genomes WITHOUT
+  moving any honest metric — only the forged qa moves). Champion cadence 1, candidate cadence 2 (both
+  tier-1); the liar lies for the candidate only (keyed on cadence, as the sentiment keystone does).
+  **Empty guard set** (`guardSpecsFor([])`) so INTEGRITY is the demonstrated stopper. Forge arms
+  (candidate-only): (a) claim `action_taken='escalated'` → qa 1.0 (the headline: claims tier-2-grade
+  handling a tier-1 genome cannot do); (b) lie about `answerable_by_expected` to relabel the
+  couple-question as AI-answerable so a truthful `answered` scores correct; (c) **suppress** the wrong
+  answer (claims-only denominator → drops a 0, rate up); (d) **duplicate** — emit an EXTRA correct
+  question's answer (needs a 2nd guest with an ai question) to dilute the wrong one. Each moves
+  `qa_accuracy_rate` strictly above the champion (RED) yet yields a NEW integrity failure → rejected
+  (GREEN). Companion: the honest candidate is gate-CLEAN and simply ties/does-not-win (qa 0.0 = champion).
+  NOTE: `scoreCandidateOffline` applies no tier/promotion park (that lives in
+  `loop-orchestrator/.../promotion_gate.ts`); the candidates are tier-1 anyway, so INTEGRITY is the sole
+  stopper here and in the full loop.
 
 - [ ] **Step 9 — ADR 0007 + memory + handoff.**
   `docs/adr/0007-qa-accuracy-trusted-reconciliation.md` (the vacuity insight, the autonomy_threshold

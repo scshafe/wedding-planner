@@ -57,3 +57,16 @@ export const COUPLE_SESSION_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
 export const SENTIMENT_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
   EVENT_NAMES.guest_sentiment_sampled,
 ])
+
+/**
+ * PHASE 7. The product reports its handling of a scripted guest question via `guest.question.answered`
+ * — the claim the `qa_accuracy_rate` metric scores (correct = `action_taken` matches the required
+ * action for `answerable_by_expected`). The integrity gate reconciles each (by the composite
+ * guest_id|question_id) against the trusted Q&A outcome Stage B authors per question, field-diffing BOTH
+ * `action_taken` (so a tier-1 candidate that CLAIMS it escalated a requires_couple question is vetoed)
+ * and `answerable_by_expected` (so a relabel forge — calling a couple-question AI-answerable — is
+ * caught), with a duplicate-claim and a suppression check (dropping a wrong answer would raise the rate).
+ */
+export const QA_ANSWERED_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
+  EVENT_NAMES.guest_question_answered,
+])

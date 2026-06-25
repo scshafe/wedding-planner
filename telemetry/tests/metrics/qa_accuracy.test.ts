@@ -73,6 +73,25 @@ describe('qa_accuracy_rate — correctness over the claimed stream', () => {
     expect(r.value).toBeCloseTo(1 / 3, 10)
   })
 
+  it('a present-but-invalid-enum action (wrong case) is scored INCORRECT, not crashed', () => {
+    // Read-seam invariant (doddy): the metric maps a non-enum action to null → incorrect. The integrity
+    // gate (raw readString) sees 'Answered' ≠ trusted 'answered' → veto. Both punish; pin the metric side.
+    const events = stream([
+      { guest_id: 'g1', question_id: 'q1', answerable_by_expected: 'ai_from_known_facts', action_taken: 'Answered' },
+    ])
+    expect(qa(events).value).toBe(0)
+  })
+
+  it('an id-less answer is SKIPPED (not counted), never crashes scoring', () => {
+    const events = stream([
+      { question_id: 'q1', answerable_by_expected: 'ai_from_known_facts', action_taken: 'answered' }, // no guest_id
+      { guest_id: 'g1', question_id: 'q2', answerable_by_expected: 'ai_from_known_facts', action_taken: 'answered' },
+    ])
+    const r = qa(events)
+    expect(r.value).toBe(1) // only the well-formed answer counts
+    expect(r.support).toMatchObject({ answered: 1 })
+  })
+
   it('no answered events → null (honest-undefined), never 0', () => {
     expect(qa([]).value).toBeNull()
   })
