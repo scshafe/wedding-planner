@@ -6,6 +6,7 @@ import {
   COUPLE_SESSION_ACTIVE_SECONDS,
   effectiveNudges,
   escalationBudget,
+  honestSentimentScore,
   isCoupleResolvable,
   NEVER,
   REMINDERS_NEEDED,
@@ -39,7 +40,9 @@ import {
  *     (delivered >= ground-truth need) UNION couple-resolved (a still-pending, couple-resolvable guest
  *     the escalation policy reaches). This is the trusted backing for the claimed resolution numerator;
  *   - a trusted COUPLE SESSION (the couple-attention cost) for each escalated guest — the trusted
- *     backing for the claimed effort_cost denominator.
+ *     backing for the claimed effort_cost denominator;
+ *   - a trusted SENTIMENT observation for EVERY guest (Phase 6) — the honest `honestSentimentScore` re-
+ *     derived from the shared fact — the trusted backing for the claimed `guest_sentiment_score`.
  * A guest reminders alone do not reach AND the policy does not escalate has NO outcome record: claiming
  * its resolution is then a forge. couple-resolvability is a SCENARIO fact, never a genome field, so a
  * genome cannot assert a guest resolvable.
@@ -56,17 +59,27 @@ function resolvedStatus(guest: GuestPersona): 'yes' | 'no' {
   return guest.rsvp_truth.will_attend === 'no' ? 'no' : 'yes'
 }
 
+/** Stage B's OWN per-guest reach primitives (the ground-truth quantities the shared facts consume). */
+interface GuestReach {
+  readonly needed: number
+  readonly delivered: number
+  readonly resolved: boolean
+}
+
 /**
- * Whether reminders ALONE resolve this guest under the genome's cadence/spacing/batching (Stage B's OWN
- * calc, sharing only the FACTS with Stage A — never its emission path). PHASE-5: batching dilutes reach,
- * so resolution requires `effectiveNudges(delivered, batching) >= needed` — the IDENTICAL computation
- * Stage A applies. This mirror is load-bearing: without it an honest batched genome's claimed resolutions
- * would diverge from the trusted record and the integrity gate would veto every honest tier-1 run.
+ * The reminder-reach of one guest under the genome's cadence/spacing/batching (Stage B's OWN calc,
+ * sharing only the FACTS with Stage A — never its emission path). PHASE-5: batching dilutes reach, so
+ * resolution requires `effectiveNudges(delivered, batching) >= needed` — the IDENTICAL computation Stage
+ * A applies. This mirror is load-bearing: without it an honest batched genome's claimed resolutions would
+ * diverge from the trusted record and the integrity gate would veto every honest tier-1 run. PHASE-6:
+ * `needed`/`delivered`/`resolved` are exactly the inputs the shared `honestSentimentScore` fact needs, so
+ * the trusted sentiment observation is re-derived here too (never from Stage A's claim).
  */
-function reminderResolves(guest: GuestPersona, cadence: number, spacing: number, batching: number): boolean {
+function guestReach(guest: GuestPersona, cadence: number, spacing: number, batching: number): GuestReach {
   const needed = REMINDERS_NEEDED[guest.rsvp_truth.response_latency] ?? NEVER
   const delivered = Math.min(cadence, spacingCapacity(spacing))
-  return needed !== NEVER && effectiveNudges(delivered, batching) >= needed
+  const resolved = needed !== NEVER && effectiveNudges(delivered, batching) >= needed
+  return { needed, delivered, resolved }
 }
 
 /**
@@ -94,10 +107,18 @@ export function observeTrustedRecord(
   const batching = genome.parameters.reminder_batching
   const autonomyThreshold = genome.parameters.autonomy_threshold
 
-  // Reminder-resolved guests (the same ground-truth need the cadence/spacing/batching reach satisfies).
+  // Reminder-resolved guests (the same ground-truth need the cadence/spacing/batching reach satisfies),
+  // plus the trusted sentiment observation for EVERY guest — Stage A samples every guest, so the trusted
+  // record must back every sample or an honest run would read as a forge/suppression (Phase 6). Both are
+  // re-derived from the shared facts by Stage B's own computation, never from Stage A's claim.
   const pending: GuestPersona[] = []
   for (const guest of scenario.guests) {
-    if (reminderResolves(guest, cadence, spacing, batching)) {
+    const reach = guestReach(guest, cadence, spacing, batching)
+    recorder.recordSentimentObservation({
+      guest_id: guest.persona_id,
+      sentiment_score: honestSentimentScore(reach.needed, reach.delivered, reach.resolved, spacing, batching),
+    })
+    if (reach.resolved) {
       recorder.recordRsvpOutcome({
         guest_id: guest.persona_id,
         rsvp_status: resolvedStatus(guest),

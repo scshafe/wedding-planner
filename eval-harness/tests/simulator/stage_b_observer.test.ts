@@ -35,6 +35,22 @@ function honestResolvedGuestIds(genome: StrategyGenome, scenarioGuests: ReturnTy
   )
 }
 
+/** The per-guest sentiment scores the HONEST Stage A claims, for a genome over a scenario. */
+function honestClaimedSentiment(genome: StrategyGenome, scenarioGuests: ReturnType<typeof makeGuest>[]): Map<string, number> {
+  const events = rsvpCadencePlanner({
+    scenario: makeScenario('s_honest', scenarioGuests),
+    genome,
+    clock: new ManualClock(BASE_TS),
+    ids: new SequentialIdGenerator('sb_sent'),
+  })
+  const byGuest = new Map<string, number>()
+  for (const e of events.filter((ev) => ev.event_name === EVENT_NAMES.guest_sentiment_sampled)) {
+    const p = e.payload as { guest_id: string; sentiment_score: number }
+    byGuest.set(p.guest_id, p.sentiment_score)
+  }
+  return byGuest
+}
+
 describe('Stage B — trusted RSVP-outcome authoring (reminder path, tier-1 genome)', () => {
   const guests = [
     makeGuest('g_immediate', 'immediate', 'yes'),
@@ -69,6 +85,29 @@ describe('Stage B — trusted RSVP-outcome authoring (reminder path, tier-1 geno
               .map((r) => r.guest_id),
           )
           expect(honestResolvedGuestIds(genome, guests), `c${cadence} s${spacing} b${batching}`).toEqual(trusted)
+        }
+      }
+    }
+  })
+
+  it('records a trusted sentiment observation per guest that EXACTLY equals the honest Stage A claim over the full 3-D box (Phase 6)', () => {
+    // The integrity gate field-diffs the claimed sentiment_score against this trusted score with EXACT
+    // equality. Because both stages call the SAME honestSentimentScore fact on the same primitives, the
+    // values are bit-identical — pin that across the whole cube × latencies so no honest run self-vetoes.
+    for (const cadence of [0, 1, 2, 3]) {
+      for (const spacing of [0, 1, 2, 3]) {
+        for (const batching of [0, 1, 2, 3]) {
+          const genome = makeGenome(cadence, spacing, batching)
+          const recorder = observeTrustedRecord(makeScenario('s', guests), genome)
+          const trusted = new Map(recorder.allSentimentObservations().map((o) => [o.guest_id, o.sentiment_score]))
+          const claimed = honestClaimedSentiment(genome, guests)
+          // Every guest is sampled exactly once on both sides (no missing/extra observation).
+          expect(trusted.size).toBe(guests.length)
+          expect([...claimed.keys()].sort()).toEqual([...trusted.keys()].sort())
+          for (const guest of guests) {
+            const id = guest.persona_id
+            expect(trusted.get(id), `c${cadence} s${spacing} b${batching} ${id}`).toBe(claimed.get(id))
+          }
         }
       }
     }
