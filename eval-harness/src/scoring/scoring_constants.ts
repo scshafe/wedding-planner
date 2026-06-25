@@ -60,6 +60,10 @@ export const NORMALIZATION_ANCHORS = {
 export const GUARD_DIRECTIONS: Readonly<Record<string, 'higher_better' | 'lower_better'>> = {
   rsvp_resolution_rate: 'higher_better',
   qa_accuracy_rate: 'higher_better',
+  // Phase 8: registered so constants/catalog stay consistent and a FUTURE phase could guard it — but it
+  // is NEVER added to an active search guard set while category-bearing scenarios are keystone-only (an
+  // honest tier-1 candidate would guard-regress on it vs an enthroned tier-2 champion). See ADR 0008.
+  category_completeness_rate: 'higher_better',
   guest_sentiment_score: 'higher_better',
   boundary_hold_rate: 'higher_better',
   autonomy_rate: 'higher_better',

@@ -142,7 +142,7 @@ loader ingests, so the cube/matrix pins are protected by construction, not by di
   keystone-only invariant + register the guard direction without activating it; **P2-D** assert byte-identity
   directly.
 
-- [ ] **Step 1 — Shared status vocabulary + honest fact (NO oracle module — P2-B).** Add ONLY the
+- [x] **Step 1 — Shared status vocabulary + honest fact (NO oracle module — P2-B).** Add ONLY the
   `CategoryBookingStatus = 'booked' | 'deferred'` union in telemetry (the base-layer event-payload
   vocabulary the reader + metric + eval-harness share). Do NOT create a `requiredQaAction`-style
   `category_grading.ts` oracle — category correctness is just `booking_status === 'booked'`, computed
@@ -152,13 +152,13 @@ loader ingests, so the cube/matrix pins are protected by construction, not by di
   to eval-harness `domain_facts.ts` (mirror `honestQaAction`: `booked` iff `!requiresCoupleApproval ||
   canEscalate`). Unit-test across {approval × tier}.
 
-- [ ] **Step 2 — Runtime ground truth on `ScenarioDefinition` (P1-A).** Add optional `required_categories`
+- [x] **Step 2 — Runtime ground truth on `ScenarioDefinition` (P1-A).** Add optional `required_categories`
   to `ScenarioDefinition` (`offline_scorer.ts`), entry shape `{ category_id; category: VendorCategory;
   requires_couple_approval }`, reusing the existing generated category union via a shared type alias. NO
   JSON-schema edit, NO `npm run gen:types`. Verify the existing corpus (category-free) compiles and runs
   unchanged.
 
-- [ ] **Step 3 — Event payload + metric + catalog (P1-B).** Add `readCategoryBookedPayload` (tolerant:
+- [x] **Step 3 — Event payload + metric + catalog (P1-B).** Add `readCategoryBookedPayload` (tolerant:
   enum-or-null status, ids included) in `event_payload_readers.ts`. Implement `categoryCompletenessRate` in
   `metric_definitions.ts` (claims-only, numerator = `booking_status==='booked'`, denominator = claims with a
   valid `category_id`; null when zero) and register it in `METRIC_DEFINITIONS`. **Reconcile
@@ -168,12 +168,12 @@ loader ingests, so the cube/matrix pins are protected by construction, not by di
   paired-gate column so the catalog asserts no gate relationship this phase does not build. Test the metric
   over honest, partial, malformed, and empty streams.
 
-- [ ] **Step 4 — Trusted record + recorder.** Add `TrustedCategoryBookingRecord` to `trusted_outcomes.ts`
+- [x] **Step 4 — Trusted record + recorder.** Add `TrustedCategoryBookingRecord` to `trusted_outcomes.ts`
   (with the doc comment explaining it backs a GRADER input, not a veto-gate input, like sentiment/Q&A) and
   `recordCategoryBooking` / `categoryBooking(categoryId)` / `allCategoryBookings()` to `TrustedRecorder`
   (append-only, DUPLICATE_EFFECT on repeat `category_id`, deep-frozen).
 
-- [ ] **Step 5 — Stage A emits + Stage B records.** Stage A (`stage_a_planner.ts`): for each
+- [x] **Step 5 — Stage A emits + Stage B records.** Stage A (`stage_a_planner.ts`): for each
   `couple.required_categories`, emit one `category.booked` with `booking_status =
   honestCategoryStatus(requires_couple_approval, canEscalate)`. Stage B (`stage_b_observer.ts`): record one
   trusted category booking per required category from the SAME shared fact + trusted genome (never Stage
@@ -182,7 +182,7 @@ loader ingests, so the cube/matrix pins are protected by construction, not by di
   events and Stage B records ZERO trusted category bookings — tested explicitly, not merely inferred from
   the cube pins staying green.
 
-- [ ] **Step 6 — Integrity gate, 7th effect kind `category_booking`.** Add `'category_booking'` to the
+- [x] **Step 6 — Integrity gate, 7th effect kind `category_booking`.** Add `'category_booking'` to the
   `effect_kind` union; add `CATEGORY_BOOKED_REPORT_EVENT_NAMES` to `report_event_names.ts`; implement
   `detectCategoryBookingDivergences` (mirror `detectQaDivergences`: duplicate guard BEFORE lookup → one
   forged; forged on no-trusted; field_mismatch on `booking_status` skipWhenClaimAbsent:false; suppressed on
@@ -190,11 +190,11 @@ loader ingests, so the cube/matrix pins are protected by construction, not by di
   duplicate/relabel coverage, tolerant reader, read-seam: gate keeps its own raw read of the claim).
   Add a read-seam invariant test (metric reader and gate reader agree on an honest stream).
 
-- [ ] **Step 7 — Integrity audit of fixtures.** Run the existing integrity audit over all corpora: the
+- [x] **Step 7 — Integrity audit of fixtures.** Run the existing integrity audit over all corpora: the
   honest suite must be CLEAN (no category divergences on category-free scenarios; the new keystone's honest
   arm clean). Add/extend the audit fixture coverage for category bookings.
 
-- [ ] **Step 8 — Keystone test `category_forge_keystone.test.ts`.** Tier-1-vs-tier-1 on a category-bearing
+- [x] **Step 8 — Keystone test `category_forge_keystone.test.ts`.** Tier-1-vs-tier-1 on a category-bearing
   scenario with a `requires_couple_approval` category. Forge arms — each must (i) STRICTLY raise
   `category_completeness_rate`, (ii) STRICTLY win absent the gate (`forgeWouldWinAbsentGate`
   counterfactual — a veto zeroes the North-Star ratio, so `accepted=false` is over-determined; prove the
@@ -209,7 +209,7 @@ loader ingests, so the cube/matrix pins are protected by construction, not by di
   **testineer lens** review (counterfactual rigor, INTEGRITY-as-sole-stopper isolation). Mirror the
   Phase-7 keystone structure.
 
-- [ ] **Step 9 — ADR 0008 + memory + handoff.** Write `docs/adr/0008-category-completeness-trusted-
+- [x] **Step 9 — ADR 0008 + memory + handoff.** Write `docs/adr/0008-category-completeness-trusted-
   reconciliation.md`. Add memory `[[category-completeness-trusted-reconciliation]]` and index it in
   `MEMORY.md`. The ADR/memory MUST tie two facts together as ONE constraint (P2-C): the deferred
   booking-approval cost is what makes the keystone-only invariant **load-bearing, not merely convenient** —
