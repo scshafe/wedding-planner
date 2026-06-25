@@ -12,6 +12,7 @@ import {
   COUPLE_SESSION_ACTIVE_SECONDS,
   effectiveNudges,
   escalationBudget,
+  honestCategoryStatus,
   honestQaAction,
   honestSentimentScore,
   isCoupleResolvable,
@@ -194,6 +195,35 @@ export const rsvpCadencePlanner: Planner = ({ scenario, genome, clock, ids }) =>
   }
 
   emitEscalations(genome, pending, emit)
+
+  // PHASE-8: book each required category the couple needs. The honest status is
+  // `honestCategoryStatus(requires_couple_approval, canEscalate)` — `booked` for an approval-free category
+  // at any tier, but only `booked` (vs honest `deferred`) for an approval-required category when the genome
+  // can escalate (the tier-2 commitment_autonomy surface). Category bookings are plan-scoped, not
+  // guest-scoped, so they carry no guest_id. Stage B re-derives the IDENTICAL status into the trusted
+  // record. A category-FREE scenario (the search corpus) has no required_categories, so ZERO category
+  // events are emitted and the metric stays null — the cube pins are untouched.
+  for (const required of scenario.required_categories ?? []) {
+    events.push(
+      buildEvent(clock, ids, {
+        event_name: EVENT_NAMES.category_booked,
+        trace_id: `t_${scenario.scenario_id}`,
+        wedding_id: scenario.scenario_id,
+        phase: 'booking',
+        capability: 'budget_management',
+        actor: 'ai',
+        source: 'eval',
+        payload: {
+          category_id: required.category_id,
+          category: required.category,
+          booking_status: honestCategoryStatus(required.requires_couple_approval, canEscalate),
+        },
+        meta: { schema_version: '1.0.0' },
+      }),
+    )
+    clock.advance(1000)
+  }
+
   return events
 }
 

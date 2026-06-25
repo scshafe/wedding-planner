@@ -6,6 +6,7 @@ import {
   COUPLE_SESSION_ACTIVE_SECONDS,
   effectiveNudges,
   escalationBudget,
+  honestCategoryStatus,
   honestQaAction,
   honestSentimentScore,
   isCoupleResolvable,
@@ -164,6 +165,19 @@ export function observeTrustedRecord(
         resolved_via: 'couple',
       })
     }
+  }
+
+  // PHASE-8: one trusted category booking per required category, re-derived from the scenario's
+  // `required_categories` ground truth + the TRUSTED genome's escalation capability via the SHARED
+  // `honestCategoryStatus` fact — never from Stage A's claim. Mirrors Stage A's per-category emission
+  // exactly on an honest run, so the integrity gate stays load-bearing. A category-free scenario (the
+  // search corpus) records ZERO category bookings, preserving byte-identity with the pre-Phase-8 record.
+  for (const required of scenario.required_categories ?? []) {
+    recorder.recordCategoryBooking({
+      category_id: required.category_id,
+      category: required.category,
+      booking_status: honestCategoryStatus(required.requires_couple_approval, canEscalate),
+    })
   }
 
   return recorder

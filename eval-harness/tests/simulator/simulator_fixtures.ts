@@ -78,11 +78,23 @@ export function refFor(genome: StrategyGenome): string {
 
 const COUPLE = loadCouplePersona('couple_standard_baseline')
 
+type RequiredCategory = NonNullable<ScenarioDefinition['required_categories']>[number]
+
+/** A required-category ground-truth fact (Phase 8). `requires_couple_approval` ⇒ booked only at tier-2. */
+export function makeRequiredCategory(
+  categoryId: string,
+  category: string,
+  requiresCoupleApproval: boolean,
+): RequiredCategory {
+  return { category_id: categoryId, category, requires_couple_approval: requiresCoupleApproval }
+}
+
 /** A scenario with a configurable guest list (default: a mix spanning the latency spectrum). */
 export function makeScenario(
   scenarioId: string,
   guests: readonly GuestPersona[] = DEFAULT_GUESTS,
   scenarioType: ScenarioDefinition['scenario_type'] = 'golden',
+  requiredCategories?: readonly RequiredCategory[],
 ): ScenarioDefinition {
   return {
     scenario_id: scenarioId,
@@ -91,6 +103,7 @@ export function makeScenario(
     guests,
     bookedPlanFacts: {},
     targetMetrics: [{ metric_code: 'rsvp_resolution_rate', direction: 'gte', threshold: 0.5 }],
+    ...(requiredCategories === undefined ? {} : { required_categories: requiredCategories }),
   }
 }
 
