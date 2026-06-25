@@ -119,7 +119,7 @@ property: the firewall path is identical to production.
   shared reference leaks, `approvals:[]` is enforced, and the forged-candidate exclusion holds against
   the real seams. Apply findings.
 
-- [ ] **Step 6 — ADR 0011 + memory + handoff.** `docs/adr/0011-advisory-tier2-recommendations.md`; a
+- [x] **Step 6 — ADR 0011 + memory + handoff.** `docs/adr/0011-advisory-tier2-recommendations.md`; a
   memory file `advisory-tier2-promotable-recommendations.md` (+ MEMORY.md index) capturing: dormant
   plan-side value now surfaced as human recommendations; park==recommend reuse with isolated stores;
   the positive guard rule; the §4 certificate redefinition; never auto-lands. Update
