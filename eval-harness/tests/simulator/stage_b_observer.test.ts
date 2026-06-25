@@ -2,6 +2,7 @@ import { EVENT_NAMES } from '@wedding-planner/telemetry'
 import { describe, expect, it } from 'vitest'
 
 import {
+  type GuestPersona,
   ManualClock,
   SequentialIdGenerator,
   type StrategyGenome,
@@ -150,5 +151,71 @@ describe('Stage B — couple escalation authoring (tier-2 genome)', () => {
     expect(count(3)).toBe(3) // threshold 3 = escalate all pending couple-resolvable
     expect(count(1)).toBeLessThanOrEqual(count(2))
     expect(count(2)).toBeLessThanOrEqual(count(3))
+  })
+})
+
+// ---------------------------------------------------------------------------------------------------
+// PHASE 7 — Stage B authors a trusted Q&A outcome per scripted question; agreement with honest Stage A.
+// ---------------------------------------------------------------------------------------------------
+
+type AnswerableBy = GuestPersona['questions'][number]['answerable_by']
+
+/** A guest carrying one scripted question of a given nature (makeGuest gives questions:[]). */
+function guestQ(personaId: string, answerableBy: AnswerableBy): GuestPersona {
+  return {
+    ...makeGuest(personaId, 'immediate', 'yes'),
+    questions: [
+      { question_id: `${personaId}_q`, text: 'q', expected_answer: 'a', answerable_by: answerableBy },
+    ],
+  }
+}
+
+/** The (guest_id|question_id) → {action_taken, answerable_by_expected} the HONEST Stage A claims. */
+function honestClaimedQa(
+  genome: StrategyGenome,
+  scenarioGuests: GuestPersona[],
+): Map<string, { action: string; answerable: string }> {
+  const events = rsvpCadencePlanner({
+    scenario: makeScenario('s_honest', scenarioGuests),
+    genome,
+    clock: new ManualClock(BASE_TS),
+    ids: new SequentialIdGenerator('sb_qa'),
+  })
+  const byKey = new Map<string, { action: string; answerable: string }>()
+  for (const e of events.filter((ev) => ev.event_name === EVENT_NAMES.guest_question_answered)) {
+    const p = e.payload as { guest_id: string; question_id: string; action_taken: string; answerable_by_expected: string }
+    byKey.set(`${p.guest_id}|${p.question_id}`, { action: p.action_taken, answerable: p.answerable_by_expected })
+  }
+  return byKey
+}
+
+describe('Stage B — trusted Q&A authoring agrees EXACTLY with honest Stage A across answerable_by × tier (Phase 7)', () => {
+  const GUESTS: GuestPersona[] = [
+    guestQ('g_ai', 'ai_from_known_facts'),
+    guestQ('g_couple', 'requires_couple'),
+    guestQ('g_refuse', 'must_refuse'),
+  ]
+
+  // The gate field-diffs claimed action_taken AND answerable_by_expected against the trusted record with
+  // exact equality. Both stages call honestQaAction on the same (answerable_by, canEscalate), so they are
+  // bit-identical — pin that for BOTH tiers (the tier-1 requires_couple→answered case is the only one
+  // where honest != required, and the only one that could silently self-veto if the stages diverged).
+  for (const [label, genome] of [
+    ['tier-1', makeGenome(2, 0)],
+    ['tier-2', makeTier2Genome(2, 0, 1)],
+  ] as const) {
+    it(`trusted (action, answerable_by) == honest claim for every question (${label})`, () => {
+      const recorder = observeTrustedRecord(makeScenario('s_qa', GUESTS), genome)
+      const trusted = new Map(
+        recorder.allQaOutcomes().map((o) => [`${o.guest_id}|${o.question_id}`, { action: o.action_taken, answerable: o.answerable_by }]),
+      )
+      expect(trusted).toEqual(honestClaimedQa(genome, GUESTS))
+      expect(trusted.size).toBe(3)
+    })
+  }
+
+  it('records ONE outcome per question and NONE for a question-free guest', () => {
+    const recorder = observeTrustedRecord(makeScenario('s_qa_mixed', [guestQ('g_ai', 'ai_from_known_facts'), makeGuest('g_plain', 'immediate')]), makeGenome(2, 0))
+    expect(recorder.allQaOutcomes().map((o) => o.guest_id)).toEqual(['g_ai'])
   })
 })

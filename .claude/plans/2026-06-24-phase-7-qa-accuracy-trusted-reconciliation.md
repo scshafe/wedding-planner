@@ -189,7 +189,11 @@ boundary), wolf (stats/aggregation), rigorous-architect (design), and testineer 
   a requires_couple question; < 1.0 for a tier-1 genome on the same; null when no questions; the
   existing question-free streams unchanged.
 
-- [ ] **Step 5 — Stage B authors a trusted Q&A outcome per scripted question.**
+- [x] **Step 5 — Stage B authors a trusted Q&A outcome per scripted question.**
+  DONE — `observeTrustedRecord` records one `recordQaOutcome` per question via `honestQaAction` on the
+  TRUSTED genome's `canEscalate`. Agreement sweep in `stage_b_observer.test.ts`: trusted
+  (action, answerable_by) == honest Stage A claim for every answerable_by × {tier-1, tier-2}, plus
+  one-per-question / none-for-question-free. 282 green.
   Extend `observeTrustedRecord`: for each guest × question, `recordQaOutcome({ guest_id, question_id,
   answerable_by, action_taken: honestQaAction(answerable_by, canEscalate) })`, `canEscalate` from the
   TRUSTED genome (never Stage A). Test (`stage_b_observer`): the **agreement sweep** — trusted action ==

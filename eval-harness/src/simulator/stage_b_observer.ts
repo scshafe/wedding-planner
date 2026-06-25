@@ -6,6 +6,7 @@ import {
   COUPLE_SESSION_ACTIVE_SECONDS,
   effectiveNudges,
   escalationBudget,
+  honestQaAction,
   honestSentimentScore,
   isCoupleResolvable,
   NEVER,
@@ -106,6 +107,9 @@ export function observeTrustedRecord(
   const spacing = genome.parameters.reminder_spacing
   const batching = genome.parameters.reminder_batching
   const autonomyThreshold = genome.parameters.autonomy_threshold
+  // PHASE-7: the SAME escalation-capability flag Stage A uses (from the TRUSTED genome), so the honest
+  // Q&A action Stage B records is bit-identical to Stage A's claim on an honest run.
+  const canEscalate = autonomyThreshold !== undefined
 
   // Reminder-resolved guests (the same ground-truth need the cadence/spacing/batching reach satisfies),
   // plus the trusted sentiment observation for EVERY guest — Stage A samples every guest, so the trusted
@@ -118,6 +122,17 @@ export function observeTrustedRecord(
       guest_id: guest.persona_id,
       sentiment_score: honestSentimentScore(reach.needed, reach.delivered, reach.resolved, spacing, batching),
     })
+    // PHASE-7: one trusted Q&A outcome per scripted question, re-derived from persona ground truth
+    // (answerable_by) + the TRUSTED genome's escalation capability — never from Stage A's claim. Mirrors
+    // Stage A's per-question emission exactly on an honest run, so the integrity gate stays load-bearing.
+    for (const question of guest.questions) {
+      recorder.recordQaOutcome({
+        guest_id: guest.persona_id,
+        question_id: question.question_id,
+        answerable_by: question.answerable_by,
+        action_taken: honestQaAction(question.answerable_by, canEscalate),
+      })
+    }
     if (reach.resolved) {
       recorder.recordRsvpOutcome({
         guest_id: guest.persona_id,
