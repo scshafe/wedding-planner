@@ -12,8 +12,10 @@ import {
   COUPLE_SESSION_ACTIVE_SECONDS,
   effectiveNudges,
   escalationBudget,
+  honestBookingApprovalSession,
   honestCategoryStatus,
   honestQaAction,
+  honestQaEscalationSession,
   honestSentimentScore,
   isCoupleResolvable,
   NEVER,
@@ -191,6 +193,17 @@ export const rsvpCadencePlanner: Planner = ({ scenario, genome, clock, ids }) =>
         answerable_by_expected: question.answerable_by,
         action_taken: honestQaAction(question.answerable_by, canEscalate),
       })
+      // PHASE-9: escalating a requires_couple question to the couple consumes couple attention (the cost
+      // Phase 7 deferred). One couple session per honestly-escalated question, keyed by (qa_escalation,
+      // question_id). Stage B re-derives the IDENTICAL session via the SAME shared fact.
+      if (honestQaEscalationSession(question.answerable_by, canEscalate)) {
+        emit(EVENT_NAMES.couple_session_ended, 'guest_qa', 'couple', guestId, {
+          session_id: `cs_qa_${question.question_id}`,
+          session_reason: 'qa_escalation',
+          about_id: question.question_id,
+          active_seconds: COUPLE_SESSION_ACTIVE_SECONDS,
+        })
+      }
     }
   }
 
@@ -222,6 +235,30 @@ export const rsvpCadencePlanner: Planner = ({ scenario, genome, clock, ids }) =>
       }),
     )
     clock.advance(1000)
+    // PHASE-9: securing approval on a requires_couple_approval booking consumes couple attention (the
+    // cost Phase 8 deferred). One couple session per honestly-approved booking, keyed by
+    // (booking_approval, category_id). An approval-FREE category books autonomously with NO couple cost.
+    if (honestBookingApprovalSession(required.requires_couple_approval, canEscalate)) {
+      events.push(
+        buildEvent(clock, ids, {
+          event_name: EVENT_NAMES.couple_session_ended,
+          trace_id: `t_${scenario.scenario_id}`,
+          wedding_id: scenario.scenario_id,
+          phase: 'booking',
+          capability: 'budget_management',
+          actor: 'couple',
+          source: 'eval',
+          payload: {
+            session_id: `cs_book_${required.category_id}`,
+            session_reason: 'booking_approval',
+            about_id: required.category_id,
+            active_seconds: COUPLE_SESSION_ACTIVE_SECONDS,
+          },
+          meta: { schema_version: '1.0.0' },
+        }),
+      )
+      clock.advance(1000)
+    }
   }
 
   return events

@@ -6,8 +6,10 @@ import {
   COUPLE_SESSION_ACTIVE_SECONDS,
   effectiveNudges,
   escalationBudget,
+  honestBookingApprovalSession,
   honestCategoryStatus,
   honestQaAction,
+  honestQaEscalationSession,
   honestSentimentScore,
   isCoupleResolvable,
   NEVER,
@@ -133,6 +135,16 @@ export function observeTrustedRecord(
         answerable_by: question.answerable_by,
         action_taken: honestQaAction(question.answerable_by, canEscalate),
       })
+      // PHASE-9: the trusted couple-attention cost of escalating this question — re-derived from the SAME
+      // shared fact Stage A uses, so an honest run reconciles bit-identically and a shaved/suppressed
+      // claim is a veto. Keyed by (qa_escalation, question_id).
+      if (honestQaEscalationSession(question.answerable_by, canEscalate)) {
+        recorder.recordCoupleSession({
+          session_reason: 'qa_escalation',
+          about_id: question.question_id,
+          active_seconds: COUPLE_SESSION_ACTIVE_SECONDS,
+        })
+      }
     }
     if (reach.resolved) {
       recorder.recordRsvpOutcome({
@@ -179,6 +191,16 @@ export function observeTrustedRecord(
       category: required.category,
       booking_status: honestCategoryStatus(required.requires_couple_approval, canEscalate),
     })
+    // PHASE-9: the trusted couple-attention cost of securing approval on this booking — re-derived from
+    // the SAME shared fact Stage A uses (incurred IFF requires_couple_approval && canEscalate), keyed by
+    // (booking_approval, category_id). A shaved/suppressed approval cost is a veto.
+    if (honestBookingApprovalSession(required.requires_couple_approval, canEscalate)) {
+      recorder.recordCoupleSession({
+        session_reason: 'booking_approval',
+        about_id: required.category_id,
+        active_seconds: COUPLE_SESSION_ACTIVE_SECONDS,
+      })
+    }
   }
 
   return recorder

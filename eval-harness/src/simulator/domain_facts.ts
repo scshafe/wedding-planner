@@ -232,6 +232,35 @@ export function honestCategoryStatus(
 export const COUPLE_SESSION_ACTIVE_SECONDS = 600
 
 /**
+ * PHASE-9 the SHARED booking-approval cost FACT — does the honest planner consume a couple-attention
+ * session securing approval for ONE required category? Read by BOTH stages so Stage A's claimed
+ * `couple.session.ended` and Stage B's trusted couple session agree on an honest run. A session is
+ * incurred IFF the category `requires_couple_approval` AND the genome can escalate (tier-2): that is the
+ * ONLY case where the planner actually takes the couple's commitment-authority. An approval-FREE category
+ * is booked autonomously at any tier with NO couple cost (so it never charges a session, even though
+ * `honestCategoryStatus` returns `booked`); a tier-1 genome `deferred`s an approval-required category, so
+ * no booking and no cost. This is what makes the COST load-bearing (mirroring `honestCategoryStatus` for
+ * completeness): a tier-2 planner that books the approval category but SHAVES/SUPPRESSES this session
+ * claims tier-2 completeness at sub-tier-2 cost — the gate reconciles it against this fact and vetoes.
+ */
+export function honestBookingApprovalSession(
+  requiresCoupleApproval: boolean,
+  canEscalate: boolean,
+): boolean {
+  return requiresCoupleApproval && canEscalate
+}
+
+/**
+ * PHASE-9 the SHARED qa-escalation cost FACT — does the honest planner consume a couple-attention session
+ * escalating ONE question? Composes the existing `honestQaAction`: a session is incurred IFF the honest
+ * action is `escalated` (i.e. a `requires_couple` question AND the genome can escalate). Closes Phase 7's
+ * deferred QA-escalation cost via the SAME generalized couple-session surface as booking approval.
+ */
+export function honestQaEscalationSession(answerableBy: QaAnswerableBy, canEscalate: boolean): boolean {
+  return honestQaAction(answerableBy, canEscalate) === 'escalated'
+}
+
+/**
  * How many still-pending, couple-resolvable guests the planner escalates to the couple WITHOUT asking,
  * by `autonomy_threshold` (the tier-2 commitment-autonomy knob). Higher threshold = more autonomous
  * escalation = more couple-resolutions AND more couple cost (the monotone tradeoff the oracle pins).
