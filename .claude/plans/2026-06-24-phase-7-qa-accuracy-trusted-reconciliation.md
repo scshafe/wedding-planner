@@ -134,7 +134,12 @@ boundary), wolf (stats/aggregation), rigorous-architect (design), and testineer 
   gate exists and is caught); (c) that no existing invariant (cube pins, tier-1 box, tier-2 park,
   completeness invariant) is weakened. Apply findings to the plan before Step 1.
 
-- [ ] **Step 1 — SHARED Q&A facts in `domain_facts.ts`.**
+- [x] **Step 1 — SHARED Q&A facts.**
+  DONE — grader oracle `requiredQaAction` + `QaAnswerableBy`/`QaAction` live in NEW
+  `telemetry/src/metrics/qa_grading.ts` (telemetry is the base layer the metric reads → ONE definition
+  of correctness, respecting eval-harness→telemetry). `honestQaAction(answerableBy, canEscalate)` stays
+  in `domain_facts.ts` (imports `requiredQaAction` from telemetry). Unit test `qa_facts.test.ts` pins
+  the bijection + the single tier-gated `requires_couple`+tier-1 → `answered` case. 267 tests green.
   Add `requiredQaAction(answerableBy)` and `honestQaAction(answerableBy, canEscalate)` (pure, with the
   tier-gating docblock: requires_couple needs escalation capability; share the FACT not the claim path).
   Unit test the mapping incl. the tier-1 requires_couple → `answered` case. No behavior change to

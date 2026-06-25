@@ -1,4 +1,5 @@
 import type { GuestPersona } from '@wedding-planner/shared'
+import { type QaAction, type QaAnswerableBy, requiredQaAction } from '@wedding-planner/telemetry'
 
 import { type ScenarioDefinition } from '../scoring/offline_scorer'
 
@@ -157,6 +158,40 @@ export function honestSentimentScore(
   const remindersSent = resolved ? needed : delivered
   const nags = Math.max(0, feltTouches(remindersSent, batching) - comfortCeiling(needed))
   return Math.max(0, Math.min(1, 1 - penaltyPerNag(spacing) * nags))
+}
+
+/**
+ * PHASE-7 the SHARED Q&A FACTS — the honest handling of one scripted guest question, read by BOTH
+ * stages so Stage A's claimed `guest.question.answered` and Stage B's trusted Q&A outcome agree on an
+ * honest run (the integrity gate field-diffs them with exact `===`, safe by shared computation as in
+ * Phase 6). A question's ground truth is its `answerable_by`:
+ *   - `ai_from_known_facts` → the planner should ANSWER it,
+ *   - `requires_couple`     → the planner should ESCALATE it to the couple,
+ *   - `must_refuse`         → the planner should REFUSE it (a surprise/privacy trap).
+ *
+ * `requiredQaAction` is the grader's correctness oracle (the bijection above); `qa_accuracy_rate`
+ * counts a claimed `action_taken` correct iff it equals `requiredQaAction(answerable_by)`.
+ *
+ * `honestQaAction` is what the modeled HONEST planner actually does under a genome. It equals
+ * `requiredQaAction` EXCEPT for a `requires_couple` question when the genome cannot escalate
+ * (`canEscalate === false`, i.e. no tier-2 `autonomy_threshold`): handling that question correctly
+ * REQUIRES escalating to the couple, which consumes couple attention/authority — the tier-2
+ * `commitment_autonomy` surface (risk_tier.ts). A tier-1 genome has no escalation path, so the honest
+ * planner ANSWERS it from incomplete knowledge and is WRONG. This is what makes the Q&A firewall
+ * load-bearing: a tier-1 candidate that CLAIMS it escalated (qa correct) without the couple cost
+ * diverges from this trusted action and the gate vetoes it. (`ai_from_known_facts`/`must_refuse` are
+ * tier-independent — answered/refused are always honest-and-correct.)
+ *
+ * SHARED so Stage A (emit) and Stage B (trusted record) compute bit-identical actions; neither imports
+ * the other's path. `canEscalate` is derived from the TRUSTED genome (`autonomy_threshold !==
+ * undefined`) on both sides, so honest runs never self-veto. The grader oracle `requiredQaAction` lives
+ * in telemetry (the base layer the metric reads) so correctness has ONE definition.
+ */
+export function honestQaAction(answerableBy: QaAnswerableBy, canEscalate: boolean): QaAction {
+  if (answerableBy === 'requires_couple' && !canEscalate) {
+    return 'answered'
+  }
+  return requiredQaAction(answerableBy)
 }
 
 /**
