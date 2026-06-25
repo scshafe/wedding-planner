@@ -1,4 +1,7 @@
 import {
+  AGGREGATION_WEIGHTS,
+  computeNorthStar,
+  deriveNorthStarInputs,
   guardSpecsFor,
   loadCouplePersona,
   makePlannerSimulator,
@@ -80,6 +83,31 @@ function score(planner: Planner) {
 const candValue = (r: ReturnType<typeof score>, code: string): number => r.candidate[0]?.metric_values[code] as number
 const baseValue = (r: ReturnType<typeof score>, code: string): number => r.baseline[0]?.metric_values[code] as number
 const integrityFailed = (r: ReturnType<typeof score>): boolean => r.decision.new_gate_failures.some((f) => f.includes(INTEGRITY_CODE))
+/** INTEGRITY is the SOLE new gate failure (back-ported from the category/Q&A/couple-cost keystones) — a
+ *  vetoed run zeroes the ratio, over-determining accepted=false, so this rules out a second gate masking it. */
+const onlyIntegrityFailed = (r: ReturnType<typeof score>): boolean =>
+  r.decision.new_gate_failures.length > 0 && r.decision.new_gate_failures.every((f) => f.includes(INTEGRITY_CODE))
+
+/** Corpus-aggregate North Star, recomputed from per-scenario metric_values with veto-zeroing CHOSEN. */
+function aggregateRatio(scores: ReturnType<typeof score>['candidate'], vetoed: boolean): number {
+  let weighted = 0
+  let totalWeight = 0
+  for (let i = 0; i < scores.length; i += 1) {
+    const s = scores[i]
+    const scn = CORPUS[i]
+    if (s === undefined || scn === undefined) continue
+    const ratio = computeNorthStar(deriveNorthStarInputs(s.metric_values, scn.couple), vetoed).ratio
+    const weight = AGGREGATION_WEIGHTS[scn.scenario_type as keyof typeof AGGREGATION_WEIGHTS] ?? 1
+    weighted += weight * ratio
+    totalWeight += weight
+  }
+  return weighted / totalWeight
+}
+
+/** Absent the gate (vetoed=false), does the forged candidate strictly out-score the honest champion? */
+function forgeWouldWinAbsentGate(r: ReturnType<typeof score>): boolean {
+  return aggregateRatio(r.candidate, false) > aggregateRatio(r.baseline, false)
+}
 
 // A liar that lies ONLY for the candidate (cadence 2); the champion (cadence 1) stays honest.
 function liar(mutate: (events: EventEnvelope[]) => EventEnvelope[]): Planner {
@@ -103,7 +131,8 @@ describe('keystone — an INFLATED sentiment score does not pay (the tier-1 sent
       ),
     )
     expect(candValue(r, METRIC_CODES.guest_sentiment_score)).toBeGreaterThan(baseValue(r, METRIC_CODES.guest_sentiment_score)) // RED: the forge moved the metric above the champion
-    expect(integrityFailed(r)).toBe(true) // GREEN: trusted score (0.5) ≠ claimed (1.0) → field_mismatch
+    expect(forgeWouldWinAbsentGate(r)).toBe(true) // absent the gate the inflated candidate out-scores the champion...
+    expect(onlyIntegrityFailed(r)).toBe(true) // ...but GREEN: trusted score (0.5) ≠ claimed (1.0) → field_mismatch, the SOLE failure
     expect(r.decision.accepted).toBe(false) // the forge does not pay
   })
 })
@@ -122,7 +151,8 @@ describe('keystone — a SUPPRESSED unhappy sample does not pay (dropping it rai
       ),
     )
     expect(candValue(r, METRIC_CODES.guest_sentiment_score)).toBeGreaterThan(baseValue(r, METRIC_CODES.guest_sentiment_score)) // RED: dropping the low sample lifted the mean
-    expect(integrityFailed(r)).toBe(true) // GREEN: a trusted observation with no claim → suppressed_effect
+    expect(forgeWouldWinAbsentGate(r)).toBe(true) // absent the gate the survivor-mean candidate out-scores the champion...
+    expect(onlyIntegrityFailed(r)).toBe(true) // ...but GREEN: a trusted observation with no claim → suppressed_effect, the SOLE failure
     expect(r.decision.accepted).toBe(false)
   })
 })
@@ -143,7 +173,10 @@ describe('keystone — a DUPLICATE happy sample does not pay (re-weighting the m
       }),
     )
     expect(candValue(r, METRIC_CODES.guest_sentiment_score)).toBeGreaterThan(honestCand) // RED: the duplicate re-weighted the mean upward
-    expect(integrityFailed(r)).toBe(true) // GREEN: a 2nd sample for an already-observed guest is a forge
+    // NB: unlike inflate/suppress, the bounded duplicate re-weight need not exceed the CHAMPION (it only
+    // beats the candidate's own honest mean), so forgeWouldWinAbsentGate is NOT asserted here — the
+    // counterfactual is the RED-vs-honest above. onlyIntegrityFailed still pins the gate as the flagger.
+    expect(onlyIntegrityFailed(r)).toBe(true) // GREEN: a 2nd sample for an already-observed guest is a forge, the SOLE failure
     expect(r.decision.accepted).toBe(false)
   })
 })
