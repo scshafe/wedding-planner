@@ -12,7 +12,7 @@ import {
   COUPLE_SESSION_ACTIVE_SECONDS,
   effectiveNudges,
   escalationBudget,
-  feltTouches,
+  honestSentimentScore,
   isCoupleResolvable,
   NEVER,
   REMINDERS_NEEDED,
@@ -59,7 +59,8 @@ import {
  *     effectiveNudges(delivered, batching) = ceil(delivered/digestSize) >= needed. Stage B applies the
  *     IDENTICAL calc (it reads batching too), so honest runs agree and the integrity gate stays load-bearing.
  *   - UPSIDE (comfort consolidation): feltTouches(remindersSent, batching) = ceil(remindersSent/digestSize)
- *     fewer felt interruptions => fewer nags => gentler sentiment (a claimed-only signal; Stage B ignores it).
+ *     fewer felt interruptions => fewer nags => gentler sentiment. PHASE-6: sentiment is now a SHARED fact
+ *     (honestSentimentScore) Stage B mirrors into the trusted record, so the integrity gate reconciles it.
  * The (cadence, spacing, batching) landscape is NON-SEPARABLE in 3-D: the optimal cadence depends on
  * batching (the digest dilutes reach, so a higher cadence is needed to resolve a multi-reminder guest once
  * its nudges are bundled) — pinned by the 3-D matrix test (metamorphic_oracle.test.ts).
@@ -81,42 +82,6 @@ export type Planner = (input: PlannerInput) => readonly EventEnvelope[]
 
 // NEVER + REMINDERS_NEEDED are the SHARED ground-truth facts (domain_facts.ts) — Stage B reads the
 // same constants so honest runs agree; each stage applies the genome policy by its own computation.
-
-/**
- * The most reminders a guest is comfortable receiving before it reads as nagging.
- *
- * EXPLICIT MODELING DECISION (testineer, Phase-2 Step-4 review): COMFORT_CAP is a UNIVERSAL comfort
- * ceiling, INDEPENDENT of how many reminders a guest's latency required — `nags = remindersSent -
- * min(needed, COMFORT_CAP)`. So a slow responder who needed 2 reminders is charged 1 nag for the
- * second even though it's what converted them: a 2nd+ reminder mildly annoys even when it works. The
- * alternative (`max(needed, COMFORT_CAP)` — only reminders BEYOND a guest's need nag) was rejected
- * because it makes the guard bite ONLY on never-responders, leaving a flat gradient whenever every
- * guest is reachable. The universal-ceiling choice gives the loop a real gradient even without an
- * unreachable guest — which is the property that makes the cadence tradeoff worth optimizing.
- */
-const COMFORT_CAP = 1
-/** Sentiment lost per nagging reminder at spacing 0 (a guest starts at 1.0, floored at 0). */
-const SENTIMENT_PENALTY_PER_NAG = 0.25
-
-/**
- * PHASE-3 reminder_spacing constants. Tuned so the (cadence, spacing) North-Star surface has a genuine
- * INTERIOR, NON-SEPARABLE optimum on the keystone corpus — pinned by the 16-value matrix test, never
- * by editing the North Star weights. At spacing 0 both reduce to the Phase-2 model. The reminder-window
- * CAPACITY profile [3,3,1,0] is the shared reach fact (domain_facts.ts `spacingCapacity`), so Stage B's
- * trusted record agrees with Stage A's claims on which guests reminders resolve.
- */
-/**
- * Fraction by which each spacing level softens a nag: penalty_per_nag = SENTIMENT_PENALTY_PER_NAG *
- * (1 - SPACING_RELIEF * spacing). At 0.25 the per-nag penalty is {0.25, 0.1875, 0.125, 0.0625} for
- * spacing {0,1,2,3} — strictly positive across the band (the guard never goes free), and exactly the
- * Phase-2 value at spacing 0.
- */
-const SPACING_RELIEF = 0.25
-
-/** Sentiment lost per nag at a spacing level (the spacing upside: gentler with more spacing). */
-function penaltyPerNag(spacing: number): number {
-  return SENTIMENT_PENALTY_PER_NAG * (1 - SPACING_RELIEF * spacing)
-}
 
 /** The rsvp_status a resolved guest reports, from their ground-truth intent. */
 function resolvedStatus(guest: GuestPersona): 'yes' | 'no' {
@@ -148,13 +113,10 @@ function guestOutcome(
   // A resolved guest stops receiving reminders once they respond (at `needed`); an unresolved guest
   // (still pending, or a never-responder) receives the full delivered budget.
   const remindersSent = resolved ? needed : delivered
-  const comfortCeiling = needed === NEVER ? 0 : Math.min(needed, COMFORT_CAP)
-  // PHASE-5 batching: bundling CONSOLIDATES interruptions — the `remindersSent` reminders are felt as
-  // feltTouches = ceil(remindersSent/digestSize) interruptions, each beyond comfort a nag. At b=0 this
-  // is remindersSent unchanged. (Comfort is a claimed-only signal; Stage B does not read this.)
-  const nags = Math.max(0, feltTouches(remindersSent, batching) - comfortCeiling)
-  // Each nag is gentler at higher spacing (the spacing upside) — the multiplicative interaction.
-  const sentimentScore = Math.max(0, Math.min(1, 1 - penaltyPerNag(spacing) * nags))
+  // PHASE-6: the sentiment math is the SHARED domain fact `honestSentimentScore` — Stage A applies it
+  // here to EMIT the claim, Stage B applies the IDENTICAL fact to RECORD the trusted observation, and
+  // the integrity gate reconciles the two (so a forged/inflated/suppressed sentiment claim is vetoed).
+  const sentimentScore = honestSentimentScore(needed, delivered, resolved, spacing, batching)
   return { resolved, remindersSent, sentimentScore }
 }
 

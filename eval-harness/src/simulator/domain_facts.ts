@@ -92,10 +92,71 @@ export function effectiveNudges(delivered: number, batching: number): number {
 /**
  * COMFORT consolidation (the batching upside): the `received` reminders a guest actually got are bundled
  * into `ceil(received / digestSize)` felt interruptions — fewer felt touches => fewer nags => gentler
- * guest_sentiment_score. Comfort is a CLAIMED-ONLY signal (no trusted backing), so only Stage A reads this.
+ * guest_sentiment_score.
  */
 export function feltTouches(received: number, batching: number): number {
   return received <= 0 ? 0 : Math.ceil(received / digestSize(batching))
+}
+
+/**
+ * The most reminders a guest is comfortable receiving before it reads as nagging.
+ *
+ * EXPLICIT MODELING DECISION (testineer, Phase-2 Step-4 review): COMFORT_CAP is a UNIVERSAL comfort
+ * ceiling, INDEPENDENT of how many reminders a guest's latency required — `nags = feltTouches -
+ * min(needed, COMFORT_CAP)`. So a slow responder who needed 2 reminders is charged 1 nag for the
+ * second even though it's what converted them: a 2nd+ reminder mildly annoys even when it works. The
+ * alternative (`max(needed, COMFORT_CAP)` — only reminders BEYOND a guest's need nag) was rejected
+ * because it makes the guard bite ONLY on never-responders, leaving a flat gradient whenever every
+ * guest is reachable. The universal-ceiling choice gives the loop a real gradient even without an
+ * unreachable guest — which is the property that makes the cadence tradeoff worth optimizing.
+ */
+export const COMFORT_CAP = 1
+/** Sentiment lost per nagging reminder at spacing 0 (a guest starts at 1.0, floored at 0). */
+const SENTIMENT_PENALTY_PER_NAG = 0.25
+/**
+ * Fraction by which each spacing level softens a nag: penalty_per_nag = SENTIMENT_PENALTY_PER_NAG *
+ * (1 - SPACING_RELIEF * spacing). At 0.25 the per-nag penalty is {0.25, 0.1875, 0.125, 0.0625} for
+ * spacing {0,1,2,3} — strictly positive across the band (the guard never goes free), and exactly the
+ * Phase-2 value at spacing 0.
+ */
+const SPACING_RELIEF = 0.25
+
+/** The comfort ceiling for a guest whose latency `needed` reminders (0 for a never-responder). */
+export function comfortCeiling(needed: number): number {
+  return needed === NEVER ? 0 : Math.min(needed, COMFORT_CAP)
+}
+
+/** Sentiment lost per nag at a spacing level (the spacing upside: gentler with more spacing). */
+export function penaltyPerNag(spacing: number): number {
+  return SENTIMENT_PENALTY_PER_NAG * (1 - SPACING_RELIEF * spacing)
+}
+
+/**
+ * PHASE-6 the SHARED guest-sentiment FACT — the honest `guest_sentiment_score` for one guest under a
+ * (spacing, batching) policy, given the ground-truth primitives BOTH stages compute independently:
+ * `needed` (persona latency), `delivered = min(cadence, spacingCapacity(spacing))`, and `resolved`
+ * (`effectiveNudges(delivered,batching) >= needed`). A resolved guest stops at `needed` reminders; an
+ * unresolved one receives the full `delivered`. Those reminders are FELT as `feltTouches` interruptions
+ * (the batching comfort upside), each beyond `comfortCeiling` a nag, each nag gentler at higher spacing.
+ *
+ * This is the trusted backing for `guest_sentiment_score`, which the scorer computes over the CLAIMED
+ * `guest.sentiment.sampled` stream (Phase-6). Stage A applies it and EMITS the claim; Stage B applies it
+ * and RECORDS the trusted observation — neither imports the other's path, so the integrity gate can veto
+ * a forged/inflated/suppressed sentiment claim. Because both stages call THIS pure function on the same
+ * primitives, their results are BIT-IDENTICAL, so the gate's exact-equality field diff never
+ * false-positives on an honest run (a stronger guarantee than dyadic constants — it holds by shared
+ * computation). At batching 0 (digestSize 1) feltTouches is the identity, preserving the Phase-3 model.
+ */
+export function honestSentimentScore(
+  needed: number,
+  delivered: number,
+  resolved: boolean,
+  spacing: number,
+  batching: number,
+): number {
+  const remindersSent = resolved ? needed : delivered
+  const nags = Math.max(0, feltTouches(remindersSent, batching) - comfortCeiling(needed))
+  return Math.max(0, Math.min(1, 1 - penaltyPerNag(spacing) * nags))
 }
 
 /**
