@@ -45,3 +45,15 @@ export const RSVP_RECEIVED_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
 export const COUPLE_SESSION_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
   EVENT_NAMES.couple_session_ended,
 ])
+
+/**
+ * PHASE 6. The product reports a per-guest SENTIMENT sample via `guest.sentiment.sampled` — the claim
+ * the `guest_sentiment_score` metric means over (half of the `guest_experience` North-Star component).
+ * The integrity gate reconciles each (by guest_id) against the trusted sentiment observation Stage B
+ * authors per guest, field-diffing `sentiment_score` so an inflated score is a veto and a DROPPED sample
+ * (which would raise the mean over the remaining samples) is caught as a suppression. Batching's comfort-
+ * consolidation upside (Phase 5) feeds this metric, which is why it is now reconciled (4b deferral D7).
+ */
+export const SENTIMENT_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
+  EVENT_NAMES.guest_sentiment_sampled,
+])

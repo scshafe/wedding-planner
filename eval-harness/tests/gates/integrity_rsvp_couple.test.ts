@@ -146,3 +146,54 @@ describe('integrity — completeness invariant: the metric-read fields ARE diffe
     expect(fields.has('active_seconds')).toBe(true)
   })
 })
+
+describe('integrity — sentiment reconciliation (the claimed guest_experience numerator, Phase 6)', () => {
+  it('passes when every claimed sentiment sample matches the trusted observation', () => {
+    const emit = makeBuilder()
+    const recorder = new TrustedRecorder()
+    recorder.recordSentimentObservation({ guest_id: 'g1', sentiment_score: 0.75 })
+    recorder.recordSentimentObservation({ guest_id: 'g2', sentiment_score: 1 })
+    const events = [
+      emit(EVENT_NAMES.guest_sentiment_sampled, { guest_id: 'g1', sentiment_score: 0.75 }),
+      emit(EVENT_NAMES.guest_sentiment_sampled, { guest_id: 'g2', sentiment_score: 1 }),
+    ]
+    expect(checkIntegritySelfReportDivergence(events, recorder).passed).toBe(true)
+  })
+
+  it('VETOES an INFLATED sentiment_score (claimed 1.0, trusted 0.5) as a field_mismatch', () => {
+    const emit = makeBuilder()
+    const recorder = new TrustedRecorder()
+    recorder.recordSentimentObservation({ guest_id: 'g1', sentiment_score: 0.5 })
+    const events = [emit(EVENT_NAMES.guest_sentiment_sampled, { guest_id: 'g1', sentiment_score: 1 })]
+    const divs = kinds(detectSelfReportDivergence(events, recorder), 'guest_sentiment')
+    expect(divs).toHaveLength(1)
+    expect(divs[0]?.kind).toBe('field_mismatch')
+    expect(divs[0]?.field).toBe('sentiment_score')
+    expect(checkIntegritySelfReportDivergence(events, recorder).passed).toBe(false)
+  })
+
+  it('VETOES a FORGED sentiment sample for a guest with no trusted observation (phantom-happy guest)', () => {
+    const emit = makeBuilder()
+    const recorder = new TrustedRecorder()
+    const events = [emit(EVENT_NAMES.guest_sentiment_sampled, { guest_id: 'g_phantom', sentiment_score: 1 })]
+    const divs = kinds(detectSelfReportDivergence(events, recorder), 'guest_sentiment')
+    expect(divs[0]?.kind).toBe('forged_effect')
+  })
+
+  it('VETOES a SUPPRESSED sample (dropping an unhappy guest, which would raise the mean)', () => {
+    const recorder = new TrustedRecorder()
+    recorder.recordSentimentObservation({ guest_id: 'g_unhappy', sentiment_score: 0.25 })
+    const divs = kinds(detectSelfReportDivergence([], recorder), 'guest_sentiment')
+    expect(divs[0]?.kind).toBe('suppressed_effect')
+  })
+
+  it('treats an ABSENT/non-numeric claimed score as a mismatch, not a skip (skipWhenClaimAbsent:false)', () => {
+    const emit = makeBuilder()
+    const recorder = new TrustedRecorder()
+    recorder.recordSentimentObservation({ guest_id: 'g1', sentiment_score: 0.75 })
+    const events = [emit(EVENT_NAMES.guest_sentiment_sampled, { guest_id: 'g1' })] // no sentiment_score
+    const divs = kinds(detectSelfReportDivergence(events, recorder), 'guest_sentiment')
+    expect(divs[0]?.kind).toBe('field_mismatch')
+    expect(divs[0]?.field).toBe('sentiment_score')
+  })
+})

@@ -11,6 +11,7 @@ import {
   COUPLE_SESSION_REPORT_EVENT_NAMES,
   INTEGRATION_REPORT_EVENT_NAMES,
   RSVP_RECEIVED_REPORT_EVENT_NAMES,
+  SENTIMENT_REPORT_EVENT_NAMES,
 } from './report_event_names'
 
 /**
@@ -38,7 +39,7 @@ import {
 
 export interface SelfReportDivergence {
   readonly kind: 'forged_effect' | 'field_mismatch' | 'suppressed_effect'
-  readonly effect_kind: 'commitment' | 'integration' | 'rsvp_resolution' | 'couple_session'
+  readonly effect_kind: 'commitment' | 'integration' | 'rsvp_resolution' | 'couple_session' | 'guest_sentiment'
   readonly effect_id: string
   readonly field: string | null
   readonly claimed: unknown
@@ -390,6 +391,81 @@ function detectCoupleSessionDivergences(
 }
 
 /**
+ * PHASE 6 — reconcile the product's claimed per-guest SENTIMENT samples against the trusted sentiment
+ * record. Every `guest.sentiment.sampled` is a claim the scorer MEANS into `guest_sentiment_score` (half
+ * of guest_experience). The trusted record (Stage B) holds the honest score for EVERY guest. Keyed on
+ * guest_id. forged: a claimed sample for a guest the trusted record never observed (a phantom-happy
+ * guest); field_mismatch: an inflated/wrong sentiment_score (`skipWhenClaimAbsent:false` — an
+ * absent/non-numeric score against a trusted value is a mismatch, not a skip); suppressed: a trusted
+ * observation the product never reported — which would raise the mean over the surviving samples, so the
+ * drop-the-unhappy-guest attack is a veto, not a free metric lift.
+ */
+function detectSentimentDivergences(
+  productEvents: readonly EventEnvelope[],
+  recorder: TrustedRecorder,
+): SelfReportDivergence[] {
+  const divergences: SelfReportDivergence[] = []
+  const claimedGuestIds = new Set<string>()
+
+  for (const event of productEvents.filter((e) => SENTIMENT_REPORT_EVENT_NAMES.has(e.event_name))) {
+    const payload = asRecord(event)
+    const guestId = readString(payload, 'guest_id')
+    if (guestId === null) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'guest_sentiment',
+        effect_id: event.event_id,
+        field: 'guest_id',
+        claimed: null,
+        trusted: null,
+        detail: 'product reported a sentiment sample with no guest_id',
+      })
+      continue
+    }
+    claimedGuestIds.add(guestId)
+    const trusted = recorder.sentimentObservation(guestId)
+    if (trusted === undefined) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'guest_sentiment',
+        effect_id: guestId,
+        field: null,
+        claimed: 'sentiment sampled',
+        trusted: 'no sentiment observed for this guest',
+        detail: `product reports a sentiment sample for guest ${guestId}, but the trusted record observed none`,
+      })
+      continue
+    }
+    divergences.push(
+      ...fieldDivergences('guest_sentiment', guestId, [
+        {
+          field: 'sentiment_score',
+          claimed: readNumber(payload, 'sentiment_score'),
+          trusted: trusted.sentiment_score,
+          skipWhenClaimAbsent: false,
+        },
+      ]),
+    )
+  }
+
+  for (const trusted of recorder.allSentimentObservations()) {
+    if (!claimedGuestIds.has(trusted.guest_id)) {
+      divergences.push({
+        kind: 'suppressed_effect',
+        effect_kind: 'guest_sentiment',
+        effect_id: trusted.guest_id,
+        field: null,
+        claimed: 'no event emitted',
+        trusted: `guest sentiment observed at ${trusted.sentiment_score}`,
+        detail: `trusted record observed a sentiment for guest ${trusted.guest_id}, but the product emitted no sample`,
+      })
+    }
+  }
+
+  return divergences
+}
+
+/**
  * Find every divergence between the product's self-reported events and the trusted record.
  * Pure function of (product events, trusted recorder).
  */
@@ -402,6 +478,7 @@ export function detectSelfReportDivergence(
     ...detectIntegrationDivergences(productEvents, recorder),
     ...detectRsvpOutcomeDivergences(productEvents, recorder),
     ...detectCoupleSessionDivergences(productEvents, recorder),
+    ...detectSentimentDivergences(productEvents, recorder),
   ]
 }
 
