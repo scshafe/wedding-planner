@@ -246,12 +246,11 @@ boundary), wolf (stats/aggregation), rigorous-architect (design), and testineer 
   `loop-orchestrator/.../promotion_gate.ts`); the candidates are tier-1 anyway, so INTEGRITY is the sole
   stopper here and in the full loop.
 
-- [ ] **Step 9 — ADR 0007 + memory + handoff.**
-  `docs/adr/0007-qa-accuracy-trusted-reconciliation.md` (the vacuity insight, the autonomy_threshold
-  tier-gating, the grader-vs-gate-input distinction, the "all computed inputs trusted-backed except
-  quality" milestone). New memory `[[qa-accuracy-trusted-reconciliation]]`; update
-  [[tier2-promotion-gate-is-load-bearing]] (autonomy_threshold now also gates Q&A escalation) and
-  `MEMORY.md`. Update `.claude/handoff.local.md`.
+- [x] **Step 9 — ADR 0007 + memory + handoff.**
+  DONE — `docs/adr/0007-qa-accuracy-trusted-reconciliation.md` (vacuity insight, autonomy_threshold
+  tier-gating, all-four reviews + their resolutions, the milestone). New memory
+  `[[qa-accuracy-trusted-reconciliation]]`; updated [[tier2-promotion-gate-is-load-bearing]] (Q&A
+  escalation) + `MEMORY.md`; rewrote `.claude/handoff.local.md`.
 
 ## Adversarial review gates (apply findings before ticking)
 

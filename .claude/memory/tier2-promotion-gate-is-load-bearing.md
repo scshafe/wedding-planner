@@ -44,3 +44,14 @@ autonomous search never emits it (stays tier-1), so the gate only fires for inje
 Its Stage-A wiring + forge-detection are Phase 4b. The schema now enforces `human_gate ⟹
 reviewed_by:human` as a contract invariant (an `allOf` branch), not just a runtime check. See
 docs/adr/0003.
+
+**Phase 7 extended what `autonomy_threshold` GOVERNS:** beyond escalating RSVPs to the couple, its
+*presence* now also gates **Q&A escalation** (`canEscalate = autonomy_threshold !== undefined`). A
+`requires_couple` guest question is handled correctly only by escalating it to the couple — a
+`commitment_autonomy` act — so a tier-1 genome honestly answers it WRONG (qa < 1.0). This is the
+genome-dependence that makes `qa_accuracy_rate`'s firewall non-vacuous
+([[qa-accuracy-trusted-reconciliation]]). Semantically coherent (autonomy_threshold = "how much the
+planner acts via the couple"), and it does NOT change this gate's mechanics — a Q&A-escalating genome is
+still tier-2 and still parks. NB: there is no modeled couple *cost* for a Q&A escalation yet (unlike RSVP
+escalation's couple session), which is why the Phase-7 keystone is tier-1-vs-tier-1, not vs a tier-2
+champion.
