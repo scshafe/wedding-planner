@@ -60,6 +60,12 @@ export {
   type PreScoreGateVerdict,
   type PromotionOutcome,
 } from './loop/offline_loop'
+export {
+  runAdvisoryLoop,
+  type AdvisoryLoopConfig,
+  type AdvisoryLoopResult,
+  type PromotableRecommendation,
+} from './loop/advisory_loop'
 
 // Strategy substrate (Phase 2): the champion (the standard a candidate must beat) + the
 // content-addressed registry that resolves a candidate's artifact_ref to its genome.

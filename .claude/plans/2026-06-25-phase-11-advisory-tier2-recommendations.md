@@ -82,25 +82,25 @@ property: the firewall path is identical to production.
 
 ## Steps
 
-- [ ] **Step 0 — Design reviews folded.** Architect + doddy (trust-boundary) lenses reviewed the design
+- [x] **Step 0 — Design reviews folded.** Architect + doddy (trust-boundary) lenses reviewed the design
   pre-build; both APPROVE-WITH-CHANGES. Findings folded into this plan: maxDry≥boxSize + certificate
   relabel (arch P1×2); isolated stores + separate proposer + park-can't-land keystone + advisory-park
   provenance (doddy P1-A/B/C, P2-A); positive guard rule + honest-tier-2 pre-score + (genome,champion,
   landing_key,delta) report + split (arch P2). _(This step is documentation-only; tick on commit.)_
 
-- [ ] **Step 1 — Advisory tier-2 proposer** (`loop-orchestrator/src/proposer/advisory_proposer.ts`).
+- [x] **Step 1 — Advisory tier-2 proposer** (`loop-orchestrator/src/proposer/advisory_proposer.ts`).
   A distinct class implementing the `Proposer` interface, enumerating tier-2 candidates (vary
   `autonomy_threshold ∈ {1,2,3}` over a fixed tier-1 base). Every emitted genome derives tier 2 and
   declares tier 2 (passes the pre-score gate). `isConverged()` true when its finite box is exhausted.
   **Guard test** (sibling to `search_proposer.test.ts`): (a) `SearchProposer` still emits only tier-1;
   (b) the advisory proposer emits only tier-2 — so it can never be the auto-loop's proposer.
 
-- [ ] **Step 2 — Advisory plan-side corpus** (`loop-orchestrator/tests/fixtures/advisory_corpus.ts` or
+- [x] **Step 2 — Advisory plan-side corpus** (`loop-orchestrator/tests/fixtures/advisory_corpus.ts` or
   a `src/` fixture if the wrapper needs it at runtime). Vision-sensitive scenarios reusing the
   Phase-10 keystone scenario builder (single approval-free vision-sensitive category + single immediate
   guest). Assert it is NOT referenced by the tier-1 search corpus.
 
-- [ ] **Step 3 — Advisory pass wrapper** (`loop-orchestrator/src/loop/advisory_loop.ts`). Wire
+- [x] **Step 3 — Advisory pass wrapper** (`loop-orchestrator/src/loop/advisory_loop.ts`). Wire
   `runGenomeOfflineLoop`/`runOfflineLoop` with: advisory proposer, advisory corpus, the positive guard
   set (Step "guard rule"), `approvals: []`, **isolated** champion/registry/ledger, and
   `maxDryIterations >= advisoryBoxSize`. Return `{ recommendations, frontierFullyExplored, summary }`.
