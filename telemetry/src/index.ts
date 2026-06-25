@@ -32,12 +32,14 @@ export {
   type PlanFinalizedPayload,
   type RsvpStatus,
   type CategoryBookingStatus,
+  type VisionAlignedPayload,
   readCoupleSessionEndedPayload,
   readGuestRsvpRequestedPayload,
   readGuestRsvpReceivedPayload,
   readGuestSentimentSampledPayload,
   readBudgetSnapshotPayload,
   readPlanFinalizedPayload,
+  readVisionAlignedPayload,
 } from './events/event_payload_readers'
 
 // Metrics
@@ -55,6 +57,7 @@ export {
   rsvpResolutionRate,
   qaAccuracyRate,
   categoryCompletenessRate,
+  visionMatchRate,
   guestSentimentScore,
   boundaryHoldRate,
   budgetVariancePct,

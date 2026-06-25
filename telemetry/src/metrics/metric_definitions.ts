@@ -9,6 +9,7 @@ import {
   readGuestRsvpRequestedPayload,
   readGuestSentimentSampledPayload,
   readPlanFinalizedPayload,
+  readVisionAlignedPayload,
 } from '../events/event_payload_readers'
 import { EVENT_NAMES, METRIC_CODES } from '../telemetry_constants'
 import { MetricEngine, type MetricComputation, type MetricFunction } from './metric_engine'
@@ -197,6 +198,35 @@ export const categoryCompletenessRate: MetricFunction = (events) => {
   })
 }
 
+/**
+ * vision_match_rate = mean `vision_match_score` over the CLAIMED `category.vision.aligned` stream — the
+ * single `quality` rubric backed offline (Phase 10). Denominator = claims with a valid `category_id`
+ * (CLAIMS-ONLY, exactly like `category_completeness_rate`/`qa_accuracy_rate`: dropping a low-aligned
+ * category to lift the mean is caught by the integrity gate's `suppressed_effect` arm, not a
+ * `∪ should-have-aligned` term). A claim with no `category_id` has no trusted match (the gate vetoes it
+ * as forged) so it is excluded rather than crashing scoring; a claim with a missing/invalid score is
+ * EXCLUDED from the mean (a fabricated number is never invented — the gate vetoes it separately via
+ * field_mismatch). Null when no vision alignments were claimed (honest-undefined, like the other rates) —
+ * which is the search corpus (no `vision_sensitive` categories), keeping `quality` null and the cube pins
+ * untouched. Feeds `planning_value.quality` as the only present rubric (comms_quality/intuitiveness stay
+ * absent — their judge is offline-STOP-gated).
+ */
+export const visionMatchRate: MetricFunction = (events) => {
+  const scores = events
+    .filter((event) => event.event_name === EVENT_NAMES.category_vision_aligned)
+    .map((event) => readVisionAlignedPayload(event))
+    .filter((c) => c.category_id !== null && c.vision_match_score !== null)
+    .map((c) => c.vision_match_score as number)
+  if (scores.length === 0) {
+    return computation(METRIC_CODES.vision_match_rate, null, { aligned: 0 })
+  }
+  const sum = scores.reduce((total, score) => total + score, 0)
+  return computation(METRIC_CODES.vision_match_rate, sum / scores.length, {
+    aligned: scores.length,
+    denominator: scores.length,
+  })
+}
+
 /** boundary_hold_rate = comms.boundary.held ÷ comms.boundary.tested. */
 export const boundaryHoldRate: MetricFunction = (events) => {
   const held = countByName(events, EVENT_NAMES.comms_boundary_held)
@@ -235,6 +265,7 @@ export const METRIC_DEFINITIONS: ReadonlyMap<string, MetricFunction> = new Map<s
   [METRIC_CODES.rsvp_resolution_rate, rsvpResolutionRate],
   [METRIC_CODES.qa_accuracy_rate, qaAccuracyRate],
   [METRIC_CODES.category_completeness_rate, categoryCompletenessRate],
+  [METRIC_CODES.vision_match_rate, visionMatchRate],
   [METRIC_CODES.guest_sentiment_score, guestSentimentScore],
   [METRIC_CODES.boundary_hold_rate, boundaryHoldRate],
   [METRIC_CODES.budget_variance_pct, budgetVariancePct],

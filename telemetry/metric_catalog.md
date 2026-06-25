@@ -35,6 +35,7 @@ Gates (`../eval-harness/rubrics/gate_checks.md`) compute from these same events;
 |---|---|---|---|---|---|
 | `budget_variance_pct` | (`plan.finalized`.total_spend_cents − budget_cents) ÷ budget_cents × 100 | % · lte | budget_management | eval+telem | quality_per_dollar_index |
 | `category_completeness_rate` | count(`category.booked` booking_status=booked³) ÷ count(`category.booked`) | ratio 0–1 · gte | per-category | eval (+telem audit) | — (keystone-only; don't suppress deferred) |
+| `vision_match_rate` | mean(`category.vision.aligned`.vision_match_score⁴) | ratio 0–1 · gte | per-category | eval | couple_active_minutes (don't win by deciding badly-but-fast) |
 | `quality_per_dollar_index` | planning_value.quality ÷ (final_spend_cents ÷ baseline_spend_cents) | index · max | budget_management | eval | guards budget_variance (stops win-by-buying-nothing) |
 | `dietary_constraint_satisfaction_rate` | count(`constraint.evaluated` type∈{dietary,allergy} & satisfied) ÷ count(type∈{dietary,allergy}) | ratio 0–1 · gte | catering/seating | eval | — (companion to CONSTRAINT gate) |
 | `cultural_constraint_satisfaction_rate` | count(`constraint.evaluated` type∈{cultural,religious} & satisfied) ÷ count(type∈{cultural,religious}) | ratio 0–1 · gte | venue/orchestration | eval | — (companion to CONSTRAINT gate) |
@@ -50,6 +51,20 @@ commitment-authority); a tier-1 genome honestly `deferred`s it — so category-b
 "before their lead-time deadline" clause awaits a booking-timing model and is out of scope; today
 completeness is the booked/deferred status alone, reconciled field-by-field against the trusted record.
 This phase wires NO `BUDGET.CEILING`/`vision_match` relationship (the prior column overclaimed).
+
+⁴ **`vision_match_rate` is the `quality` rubric backed offline** (Phase 10) — the FIRST `planning_value.quality`
+input. It is the mean `vision_match_score ∈ [0,1]` over the CLAIMED `category.vision.aligned` stream (claims
+with a valid `category_id`; CLAIMS-ONLY like `category_completeness_rate`, so suppressing a low-aligned
+category is caught by the integrity gate's `suppressed_effect` arm, not a `∪ should-have-aligned` term).
+`vision_match` is a DETERMINISTIC alignment of a booked, vision-sensitive category's selection to the
+couple's ground-truth vision — **NOT an LLM judge** (offline-first). The honest score is genome-dependent: a
+tier-2 genome can CONSULT the couple (a `vision_consult` couple session — couple attention, the SAME tier-2
+commitment-authority surface) to ALIGN the selection (1.0); a tier-1 genome cannot, scoring a DEFAULT (0.5).
+So vision-sensitive scenarios are **keystone-only**, never in the search corpus (the metric is `null` there,
+`quality` stays `null`). `quality` = mean of the PRESENT rubrics — today just `vision_match`;
+`comms_quality`/`intuitiveness` stay absent (their judge is offline-STOP-gated, ADR 0007), so the 0.40
+`quality` weight rides this single rubric while thin — a reason NOT to move vision scenarios into the search
+corpus. The cost side rides Phase 9's per-`(reason, about_id)` couple-session reconciliation unchanged.
 
 `quality_per_dollar_index`'s `baseline_spend_cents` is defined per source: **offline** = the
 golden-scenario spend for a comparable cohort; **online** = the **control arm's cohort-matched

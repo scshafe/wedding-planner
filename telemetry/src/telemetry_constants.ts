@@ -22,6 +22,7 @@ export const EVENT_NAMES = {
   // Planning / outcome family
   category_shortlisted: 'category.shortlisted',
   category_booked: 'category.booked',
+  category_vision_aligned: 'category.vision.aligned',
   constraint_evaluated: 'constraint.evaluated',
   budget_snapshot: 'budget.snapshot',
   plan_finalized: 'plan.finalized',
@@ -73,6 +74,9 @@ export const METRIC_CODES = {
   // Outcome quality within budget
   budget_variance_pct: 'budget_variance_pct',
   category_completeness_rate: 'category_completeness_rate',
+  // The `quality` rubric backed offline (Phase 10): alignment of a booked, vision-sensitive category's
+  // selection to the couple's ground-truth vision. Feeds planning_value.quality (the only present rubric).
+  vision_match_rate: 'vision_match_rate',
   quality_per_dollar_index: 'quality_per_dollar_index',
   dietary_constraint_satisfaction_rate: 'dietary_constraint_satisfaction_rate',
   cultural_constraint_satisfaction_rate: 'cultural_constraint_satisfaction_rate',

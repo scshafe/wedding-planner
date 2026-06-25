@@ -28,7 +28,8 @@ Completeness, budget, constraint satisfaction.
 | event_name | actor | $def / key payload | feeds |
 |---|---|---|---|
 | `category.shortlisted` | ai | `{vendor_category, option_count}` | (process visibility) |
-| `category.booked` | ai | `{vendor_category, commitment_id, lead_time_days}` | category_completeness_rate |
+| `category.booked` | ai | `{category_id, category, booking_status}` | category_completeness_rate |
+| `category.vision.aligned` | ai | `{category_id, vision_match_score}` | vision_match_rate (→ planning_value.quality) |
 | `constraint.evaluated` | system | `constraint_evaluated_payload` | CONSTRAINT.HARD_VIOLATED, dietary_/cultural_constraint_satisfaction_rate |
 | `budget.snapshot` | system | `{committed_cents, forecast_cents, budget_cents}` | budget_variance_pct, BUDGET.CEILING_EXCEEDED |
 | `plan.finalized` | system | `{booked_categories[], total_spend_cents, weather_contingency}` | category_completeness_rate, golden_expected_outcomes, quality_per_dollar_index |

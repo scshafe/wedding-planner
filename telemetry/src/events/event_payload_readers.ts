@@ -48,21 +48,28 @@ function requireNumber(event: EventEnvelope, field: string): number {
  * couple session on, alongside its `about_id` (Phase 9). The couple-attention cost (the North-Star
  * denominator) is incurred whenever the planner ESCALATES to the couple, which it does for three
  * reasons: resolving an RSVP (`rsvp_escalation`, Phase 4b), handling a `requires_couple` question
- * (`qa_escalation`, Phase 7's deferred cost), or securing approval on a `requires_couple_approval`
- * booking (`booking_approval`, Phase 8's deferred cost). Reconciling per `(reason, about_id)` lets one
- * guest carry more than one escalation reason without the keys colliding (the per-guest key did).
+ * (`qa_escalation`, Phase 7's deferred cost), securing approval on a `requires_couple_approval`
+ * booking (`booking_approval`, Phase 8's deferred cost), or consulting the couple to ALIGN a
+ * vision-sensitive booked category's selection (`vision_consult`, Phase 10 — the cost of raising
+ * `vision_match`). Reconciling per `(reason, about_id)` lets one category carry more than one escalation
+ * reason without the keys colliding (a category can be BOTH booking_approval AND vision_consult).
  *
  * NOTE the metric reader below deliberately does NOT read this — `couple_active_minutes_total` SUMS
  * `active_seconds` across every session regardless of reason. `session_reason`/`about_id` are
  * integrity-JOIN fields the gate reads via its own raw reads (the reader-seam discipline), never the
  * metric. Keep this reader at session_id + active_seconds so it cannot throw on a reason-bearing event.
  */
-export type CoupleSessionReason = 'rsvp_escalation' | 'qa_escalation' | 'booking_approval'
+export type CoupleSessionReason =
+  | 'rsvp_escalation'
+  | 'qa_escalation'
+  | 'booking_approval'
+  | 'vision_consult'
 
 export const COUPLE_SESSION_REASONS: ReadonlySet<string> = new Set([
   'rsvp_escalation',
   'qa_escalation',
   'booking_approval',
+  'vision_consult',
 ])
 
 export interface CoupleSessionEndedPayload {
@@ -206,6 +213,36 @@ export function readCategoryBookedPayload(event: EventEnvelope): CategoryBookedP
       typeof status === 'string' && CATEGORY_BOOKING_STATUSES.has(status)
         ? (status as CategoryBookingStatus)
         : null,
+  }
+}
+
+// --- category.vision.aligned ------------------------------------------------------------------
+
+/**
+ * The product's claimed vision alignment for one booked, vision-sensitive category (Phase 10) — the
+ * `vision_match_score ∈ [0,1]` the `vision_match_rate` metric means over (the only present `quality`
+ * rubric). FULLY TOLERANT like `readCategoryBookedPayload`: an adversarial/malformed claim scores
+ * CONSERVATIVELY — a non-numeric, NaN, or out-of-`[0,1]` score reads as `null` (excluded from the mean,
+ * never a fabricated number) and an id-less claim has no trusted join key (excluded) — and is VETOED by
+ * the integrity gate, NEVER crashing scoring (which runs metrics even after a gate fails; this is why it
+ * does NOT use `requireNumber`, which throws). The integrity gate keeps its OWN raw read of these fields
+ * (the reader-seam discipline). `vision_match_score` is the quality axis; it is orthogonal to
+ * `category.booked`'s `booking_status` (the completeness axis) — a separate event, separate denominator.
+ */
+export interface VisionAlignedPayload {
+  readonly category_id: string | null
+  readonly vision_match_score: number | null
+}
+
+export function readVisionAlignedPayload(event: EventEnvelope): VisionAlignedPayload {
+  const record = payloadRecord(event)
+  const categoryId = record.category_id
+  const score = record.vision_match_score
+  const validScore =
+    typeof score === 'number' && !Number.isNaN(score) && score >= 0 && score <= 1
+  return {
+    category_id: typeof categoryId === 'string' ? categoryId : null,
+    vision_match_score: validScore ? (score as number) : null,
   }
 }
 
