@@ -216,7 +216,12 @@ boundary), wolf (stats/aggregation), rigorous-architect (design), and testineer 
   question-bearing YAML personas are loaded by `corpus_loader` but used in NO test, so no pipeline run
   emits qa events. Cube/matrix pins unchanged (30/30); full suite 293 green.
 
-- [ ] **Step 8 — THE keystone: a Q&A forge does not pay (a tier-1 candidate forges qa it cannot honestly achieve).**
+- [x] **Step 8 — THE keystone: a Q&A forge does not pay (a tier-1 candidate forges qa it cannot honestly achieve).**
+  DONE — `qa_forge_keystone.test.ts`, tier-1 champion (cadence 1) vs tier-1 candidate (cadence 2), corpus
+  = immediate g_couple(requires_couple) + immediate g_ai(ai), honest qa 0.5 both. Four forge arms
+  (escalate-claim, relabel, suppress, duplicate) each strictly raise candidate qa above champion (RED) →
+  aggregate improves, so INTEGRITY (condition 2) is the SOLE rejecter (GREEN, accepted=false). Companion:
+  honest candidate gate-clean, ties, doesn't win. Empty guard set. 298 green.
   New `loop-orchestrator/tests/loop/qa_forge_keystone.test.ts`. **REVISED per wolf's P0:** the original
   tier-1-candidate-vs-tier-2-champion framing was VACUOUS — the QA `escalated` action carries no modeled
   couple cost, so a tier-1 forge only TIES a tier-2 champion (both ratio 1.0 on an immediate
