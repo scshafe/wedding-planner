@@ -1,5 +1,5 @@
 import { ManualClock, SequentialIdGenerator } from '@wedding-planner/shared'
-import { createMetricEngine, METRIC_CODES } from '@wedding-planner/telemetry'
+import { buildEvent, createMetricEngine, EVENT_NAMES, METRIC_CODES } from '@wedding-planner/telemetry'
 import { describe, expect, it } from 'vitest'
 
 import { buildSampleEventStream } from '../fixtures/sample_event_stream'
@@ -96,5 +96,27 @@ describe('metric engine — scoping and edge cases', () => {
     expect(() => engine.compute('not_a_metric', freshStream(), WEDDING)).toThrowError(
       /TELEMETRY.METRIC_NOT_REGISTERED|not_a_metric/,
     )
+  })
+
+  it('does NOT crash on a malformed active_seconds — it contributes 0 (Phase 10, doddy P2)', () => {
+    // offline_scorer runs metrics UNCONDITIONALLY, even on a stream the integrity gate vetoes. A
+    // couple.session.ended with absent/NaN active_seconds must degrade the cost metric conservatively
+    // (0-minute contribution), never throw and crash scoring of the run. The gate still vetoes the
+    // malformed session via its own raw read (skipWhenClaimAbsent:false) — this only removes the DoS.
+    const clock = new ManualClock(START)
+    const ids = new SequentialIdGenerator('seedMalformed')
+    const session = (payload: Record<string, unknown>): ReturnType<typeof buildEvent> =>
+      buildEvent(clock, ids, {
+        event_name: EVENT_NAMES.couple_session_ended,
+        trace_id: 't', wedding_id: WEDDING, phase: 'booking', capability: 'orchestration',
+        actor: 'couple', source: 'eval', payload, meta: { schema_version: '1.0.0' },
+      })
+    const stream = [
+      session({ session_id: 'cs_ok', active_seconds: 600 }),
+      session({ session_id: 'cs_absent' }), // no active_seconds → 0
+      session({ session_id: 'cs_nan', active_seconds: Number.NaN }), // NaN → 0
+    ]
+    expect(() => engine.compute(METRIC_CODES.couple_active_minutes_total, stream, WEDDING)).not.toThrow()
+    expect(engine.compute(METRIC_CODES.couple_active_minutes_total, stream, WEDDING).value).toBe(10) // 600s only
   })
 })

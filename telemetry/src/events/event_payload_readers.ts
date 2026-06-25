@@ -58,6 +58,16 @@ function requireNumber(event: EventEnvelope, field: string): number {
  * `active_seconds` across every session regardless of reason. `session_reason`/`about_id` are
  * integrity-JOIN fields the gate reads via its own raw reads (the reader-seam discipline), never the
  * metric. Keep this reader at session_id + active_seconds so it cannot throw on a reason-bearing event.
+ *
+ * `active_seconds` is read TOLERANTLY (null on absent/non-numeric/NaN), NOT via `requireNumber` (Phase 10,
+ * doddy P2): the metric runs UNCONDITIONALLY even on a stream the integrity gate has already vetoed
+ * (`offline_scorer` computes metrics regardless of gate verdict), so a malformed `active_seconds` on a
+ * `couple.session.ended` must degrade the metric CONSERVATIVELY (the session contributes 0 minutes) rather
+ * than throw and crash scoring of the whole run. This is NOT a cost-shave hole: the integrity gate keys
+ * `active_seconds` with `skipWhenClaimAbsent:false` via its OWN raw read, so an absent/shaved value is a
+ * VETO (ratio zeroed) — the tolerant read only removes the DoS, it never lets a malformed cost pass. Phase
+ * 10 widened the trigger surface (the `vision_consult` reason adds a 4th session emit site), so the fix
+ * lands here; it corrects the Phase-9 note that wrongly claimed the veto runs BEFORE the metric.
  */
 export type CoupleSessionReason =
   | 'rsvp_escalation'
@@ -74,13 +84,15 @@ export const COUPLE_SESSION_REASONS: ReadonlySet<string> = new Set([
 
 export interface CoupleSessionEndedPayload {
   readonly session_id: string
-  readonly active_seconds: number
+  /** Tolerant: null on an absent/non-numeric/NaN value (the metric treats null as a 0-minute contribution). */
+  readonly active_seconds: number | null
 }
 
 export function readCoupleSessionEndedPayload(event: EventEnvelope): CoupleSessionEndedPayload {
+  const seconds = payloadRecord(event).active_seconds
   return {
     session_id: requireString(event, 'session_id'),
-    active_seconds: requireNumber(event, 'active_seconds'),
+    active_seconds: typeof seconds === 'number' && !Number.isNaN(seconds) ? seconds : null,
   }
 }
 

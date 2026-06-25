@@ -63,7 +63,9 @@ function rate(metricCode: string, numerator: number, denominator: number): Metri
 export const coupleActiveMinutesTotal: MetricFunction = (events) => {
   const sessions = events.filter((event) => event.event_name === EVENT_NAMES.couple_session_ended)
   const totalSeconds = sessions.reduce(
-    (sum, event) => sum + readCoupleSessionEndedPayload(event).active_seconds,
+    // A malformed/absent active_seconds reads as null (tolerant) → 0-minute contribution, never a throw
+    // (the integrity gate vetoes the malformed session via its own raw read; this only avoids a scoring crash).
+    (sum, event) => sum + (readCoupleSessionEndedPayload(event).active_seconds ?? 0),
     0,
   )
   return {
