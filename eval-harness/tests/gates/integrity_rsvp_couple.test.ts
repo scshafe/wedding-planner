@@ -187,6 +187,22 @@ describe('integrity — sentiment reconciliation (the claimed guest_experience n
     expect(divs[0]?.kind).toBe('suppressed_effect')
   })
 
+  it('VETOES a DUPLICATE sample for an already-observed guest (a mean re-weighting forge)', () => {
+    // The metric means over EVERY emitted sample; re-emitting an honest HIGH score lifts the mean while
+    // matching the trusted value on the field diff. The trusted record observed ONE sentiment per guest.
+    const emit = makeBuilder()
+    const recorder = new TrustedRecorder()
+    recorder.recordSentimentObservation({ guest_id: 'g_happy', sentiment_score: 1 })
+    const events = [
+      emit(EVENT_NAMES.guest_sentiment_sampled, { guest_id: 'g_happy', sentiment_score: 1 }),
+      emit(EVENT_NAMES.guest_sentiment_sampled, { guest_id: 'g_happy', sentiment_score: 1 }), // duplicate
+    ]
+    const divs = kinds(detectSelfReportDivergence(events, recorder), 'guest_sentiment')
+    expect(divs).toHaveLength(1)
+    expect(divs[0]?.kind).toBe('forged_effect')
+    expect(checkIntegritySelfReportDivergence(events, recorder).passed).toBe(false)
+  })
+
   it('treats an ABSENT/non-numeric claimed score as a mismatch, not a skip (skipWhenClaimAbsent:false)', () => {
     const emit = makeBuilder()
     const recorder = new TrustedRecorder()

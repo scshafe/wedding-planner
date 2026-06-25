@@ -127,6 +127,27 @@ describe('keystone — a SUPPRESSED unhappy sample does not pay (dropping it rai
   })
 })
 
+describe('keystone — a DUPLICATE happy sample does not pay (re-weighting the mean over duplicates)', () => {
+  it('re-emits the immediate guest’s 1.0 sample to lift its OWN mean: up vs honest, but VETOED + rejected', () => {
+    // A duplicate re-weights the mean toward the high sample (it cannot exceed 1.0), so its RED is
+    // measured against the candidate's HONEST claim — the re-weighting the gate must neutralize.
+    const honestCand = candValue(score(rsvpCadencePlanner), METRIC_CODES.guest_sentiment_score)
+    const r = score(
+      liar((events) => {
+        const dup = events.find(
+          (e) =>
+            e.event_name === EVENT_NAMES.guest_sentiment_sampled &&
+            (e.payload as { guest_id: string }).guest_id === 'g_immediate',
+        )
+        return dup === undefined ? events : [...events, dup]
+      }),
+    )
+    expect(candValue(r, METRIC_CODES.guest_sentiment_score)).toBeGreaterThan(honestCand) // RED: the duplicate re-weighted the mean upward
+    expect(integrityFailed(r)).toBe(true) // GREEN: a 2nd sample for an already-observed guest is a forge
+    expect(r.decision.accepted).toBe(false)
+  })
+})
+
 describe('keystone — the HONEST candidate is gate-CLEAN (the veto targets the lie, not the model)', () => {
   it('honest sentiment claims match the trusted record; the candidate simply does not win', () => {
     const r = score(rsvpCadencePlanner)

@@ -399,6 +399,13 @@ function detectCoupleSessionDivergences(
  * absent/non-numeric score against a trusted value is a mismatch, not a skip); suppressed: a trusted
  * observation the product never reported — which would raise the mean over the surviving samples, so the
  * drop-the-unhappy-guest attack is a veto, not a free metric lift.
+ *
+ * CARDINALITY (doddy/wolf Phase-6 review): `guest_sentiment_score` is a mean over EVERY emitted sample
+ * with no dedup, but the trusted record observes exactly ONE sentiment per guest. So a DUPLICATE sample
+ * for an already-reported guest — re-emitting an honest HIGH score to re-weight the mean upward — would
+ * pass the field diff (it equals the trusted value) and evade forged/suppressed (the guest is observed
+ * and claimed). It is caught here as a forged_effect: the trusted record never observed a second sentiment
+ * for that guest. The honest planner emits exactly one sample per guest, so this never false-positives.
  */
 function detectSentimentDivergences(
   productEvents: readonly EventEnvelope[],
@@ -419,6 +426,18 @@ function detectSentimentDivergences(
         claimed: null,
         trusted: null,
         detail: 'product reported a sentiment sample with no guest_id',
+      })
+      continue
+    }
+    if (claimedGuestIds.has(guestId)) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'guest_sentiment',
+        effect_id: guestId,
+        field: null,
+        claimed: 'a second sentiment sample',
+        trusted: 'only one sentiment observed for this guest',
+        detail: `product reported a duplicate sentiment sample for guest ${guestId}; the trusted record observed exactly one (a mean over duplicates is a re-weighting forge)`,
       })
       continue
     }
