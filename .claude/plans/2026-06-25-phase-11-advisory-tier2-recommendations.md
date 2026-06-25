@@ -107,7 +107,7 @@ property: the firewall path is identical to production.
   The recommendation record = `{ genome, advisory_champion, landing_key, north_star_delta, provenance:
   'advisory' }`, ranked by `north_star_delta` desc. Unit-test: honest tier-2 candidates appear, ranked.
 
-- [ ] **Step 4 — The keystone** (`loop-orchestrator/tests/loop/advisory_recommendation_keystone.test.ts`).
+- [x] **Step 4 — The keystone** (`loop-orchestrator/tests/loop/advisory_recommendation_keystone.test.ts`).
   The load-bearing regression test (doddy P1-C): run the advisory pass and assert
   (a) `summary.promoted === 0`, `summary.parked > 0`; (b) the advisory champion hash is unchanged from
   seed AND a separately-constructed real champion store is untouched; (c) a **forged** advisory

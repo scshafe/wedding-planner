@@ -1,6 +1,7 @@
 import {
   type GuardSpec,
   makePlannerSimulator,
+  type Planner,
   type ScenarioDefinition,
   scoreCandidateOffline,
 } from '@wedding-planner/eval-harness'
@@ -80,6 +81,13 @@ export interface AdvisoryLoopConfig {
   readonly baseTimestamp: string
   readonly clock: ManualClock
   readonly ids: SequentialIdGenerator
+  /**
+   * Optional planner override (defaults to the honest simulator planner). It does NOT weaken the
+   * firewall — the integrity gate reconciles the planner's CLAIMS against the trusted record regardless,
+   * so a dishonest planner's forged/suppressed claims are vetoed and excluded from the recommendation
+   * set. The keystone uses this seam to prove that exclusion through the real runAdvisoryLoop path.
+   */
+  readonly planner?: Planner
 }
 
 /**
@@ -152,6 +160,7 @@ export function runAdvisoryLoop(config: AdvisoryLoopConfig): AdvisoryLoopResult 
         candidateGenome,
         candidateArtifactRef: candidate.change.artifact_ref,
         baseTimestamp: config.baseTimestamp,
+        ...(config.planner === undefined ? {} : { planner: config.planner }),
       })
       const result = scoreCandidateOffline({
         corpus: config.corpus,
