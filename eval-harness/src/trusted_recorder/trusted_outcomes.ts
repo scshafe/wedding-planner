@@ -10,7 +10,11 @@
  * related: trusted_recorder.ts, gates/integrity_gate.ts.
  */
 
-import { type QaAction, type QaAnswerableBy } from '@wedding-planner/telemetry'
+import {
+  type CategoryBookingStatus,
+  type QaAction,
+  type QaAnswerableBy,
+} from '@wedding-planner/telemetry'
 
 /** What the harness's sandbox observed for one commitment (money/binding) effect. */
 export interface TrustedCommitmentRecord {
@@ -159,6 +163,36 @@ export interface TrustedQaOutcomeRecord {
 }
 
 export type RecordQaOutcomeInput = TrustedQaOutcomeRecord
+
+/**
+ * What the harness independently observed about the product's handling of ONE required category (Phase 8)
+ * — the FIRST plan-side trusted record (every prior record is a guest-side effect). The product claims its
+ * booking via `category.booked` (booking_status); the scorer derives `category_completeness_rate` over the
+ * CLAIMED stream (complete = booking_status==='booked'). This is the trusted backing — Stage B re-derives,
+ * from the scenario's `required_categories` ground truth + the trusted genome policy ALONE, the honest
+ * `booking_status` (via `honestCategoryStatus`), never from the product's claim. One is recorded per
+ * required category, keyed by `category_id`.
+ *
+ * The honest status is GENOME-DEPENDENT: a `requires_couple_approval` category is `booked` only by a
+ * genome that can escalate (the tier-2 `autonomy_threshold` — the SAME commitment_autonomy surface Q&A
+ * escalation uses); a tier-1 genome honestly `deferred`s it. This is what makes the firewall load-bearing:
+ * a tier-1 candidate that CLAIMS `booked` (completeness up) without the couple commitment cost diverges
+ * from this trusted `deferred` → field_mismatch → veto. Only `booking_status` is field-diffed: the metric
+ * reads category_id (join key) + booking_status, and never `requires_couple_approval`, so there is no
+ * relabel surface (unlike Q&A, whose metric reads `answerable_by`). `category` is provenance only.
+ *
+ * Like sentiment (Phase 6) and Q&A (Phase 7), this backs a GRADER input (the North-Star numerator), not a
+ * VETO-GATE input — it extends the firewall without changing the integrity-gate completeness invariant.
+ */
+export interface TrustedCategoryBookingRecord {
+  readonly category_id: string
+  /** The category this booking is for (provenance; the metric does not read it). */
+  readonly category: string
+  /** The honest status under the trusted genome policy; the gate diffs the claimed booking_status against this. */
+  readonly booking_status: CategoryBookingStatus
+}
+
+export type RecordCategoryBookingInput = TrustedCategoryBookingRecord
 
 /** Grader-side determination of whether one hard constraint is satisfied by the final plan. */
 export interface TrustedConstraintDetermination {

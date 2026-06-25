@@ -80,6 +80,23 @@ describe('trusted recorder — authorship and immutability', () => {
     recorder.recordCommitment(input)
     expect(() => recorder.recordCommitment(input)).toThrowError(/DUPLICATE_EFFECT|append-only/)
   })
+
+  it('records and retrieves a category booking, keyed by category_id (Phase 8)', () => {
+    const recorder = new TrustedRecorder()
+    recorder.recordCategoryBooking({ category_id: 'cat_venue', category: 'venue', booking_status: 'booked' })
+    recorder.recordCategoryBooking({ category_id: 'cat_decor', category: 'decor', booking_status: 'deferred' })
+    expect(recorder.categoryBooking('cat_venue')?.booking_status).toBe('booked')
+    expect(recorder.categoryBooking('cat_decor')?.booking_status).toBe('deferred')
+    expect(recorder.categoryBooking('cat_missing')).toBeUndefined()
+    expect(recorder.allCategoryBookings()).toHaveLength(2)
+  })
+
+  it('rejects a duplicate category booking (append-only)', () => {
+    const recorder = new TrustedRecorder()
+    const input = { category_id: 'cat_venue', category: 'venue', booking_status: 'booked' as const }
+    recorder.recordCategoryBooking(input)
+    expect(() => recorder.recordCategoryBooking(input)).toThrowError(/DUPLICATE_EFFECT|append-only/)
+  })
 })
 
 describe('integrity boundary — gates read trusted, divergence is caught', () => {

@@ -2,6 +2,7 @@ import { deepFreeze } from '@wedding-planner/shared'
 
 import { EvalHarnessError } from '../eval_harness_error'
 import {
+  type RecordCategoryBookingInput,
   type RecordCommitmentInput,
   type RecordConstraintDeterminationInput,
   type RecordCoupleSessionInput,
@@ -10,6 +11,7 @@ import {
   type RecordQaOutcomeInput,
   type RecordRsvpOutcomeInput,
   type RecordSentimentObservationInput,
+  type TrustedCategoryBookingRecord,
   type TrustedCommitmentRecord,
   type TrustedConstraintDetermination,
   type TrustedCoupleSessionRecord,
@@ -68,6 +70,7 @@ export class TrustedRecorder {
   private readonly coupleSessionsByGuestId = new Map<string, TrustedCoupleSessionRecord>()
   private readonly sentimentObservationsByGuestId = new Map<string, TrustedSentimentObservationRecord>()
   private readonly qaOutcomesByCompositeKey = new Map<string, TrustedQaOutcomeRecord>()
+  private readonly categoryBookingsByCategoryId = new Map<string, TrustedCategoryBookingRecord>()
   private runningCommittedCents = 0
   private sealed = false
 
@@ -224,6 +227,35 @@ export class TrustedRecorder {
     const record = deepFreeze<TrustedQaOutcomeRecord>({ ...input })
     this.qaOutcomesByCompositeKey.set(key, record)
     return record
+  }
+
+  /**
+   * Record the harness-observed honest booking of one required category (Phase 8). Append-only, one per
+   * `category_id`. Feeds the integrity gate's category reconciliation (the trusted backing for the claimed
+   * `category_completeness_rate`). Throws DUPLICATE_EFFECT on a repeat for the same category_id.
+   */
+  recordCategoryBooking(input: RecordCategoryBookingInput): TrustedCategoryBookingRecord {
+    this.assertNotSealed('category_booking', input.category_id)
+    if (this.categoryBookingsByCategoryId.has(input.category_id)) {
+      throw new EvalHarnessError(
+        'TRUSTED_RECORDER.DUPLICATE_EFFECT',
+        `Category ${input.category_id} already has a recorded booking; the trusted record is append-only.`,
+        { context: { category_id: input.category_id } },
+      )
+    }
+    const record = deepFreeze<TrustedCategoryBookingRecord>({ ...input })
+    this.categoryBookingsByCategoryId.set(input.category_id, record)
+    return record
+  }
+
+  /** The trusted category booking for one category_id, or undefined if none was observed. */
+  categoryBooking(categoryId: string): TrustedCategoryBookingRecord | undefined {
+    return this.categoryBookingsByCategoryId.get(categoryId)
+  }
+
+  /** All trusted category bookings. Feeds the integrity category reconciliation. */
+  allCategoryBookings(): readonly TrustedCategoryBookingRecord[] {
+    return [...this.categoryBookingsByCategoryId.values()]
   }
 
   /** The trusted RSVP outcome for one guest, or undefined if the harness observed no resolution. */
