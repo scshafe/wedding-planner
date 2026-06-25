@@ -173,7 +173,12 @@ boundary), wolf (stats/aggregation), rigorous-architect (design), and testineer 
   (`metric_engine`/definitions): a mixed correct/incorrect stream yields the right rate; no answered
   events → null; an all-correct stream → 1.0.
 
-- [ ] **Step 4 — Stage A emits `guest.question.answered` per question.**
+- [x] **Step 4 — Stage A emits `guest.question.answered` per question.**
+  DONE — `rsvpCadencePlanner` emits one `guest.question.answered` per scripted question (always with
+  `answerable_by_expected`), `action_taken = honestQaAction(answerable_by, canEscalate)` where
+  `canEscalate = autonomy_threshold !== undefined`. Question-free guests emit nothing → cube/oracle
+  byte-unchanged (existing suite still green). `stage_a_qa.test.ts`: tier-2 escalates requires_couple
+  (qa 1.0), tier-1 answers it (qa 0.0), ai/refuse correct at both tiers, no questions → null. 279 green.
   In `rsvpCadencePlanner`, after the RSVP/sentiment loop, for each guest question emit
   `guest.question.answered` with `action_taken = honestQaAction(answerable_by, canEscalate)` and
   `answerable_by_expected = answerable_by`, where `canEscalate = genome.parameters.autonomy_threshold

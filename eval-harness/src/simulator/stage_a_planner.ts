@@ -12,6 +12,7 @@ import {
   COUPLE_SESSION_ACTIVE_SECONDS,
   effectiveNudges,
   escalationBudget,
+  honestQaAction,
   honestSentimentScore,
   isCoupleResolvable,
   NEVER,
@@ -125,6 +126,10 @@ export const rsvpCadencePlanner: Planner = ({ scenario, genome, clock, ids }) =>
   const cadence = genome.parameters.rsvp_reminder_cadence
   const spacing = genome.parameters.reminder_spacing
   const batching = genome.parameters.reminder_batching
+  // PHASE-7: a genome can escalate Q&A to the couple iff it carries the tier-2 autonomy_threshold knob
+  // (escalation consumes couple attention — the commitment_autonomy surface). A tier-1 genome answers a
+  // requires_couple question itself (honest-but-incorrect). Stage B re-derives this same capability.
+  const canEscalate = genome.parameters.autonomy_threshold !== undefined
   const events: EventEnvelope[] = []
 
   const emit = (
@@ -172,6 +177,20 @@ export const rsvpCadencePlanner: Planner = ({ scenario, genome, clock, ids }) =>
       guest_id: guestId,
       sentiment_score: outcome.sentimentScore,
     })
+
+    // PHASE-7: handle each scripted question. The honest action is `honestQaAction(answerable_by,
+    // canEscalate)` — correct for ai/refuse at any tier, but only ESCALATED (correct) for a
+    // requires_couple question when the genome can escalate; a tier-1 genome ANSWERS it (incorrect).
+    // `answerable_by_expected` is ALWAYS emitted — the integrity gate field-diffs it with
+    // skipWhenClaimAbsent:false, so an honest claim must carry it. Guests with no questions emit nothing.
+    for (const question of guest.questions) {
+      emit(EVENT_NAMES.guest_question_answered, 'guest_qa', 'ai', guestId, {
+        guest_id: guestId,
+        question_id: question.question_id,
+        answerable_by_expected: question.answerable_by,
+        action_taken: honestQaAction(question.answerable_by, canEscalate),
+      })
+    }
   }
 
   emitEscalations(genome, pending, emit)
