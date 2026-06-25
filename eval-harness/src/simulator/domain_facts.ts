@@ -224,6 +224,43 @@ export function honestCategoryStatus(
 }
 
 /**
+ * PHASE-10 the SHARED vision-alignment FACTS — the honest `vision_match_score` for one booked,
+ * vision-sensitive category, and whether aligning it consumes a couple session. Read by BOTH stages so
+ * Stage A's claimed `category.vision.aligned` and Stage B's trusted vision record agree on an honest run
+ * (the integrity gate field-diffs them with exact `===`, safe by shared computation as in Phases 6/7/8).
+ *
+ * `vision_match` is a DETERMINISTIC alignment of the booked selection to the couple's ground-truth vision —
+ * NOT an LLM judge (offline-first). Its honest value is GENOME-DEPENDENT and load-bearing via the EXISTING
+ * tier-2 `autonomy_threshold` (`canConsult === canEscalate`), the SAME commitment-authority surface
+ * category/Q&A escalation uses:
+ *   - a genome that can CONSULT the couple aligns the selection → `ALIGNED` (1.0), AND pays a
+ *     `vision_consult` couple session (the cost, `honestVisionConsultSession`);
+ *   - a tier-1 genome cannot consult → it books a `DEFAULT` selection → `DEFAULT` (0.5), no session.
+ *
+ * This is INDEPENDENT of completeness: the category is booked EITHER way (vision-sensitivity is orthogonal
+ * to `requires_couple_approval`), so `vision_match` is a genuine orthogonal value axis. It is what makes the
+ * value firewall load-bearing: a tier-1 candidate that CLAIMS `ALIGNED` it cannot earn (no consult) diverges
+ * from this trusted `DEFAULT` → field_mismatch → veto; a tier-2 candidate that aligns but SHAVES/SUPPRESSES
+ * the `vision_consult` session claims aligned quality at sub-tier-2 cost → caught by Phase 9's couple-session
+ * reconciliation. `canConsult` is derived from the TRUSTED genome on both sides, so honest runs never
+ * self-veto. These facts are applied ONLY for `vision_sensitive` booked categories (the emission guard), so
+ * a non-sensitive category is aligned by default at NO cost and emits no claim — preserving byte-identity on
+ * the search corpus (no `vision_sensitive` categories there → `vision_match_rate` null → `quality` null).
+ */
+export const ALIGNED_VISION_MATCH = 1
+export const DEFAULT_VISION_MATCH = 0.5
+
+/** The honest [0,1] vision alignment for a vision-sensitive booked category under the genome's consult policy. */
+export function honestVisionMatch(canConsult: boolean): number {
+  return canConsult ? ALIGNED_VISION_MATCH : DEFAULT_VISION_MATCH
+}
+
+/** Whether aligning a vision-sensitive booked category honestly consumes a `vision_consult` couple session. */
+export function honestVisionConsultSession(canConsult: boolean): boolean {
+  return canConsult
+}
+
+/**
  * The true couple attention (seconds) one escalate-to-couple consumes — the per-escalation cost feeding
  * couple_active_minutes_total → effort_cost. A flat per-escalation cost keeps the value/cost tradeoff
  * legible: more escalations resolve more guests but spend proportionally more couple attention. SHARED
