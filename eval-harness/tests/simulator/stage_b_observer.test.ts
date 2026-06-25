@@ -7,9 +7,20 @@ import {
   SequentialIdGenerator,
   type StrategyGenome,
 } from '@wedding-planner/shared'
-import { observeTrustedRecord, rsvpCadencePlanner } from '@wedding-planner/eval-harness'
+import {
+  checkIntegritySelfReportDivergence,
+  detectSelfReportDivergence,
+  observeTrustedRecord,
+  rsvpCadencePlanner,
+} from '@wedding-planner/eval-harness'
 
-import { makeGenome, makeGuest, makeScenario, makeTier2Genome } from './simulator_fixtures'
+import {
+  makeGenome,
+  makeGuest,
+  makeRequiredCategory,
+  makeScenario,
+  makeTier2Genome,
+} from './simulator_fixtures'
 
 /**
  * Phase-4b Step 2: Stage B independently authors the trusted RSVP-outcome + couple-session record from
@@ -218,4 +229,67 @@ describe('Stage B — trusted Q&A authoring agrees EXACTLY with honest Stage A a
     const recorder = observeTrustedRecord(makeScenario('s_qa_mixed', [guestQ('g_ai', 'ai_from_known_facts'), makeGuest('g_plain', 'immediate')]), makeGenome(2, 0))
     expect(recorder.allQaOutcomes().map((o) => o.guest_id)).toEqual(['g_ai'])
   })
+})
+
+// ---------------------------------------------------------------------------------------------------
+// PHASE 8 — Stage B authors a trusted category booking per required category; honest-run audit clean.
+// ---------------------------------------------------------------------------------------------------
+
+const REQUIRED_CATEGORIES = [
+  makeRequiredCategory('cat_inv', 'invitations', false), // approval-free → booked at any tier
+  makeRequiredCategory('cat_venue', 'venue', true), // approval-required → booked only at tier-2
+]
+
+/** Guests whose RSVP + sentiment resolve cleanly, so the only Phase-8-relevant effect is the category one. */
+const CATEGORY_AUDIT_GUESTS = [makeGuest('g_immediate', 'immediate', 'yes')]
+
+/** The category_id → booking_status the HONEST Stage A claims, for a genome over a scenario. */
+function honestClaimedCategories(
+  genome: StrategyGenome,
+  scenario: ReturnType<typeof makeScenario>,
+): Map<string, string> {
+  const events = rsvpCadencePlanner({
+    scenario,
+    genome,
+    clock: new ManualClock(BASE_TS),
+    ids: new SequentialIdGenerator('sb_cat'),
+  })
+  const byId = new Map<string, string>()
+  for (const e of events.filter((ev) => ev.event_name === EVENT_NAMES.category_booked)) {
+    const p = e.payload as { category_id: string; booking_status: string }
+    byId.set(p.category_id, p.booking_status)
+  }
+  return byId
+}
+
+describe('Stage B — trusted category authoring agrees with honest Stage A; honest run is INTEGRITY-clean (Phase 8)', () => {
+  for (const [label, genome] of [
+    ['tier-1', makeGenome(2, 0)],
+    ['tier-2', makeTier2Genome(2, 0, 1)],
+  ] as const) {
+    it(`trusted booking_status == honest claim for every required category (${label})`, () => {
+      const scenario = makeScenario('s_cat', CATEGORY_AUDIT_GUESTS, 'golden', REQUIRED_CATEGORIES)
+      const recorder = observeTrustedRecord(scenario, genome)
+      const trusted = new Map(recorder.allCategoryBookings().map((b) => [b.category_id, b.booking_status]))
+      expect(trusted).toEqual(honestClaimedCategories(genome, scenario))
+      expect(trusted.size).toBe(2)
+    })
+
+    it(`a full HONEST run over a category-bearing scenario produces ZERO integrity divergences (${label})`, () => {
+      // The honest-suite-clean audit: Stage A's claims and Stage B's trusted record agree across every
+      // effect kind (rsvp/sentiment/category), so the gate passes. Were the stages to diverge on the
+      // tier-1 deferred category, this would self-veto every honest tier-1 run.
+      const scenario = makeScenario('s_cat_audit', CATEGORY_AUDIT_GUESTS, 'golden', REQUIRED_CATEGORIES)
+      const recorder = observeTrustedRecord(scenario, genome)
+      const events = rsvpCadencePlanner({
+        scenario,
+        genome,
+        clock: new ManualClock(BASE_TS),
+        ids: new SequentialIdGenerator('sb_cat_audit'),
+      })
+      const categoryDivs = detectSelfReportDivergence(events, recorder).filter((d) => d.effect_kind === 'category_booking')
+      expect(categoryDivs).toEqual([])
+      expect(checkIntegritySelfReportDivergence(events, recorder).passed).toBe(true)
+    })
+  }
 })
