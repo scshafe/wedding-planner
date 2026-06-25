@@ -184,21 +184,21 @@ load-bearing claim (Q4) and byte-identity (Q5) are confirmed real. Findings fold
 - [x] **Step 0 — Architect-lens design review.** DONE — verdict APPROVE-WITH-CHANGES; all six findings
   (P0 corpus cardinality, P1 sole-cost-mover, P1 0.40-weight leverage, P1 active_seconds-throw, P2
   reader-seam/guard-direction, P2 multi-surface guard) folded into the Step 0 section + Steps 5/6/7/8 above.
-- [ ] **Step 1 — Value telemetry surface.** Add `EVENT_NAMES.category_vision_aligned =
+- [x] **Step 1 — Value telemetry surface.** Add `EVENT_NAMES.category_vision_aligned =
   'category.vision.aligned'` and `METRIC_CODES.vision_match_rate`. Add `readVisionAlignedPayload` (fully
   tolerant like `readCategoryBookedPayload`: `{ category_id: string|null, vision_match_score: number|null }`,
   a non-numeric/out-of-range score → null) and the `visionMatchRate` metric function (mean of valid-score
   claims with a `category_id`; null when none) registered in `METRIC_DEFINITIONS`. Add `vision_consult` to
   the `CoupleSessionReason` vocabulary. Build green; unit-test the metric (mean, null-when-empty,
   id-less/invalid-score exclusion).
-- [ ] **Step 2 — Trusted record + recorder.** Add `TrustedVisionAlignmentRecord { category_id,
+- [x] **Step 2 — Trusted record + recorder.** Add `TrustedVisionAlignmentRecord { category_id,
   vision_match_score }` + `recordVisionAlignment` / `visionAlignment(category_id)` / `allVisionAlignments()`
   on the recorder (mirror the category-booking recorder methods). Build + existing tests green.
-- [ ] **Step 3 — Shared honest facts** (extend `domain_facts.ts`, mirror `category_facts` tests). Add
+- [x] **Step 3 — Shared honest facts** (extend `domain_facts.ts`, mirror `category_facts` tests). Add
   `ALIGNED_VISION_MATCH = 1`, `DEFAULT_VISION_MATCH = 0.5`, `honestVisionMatch(canConsult)` and
   `honestVisionConsultSession(canConsult)`. Test pins the load-bearing limitation: tier-1 (canConsult=false)
   → `DEFAULT` + no session; tier-2 → `ALIGNED` + session — so a refactor can't flatten it to vacuity.
-- [ ] **Step 4 — `RequiredCategory.vision_sensitive` + Stage A emit + Stage B record** (mirror the Phase-8
+- [x] **Step 4 — `RequiredCategory.vision_sensitive` + Stage A emit + Stage B record** (mirror the Phase-8
   category emission). Add optional `vision_sensitive?: boolean` to `RequiredCategory`
   (`offline_scorer.ts`). In Stage A: for each required category that is `vision_sensitive` AND honestly
   `booked`, emit one `category.vision.aligned` (`vision_match_score = honestVisionMatch(canEscalate)`) AND,
@@ -206,7 +206,7 @@ load-bearing claim (Q4) and byte-identity (Q5) are confirmed real. Findings fold
   (`session_reason:'vision_consult'`, `about_id:category_id`). Stage B records the matching trusted vision
   alignment + couple session via the SAME shared facts (bit-identical). Assert byte-identity: ZERO vision
   claims + ZERO vision_consult sessions on the vision-free search corpus AND on the Phase-8 category corpus.
-- [ ] **Step 5 — Integrity gate: `vision_alignment` reconciliation** (mirror
+- [x] **Step 5 — Integrity gate: `vision_alignment` reconciliation** (mirror
   `detectCategoryBookingDivergences`). Add `'vision_alignment'` to the `effect_kind` union; add
   `detectVisionAlignmentDivergences` (missing `category_id` → duplicate-as-forge → no-trusted forged →
   field_mismatch on `vision_match_score`, `skipWhenClaimAbsent:false` → suppressed) and wire it into

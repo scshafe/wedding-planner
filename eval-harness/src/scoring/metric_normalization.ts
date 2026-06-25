@@ -6,10 +6,14 @@ import { GUARD_DIRECTIONS, NORMALIZATION_ANCHORS } from './scoring_constants'
 
 /**
  * Maps computed metric values into the normalized [0,1] North Star components (the metric->component
- * layer scoring_model.md describes). Phase-1 scope: quality is null (no LLM rubrics yet);
- * completeness and guest_experience are means of the available [0,1] value-metrics; the cost
- * components are normalized against NORMALIZATION_ANCHORS. Components with no signal stay null so the
- * North Star renormalizes honestly rather than scoring a gap as 0.
+ * layer scoring_model.md describes). `quality` is the mean of the PRESENT rubrics (Phase 10) — today just
+ * `vision_match_rate`, the one rubric backed offline; `comms_quality`/`intuitiveness` stay ABSENT (their
+ * judge is offline-STOP-gated, ADR 0007), so the 0.40 quality weight rides this single rubric while thin —
+ * a reason NOT to move vision scenarios into the search corpus (the over-weight would distort the gradient).
+ * completeness and guest_experience are means of the available [0,1] value-metrics; the cost components are
+ * normalized against NORMALIZATION_ANCHORS. Components with no signal stay null so the North Star
+ * renormalizes honestly rather than scoring a gap as 0 — which keeps `quality` null on the search corpus
+ * (no `vision_match_rate` there) so the pre-Phase-10 search landscape is byte-identical.
  *
  * related: north_star.ts (consumes these), telemetry metric engine (produces the values).
  */
@@ -37,7 +41,10 @@ export function deriveNorthStarInputs(
   const budgetVariancePct = get('budget_variance_pct')
 
   return {
-    quality: null, // no LLM-judge rubric scores in Phase 1
+    // Mean of the PRESENT quality rubrics (Phase 10). Only vision_match is backed offline; the explicit
+    // single-element list documents that comms_quality/intuitiveness are deliberately absent (judge→STOP),
+    // and keeps `quality` null on the search corpus (vision_match_rate null there) for byte-identity.
+    quality: meanOfPresent([get('vision_match_rate')]),
     completeness: meanOfPresent([
       get('rsvp_resolution_rate'),
       get('qa_accuracy_rate'),
