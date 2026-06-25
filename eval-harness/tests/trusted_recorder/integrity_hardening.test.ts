@@ -233,3 +233,38 @@ describe('trusted recorder — sentiment observations are append-only and sealab
     )
   })
 })
+
+describe('trusted recorder — Q&A outcomes are append-only and sealable, keyed by (guest, question) (Phase 7)', () => {
+  it('records, retrieves by composite key, and aggregates one outcome per (guest, question)', () => {
+    const recorder = new TrustedRecorder()
+    recorder.recordQaOutcome({ guest_id: 'g1', question_id: 'q1', answerable_by: 'ai_from_known_facts', action_taken: 'answered' })
+    recorder.recordQaOutcome({ guest_id: 'g1', question_id: 'q2', answerable_by: 'requires_couple', action_taken: 'escalated' })
+    expect(recorder.qaOutcome('g1', 'q1')?.action_taken).toBe('answered')
+    expect(recorder.qaOutcome('g1', 'q2')?.answerable_by).toBe('requires_couple')
+    expect(recorder.qaOutcome('g1', 'absent')).toBeUndefined() // same guest, different question — no collision
+    expect(recorder.allQaOutcomes()).toHaveLength(2)
+  })
+
+  it('rejects a duplicate outcome for the same (guest, question) — append-only', () => {
+    const recorder = new TrustedRecorder()
+    recorder.recordQaOutcome({ guest_id: 'g1', question_id: 'q1', answerable_by: 'must_refuse', action_taken: 'refused' })
+    expect(() =>
+      recorder.recordQaOutcome({ guest_id: 'g1', question_id: 'q1', answerable_by: 'must_refuse', action_taken: 'answered' }),
+    ).toThrowError(/DUPLICATE_EFFECT|append-only/)
+  })
+
+  it('allows the SAME question_id under different guests (composite key, not question_id alone)', () => {
+    const recorder = new TrustedRecorder()
+    recorder.recordQaOutcome({ guest_id: 'g1', question_id: 'q1', answerable_by: 'ai_from_known_facts', action_taken: 'answered' })
+    recorder.recordQaOutcome({ guest_id: 'g2', question_id: 'q1', answerable_by: 'ai_from_known_facts', action_taken: 'answered' })
+    expect(recorder.allQaOutcomes()).toHaveLength(2)
+  })
+
+  it('refuses to record a Q&A outcome after the recorder is sealed', () => {
+    const recorder = new TrustedRecorder()
+    recorder.seal()
+    expect(() =>
+      recorder.recordQaOutcome({ guest_id: 'g1', question_id: 'q1', answerable_by: 'ai_from_known_facts', action_taken: 'answered' }),
+    ).toThrowError(/SEALED|sealed/)
+  })
+})

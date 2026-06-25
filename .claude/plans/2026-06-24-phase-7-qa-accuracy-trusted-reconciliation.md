@@ -145,7 +145,13 @@ boundary), wolf (stats/aggregation), rigorous-architect (design), and testineer 
   Unit test the mapping incl. the tier-1 requires_couple → `answered` case. No behavior change to
   existing code (new functions only).
 
-- [ ] **Step 2 — Trusted Q&A outcome type + recorder method.**
+- [x] **Step 2 — Trusted Q&A outcome type + recorder method.**
+  DONE — `TrustedQaOutcomeRecord {guest_id, question_id, answerable_by, action_taken}` +
+  `RecordQaOutcomeInput` in `trusted_outcomes.ts`; `recordQaOutcome`/`qaOutcome(guestId, questionId)`/
+  `allQaOutcomes()` on the recorder, keyed by a printable collision-free composite key
+  (`JSON.stringify([guestId, questionId])` — NOT a NUL byte, which would binary-poison the source),
+  append-only + sealed-guard + deep-frozen. Tests cover record/retrieve/aggregate, duplicate veto,
+  same-question-id-under-different-guests (composite key), and sealed. 271 tests green.
   `trusted_outcomes.ts`: `TrustedQaOutcomeRecord { guest_id, question_id, answerable_by, action_taken }`
   + input type, with a docblock (backs `qa_accuracy_rate`; grader-input not gate-input; composite key).
   `trusted_recorder.ts`: `recordQaOutcome` / `qaOutcome(guestId, questionId)` / `allQaOutcomes()` —

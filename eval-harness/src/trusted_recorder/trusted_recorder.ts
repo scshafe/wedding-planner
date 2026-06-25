@@ -7,6 +7,7 @@ import {
   type RecordCoupleSessionInput,
   type RecordGuestMessageInput,
   type RecordIntegrationActionInput,
+  type RecordQaOutcomeInput,
   type RecordRsvpOutcomeInput,
   type RecordSentimentObservationInput,
   type TrustedCommitmentRecord,
@@ -14,6 +15,7 @@ import {
   type TrustedCoupleSessionRecord,
   type TrustedGuestMessageRecord,
   type TrustedIntegrationActionRecord,
+  type TrustedQaOutcomeRecord,
   type TrustedRsvpOutcomeRecord,
   type TrustedSentimentObservationRecord,
 } from './trusted_outcomes'
@@ -47,6 +49,16 @@ import {
  *
  * related: trusted_outcomes.ts, gates/integrity_gate.ts, gates/report_event_names.ts, gates/* (all read here).
  */
+/**
+ * The composite key for a Q&A outcome. A guest can ask multiple questions, so the trusted record is
+ * keyed by (guest_id, question_id). `JSON.stringify` of the tuple is collision-free and printable, so
+ * distinct (guest, question) pairs never share a key. Callers reach the record via
+ * `qaOutcome(guestId, questionId)`, so the key format stays internal to the recorder.
+ */
+function qaCompositeKey(guestId: string, questionId: string): string {
+  return JSON.stringify([guestId, questionId])
+}
+
 export class TrustedRecorder {
   private readonly commitmentsById = new Map<string, TrustedCommitmentRecord>()
   private readonly integrationActionsById = new Map<string, TrustedIntegrationActionRecord>()
@@ -55,6 +67,7 @@ export class TrustedRecorder {
   private readonly rsvpOutcomesByGuestId = new Map<string, TrustedRsvpOutcomeRecord>()
   private readonly coupleSessionsByGuestId = new Map<string, TrustedCoupleSessionRecord>()
   private readonly sentimentObservationsByGuestId = new Map<string, TrustedSentimentObservationRecord>()
+  private readonly qaOutcomesByCompositeKey = new Map<string, TrustedQaOutcomeRecord>()
   private runningCommittedCents = 0
   private sealed = false
 
@@ -193,6 +206,26 @@ export class TrustedRecorder {
     return record
   }
 
+  /**
+   * Record the harness-observed honest handling of one scripted guest question (Phase 7). Append-only,
+   * one per (guest_id, question_id). Feeds the integrity gate's Q&A reconciliation (the trusted backing
+   * for the claimed `qa_accuracy_rate`). Throws DUPLICATE_EFFECT on a repeat for the same composite key.
+   */
+  recordQaOutcome(input: RecordQaOutcomeInput): TrustedQaOutcomeRecord {
+    const key = qaCompositeKey(input.guest_id, input.question_id)
+    this.assertNotSealed('qa_outcome', key)
+    if (this.qaOutcomesByCompositeKey.has(key)) {
+      throw new EvalHarnessError(
+        'TRUSTED_RECORDER.DUPLICATE_EFFECT',
+        `Question ${key} already has a recorded Q&A outcome; the trusted record is append-only.`,
+        { context: { guest_id: input.guest_id, question_id: input.question_id } },
+      )
+    }
+    const record = deepFreeze<TrustedQaOutcomeRecord>({ ...input })
+    this.qaOutcomesByCompositeKey.set(key, record)
+    return record
+  }
+
   /** The trusted RSVP outcome for one guest, or undefined if the harness observed no resolution. */
   rsvpOutcome(guestId: string): TrustedRsvpOutcomeRecord | undefined {
     return this.rsvpOutcomesByGuestId.get(guestId)
@@ -221,6 +254,16 @@ export class TrustedRecorder {
   /** All trusted sentiment observations. Feeds the integrity sentiment reconciliation. */
   allSentimentObservations(): readonly TrustedSentimentObservationRecord[] {
     return [...this.sentimentObservationsByGuestId.values()]
+  }
+
+  /** The trusted Q&A outcome for one (guest, question), or undefined if none was observed. */
+  qaOutcome(guestId: string, questionId: string): TrustedQaOutcomeRecord | undefined {
+    return this.qaOutcomesByCompositeKey.get(qaCompositeKey(guestId, questionId))
+  }
+
+  /** All trusted Q&A outcomes. Feeds the integrity Q&A reconciliation. */
+  allQaOutcomes(): readonly TrustedQaOutcomeRecord[] {
+    return [...this.qaOutcomesByCompositeKey.values()]
   }
 
   /** All trusted constraint determinations. Feeds CONSTRAINT.HARD_VIOLATED. */

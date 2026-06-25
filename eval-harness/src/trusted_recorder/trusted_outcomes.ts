@@ -10,6 +10,8 @@
  * related: trusted_recorder.ts, gates/integrity_gate.ts.
  */
 
+import { type QaAction, type QaAnswerableBy } from '@wedding-planner/telemetry'
+
 /** What the harness's sandbox observed for one commitment (money/binding) effect. */
 export interface TrustedCommitmentRecord {
   readonly commitment_id: string
@@ -126,6 +128,37 @@ export interface TrustedSentimentObservationRecord {
 }
 
 export type RecordSentimentObservationInput = TrustedSentimentObservationRecord
+
+/**
+ * What the harness independently observed about the product's handling of ONE scripted guest question
+ * (Phase 7). The product claims its handling via `guest.question.answered` (action_taken +
+ * answerable_by_expected); the scorer derives `qa_accuracy_rate` over the CLAIMED stream
+ * (correct = action_taken matches the required action for the question's nature). This is the trusted
+ * backing — Stage B re-derives, from persona ground truth + the trusted genome policy ALONE, both the
+ * question's true `answerable_by` and the honest `action_taken` (via `honestQaAction`), never from the
+ * product's claim. One is recorded per scripted question, keyed by the composite (guest_id, question_id).
+ *
+ * The honest action is GENOME-DEPENDENT: a `requires_couple` question is handled correctly only by
+ * ESCALATING, which requires the tier-2 `autonomy_threshold` (escalation consumes couple attention —
+ * the commitment_autonomy surface). A tier-1 genome honestly ANSWERS it (incorrect). This is what makes
+ * the firewall load-bearing: a tier-1 candidate that CLAIMS it escalated (qa correct) without the couple
+ * cost diverges from this trusted action and is vetoed. The gate field-diffs BOTH `action_taken` and
+ * `answerable_by_expected` against this record, so a relabel forge (calling a couple-question
+ * AI-answerable) is caught too.
+ *
+ * Like sentiment (Phase 6), this backs a GRADER input (the North-Star numerator), not a VETO-GATE
+ * input — it extends the firewall without changing the integrity-gate completeness invariant.
+ */
+export interface TrustedQaOutcomeRecord {
+  readonly guest_id: string
+  readonly question_id: string
+  /** The question's true nature (persona ground truth); the gate diffs the claimed value against this. */
+  readonly answerable_by: QaAnswerableBy
+  /** The honest action under the trusted genome policy; the gate diffs the claimed action_taken against this. */
+  readonly action_taken: QaAction
+}
+
+export type RecordQaOutcomeInput = TrustedQaOutcomeRecord
 
 /** Grader-side determination of whether one hard constraint is satisfied by the final plan. */
 export interface TrustedConstraintDetermination {
