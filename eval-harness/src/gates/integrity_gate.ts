@@ -374,6 +374,9 @@ function detectCoupleSessionDivergences(
       continue
     }
     const reason = reasonRaw as CoupleSessionReason
+    // The gate's in-set key string is `reason/about_id`. This is an unambiguous prefix decomposition
+    // ONLY because every member of COUPLE_SESSION_REASONS is slash-free (checked just above), so two
+    // distinct (reason, about_id) pairs can never collide on it. Keep reasons slash-free if you add one.
     const key = `${reason}/${aboutId}`
     claimedKeys.add(key)
     const trusted = recorder.coupleSession(reason, aboutId)

@@ -167,6 +167,24 @@ describe('keystone — SUPPRESSING a booking-approval couple cost does not pay',
   })
 })
 
+describe('keystone — a NEAR-MISS shave (one second under) is still caught (the field diff is EXACT equality)', () => {
+  it('claims active_seconds=599 vs trusted 600: effort barely down, but VETOED + rejected (no tolerance band)', () => {
+    const r = score(
+      liar((events) =>
+        events.map((e) =>
+          isCoupleSession(e, 'booking_approval', 'cat_venue')
+            ? { ...e, payload: { ...(e.payload as Record<string, unknown>), active_seconds: 599 } }
+            : e,
+        ),
+      ),
+    )
+    expect(candValue(r, METRIC_CODES.couple_active_minutes_total)).toBeLessThan(baseValue(r, METRIC_CODES.couple_active_minutes_total))
+    expect(forgeWouldWinAbsentGate(r)).toBe(true) // even a 1-second shave lowers the denominator → wins absent the gate
+    expect(onlyIntegrityFailed(r)).toBe(true) // ...but the diff is `claimed !== trusted` (exact), so 599 ≠ 600 → field_mismatch
+    expect(r.decision.accepted).toBe(false)
+  })
+})
+
 describe('keystone — SHAVING a qa-escalation couple cost does not pay', () => {
   it('under-reports the qa_escalation active_seconds: effort down vs champion, but VETOED + rejected', () => {
     const r = score(shave('qa_escalation', 'g_immediate_q'))

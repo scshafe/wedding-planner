@@ -145,30 +145,30 @@ key twice). Findings folded into the steps below:
    `forged_effect` (no trusted match).
 
 ## Steps
-- [ ] **Step 1 — Vocabulary + payload generalization.** Add `CoupleSessionReason` to the telemetry
+- [x] **Step 1 — Vocabulary + payload generalization.** Add `CoupleSessionReason` to the telemetry
   vocabulary/constants. Generalize the `couple.session.ended` integrity-join fields: `session_reason` +
   `about_id` (the RSVP path migrates from `about_guest_id` → `session_reason:'rsvp_escalation'`,
   `about_id:guest_id`). The telemetry payload reader (`event_payload_readers.ts`) continues to read
   `session_id` + `active_seconds` for the metric; `session_reason`/`about_id` are integrity-join fields
   read by the gate. Keep the existing event NAME (`couple.session.ended`). Build green.
-- [ ] **Step 2 — Trusted record + recorder composite key.** Generalize `TrustedCoupleSessionRecord` to
+- [x] **Step 2 — Trusted record + recorder composite key.** Generalize `TrustedCoupleSessionRecord` to
   `{ session_reason, about_id, active_seconds }`; rekey the recorder by the composite `(session_reason,
   about_id)` (replace `coupleSessionsByGuestId`). Keep `recordCoupleSession` / `coupleSession(...)` /
   `allCoupleSessions()` APIs; update the lookup signature to take `(reason, about_id)`. Update Phase-4b
   callers to pass `rsvp_escalation`. Build + existing tests green (RSVP behavior identical).
-- [ ] **Step 3 — Shared honest-cost facts** (mirror `category_facts.test.ts`). In `domain_facts.ts`, add
+- [x] **Step 3 — Shared honest-cost facts** (mirror `category_facts.test.ts`). In `domain_facts.ts`, add
   the SHARED predicates both stages call: `honestBookingApprovalSession(requires_couple_approval,
   canEscalate)` = `requires_couple_approval && canEscalate`; `honestQaEscalationSession(answerable_by,
   canEscalate)` = `answerable_by === 'requires_couple' && canEscalate`. Each honest session uses a fixed
   `active_seconds` (reuse `COUPLE_SESSION_ACTIVE_SECONDS`). NO new oracle — compose existing honest facts.
   Test pins the load-bearing limitation (approval-free booked → NO session; tier-1 → NO session) so a
   refactor can't flatten it into vacuity.
-- [ ] **Step 4 — Stage A emit + Stage B record** (mirror `stage_category.test.ts`). Stage A emits one
+- [x] **Step 4 — Stage A emit + Stage B record** (mirror `stage_category.test.ts`). Stage A emits one
   `couple.session.ended` (`session_reason`, `about_id`, `active_seconds`) per honest booking-approval /
   qa-escalation, driven by the Step-3 predicates; Stage B records the matching trusted session via the
   SAME predicates (bit-identical). Keyed by category_id / question_id. Assert byte-identity: ZERO new
   sessions on the category/question-free search corpus.
-- [ ] **Step 5 — Integrity gate generalization** (mirror `detectCategoryBookingDivergences` ordering).
+- [x] **Step 5 — Integrity gate generalization** (mirror `detectCategoryBookingDivergences` ordering).
   Generalize `detectCoupleSessionDivergences` to key on `(session_reason, about_id)`: missing-join-field
   → duplicate-as-forge (2nd claim for same composite key, before trusted lookup) → no-trusted (forged) →
   field_mismatch on `active_seconds` (`skipWhenClaimAbsent:false`) → suppressed (trusted, no claim). The
@@ -176,7 +176,7 @@ key twice). Findings folded into the steps below:
   caught by the key miss (forged + suppressed) — verify, don't add a redundant reason-diff. **doddy lens**
   review post-build: NO bypass across the reason cross-product; a shaved / suppressed / reason-relabelled
   session cannot lower effort while passing.
-- [ ] **Step 6 — Honest-run audit + read-seam (no self-veto).** (a) A sweep over {rsvp, qa, booking} ×
+- [x] **Step 6 — Honest-run audit + read-seam (no self-veto).** (a) A sweep over {rsvp, qa, booking} ×
   {tier-1, tier-2} reconciling clean (Stage A ≡ Stage B, zero divergences) — a stage divergence on any
   reason would self-veto every honest tier-2 run. (b) **A MULTI-REASON CO-PRESENT scenario** (one tier-2
   scenario carrying an RSVP escalation + a `requires_couple` question + a `requires_couple_approval`
@@ -184,7 +184,7 @@ key twice). Findings folded into the steps below:
   per-guest key could not represent it). (c) Read-seam test: the metric reader
   (`readCoupleSessionEndedPayload`, session_id+active_seconds only) and the gate reader agree on an honest
   reason-bearing stream; `couple_active_minutes_total` sums all reasons.
-- [ ] **Step 7 — Forge keystone (both layers).** (a) Gate-level: extend `integrity_rsvp_couple.test.ts`
+- [x] **Step 7 — Forge keystone (both layers).** (a) Gate-level: extend `integrity_rsvp_couple.test.ts`
   with the new-reason arms (shave → field_mismatch; suppress → suppressed_effect; forged → forged_effect;
   reason-relabel → forged + suppressed). DONE for RSVP in Commit A; add booking_approval / qa_escalation
   coverage. (b) Full North-Star keystone `loop-orchestrator/tests/loop/couple_cost_forge_keystone.test.ts`
