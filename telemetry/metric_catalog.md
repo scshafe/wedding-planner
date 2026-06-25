@@ -34,10 +34,22 @@ Gates (`../eval-harness/rubrics/gate_checks.md`) compute from these same events;
 | metric_code | formula | unit/dir | cap | src | guard |
 |---|---|---|---|---|---|
 | `budget_variance_pct` | (`plan.finalized`.total_spend_cents − budget_cents) ÷ budget_cents × 100 | % · lte | budget_management | eval+telem | quality_per_dollar_index |
-| `category_completeness_rate` | count(required categories with a `category.booked` before their lead-time deadline) ÷ count(required categories) | ratio 0–1 · gte | per-category | eval+telem | BUDGET.CEILING gate, vision_match |
+| `category_completeness_rate` | count(`category.booked` booking_status=booked³) ÷ count(`category.booked`) | ratio 0–1 · gte | per-category | eval (+telem audit) | — (keystone-only; don't suppress deferred) |
 | `quality_per_dollar_index` | planning_value.quality ÷ (final_spend_cents ÷ baseline_spend_cents) | index · max | budget_management | eval | guards budget_variance (stops win-by-buying-nothing) |
 | `dietary_constraint_satisfaction_rate` | count(`constraint.evaluated` type∈{dietary,allergy} & satisfied) ÷ count(type∈{dietary,allergy}) | ratio 0–1 · gte | catering/seating | eval | — (companion to CONSTRAINT gate) |
 | `cultural_constraint_satisfaction_rate` | count(`constraint.evaluated` type∈{cultural,religious} & satisfied) ÷ count(type∈{cultural,religious}) | ratio 0–1 · gte | venue/orchestration | eval | — (companion to CONSTRAINT gate) |
+
+³ **`category_completeness_rate` is CLAIMS-ONLY** (Phase 8): a category is complete iff its claimed
+`category.booked` carries `booking_status=booked`; the denominator is `count(category.booked)` (claims
+with a valid `category_id`), NOT `count(required categories)`. Suppressing a `deferred` category to shrink
+the denominator is caught by the integrity gate's `suppressed_effect` arm (a trusted category outcome
+with no claim → veto), mirroring `qa_accuracy_rate`. The honest status is genome-dependent: an
+`requires_couple_approval` category is `booked` only by a tier-2 genome (it needs the couple's
+commitment-authority); a tier-1 genome honestly `deferred`s it — so category-bearing scenarios are
+**keystone-only**, never in the autonomous search corpus (the metric is `null` there). The earlier
+"before their lead-time deadline" clause awaits a booking-timing model and is out of scope; today
+completeness is the booked/deferred status alone, reconciled field-by-field against the trusted record.
+This phase wires NO `BUDGET.CEILING`/`vision_match` relationship (the prior column overclaimed).
 
 `quality_per_dollar_index`'s `baseline_spend_cents` is defined per source: **offline** = the
 golden-scenario spend for a comparable cohort; **online** = the **control arm's cohort-matched

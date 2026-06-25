@@ -32,6 +32,22 @@ import { deriveNorthStarInputs, type MetricValues } from './metric_normalization
  * the candidate vs baseline corpus.
  */
 
+/**
+ * One category the couple needs booked (Phase 8 plan-state ground truth). Lives on the runtime
+ * ScenarioDefinition — NOT in any JSON Schema — exactly like `bookedPlanFacts`: it is a plan-state
+ * simulator/grader fact with no LLM role-player (the distinguishing test from `guest_persona.questions`,
+ * which a role-player consumes). Keeping it runtime-only also makes the "category-bearing scenarios are
+ * KEYSTONE-ONLY" invariant structural — it cannot leak into the YAML persona corpus the loader ingests,
+ * so the search cube/matrix pins are protected by construction. `category` is provenance only (the metric
+ * reads category_id + booking_status); `requires_couple_approval` is the trusted-internal driver of the
+ * honest booking status (tier-2 commitment-authority gates an approval-required category).
+ */
+export interface RequiredCategory {
+  readonly category_id: string
+  readonly category: string
+  readonly requires_couple_approval: boolean
+}
+
 export interface ScenarioDefinition {
   readonly scenario_id: string
   readonly scenario_type: ScenarioType
@@ -39,6 +55,8 @@ export interface ScenarioDefinition {
   readonly guests: readonly GuestPersona[]
   readonly bookedPlanFacts: Readonly<Record<string, string>>
   readonly targetMetrics: readonly ScenarioTargetMetric[]
+  /** Categories the couple needs booked (Phase 8). Absent/empty ⇒ no category scoring (search corpus). */
+  readonly required_categories?: readonly RequiredCategory[]
 }
 
 export interface ScenarioExecution {

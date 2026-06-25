@@ -2,6 +2,7 @@ import type { EventEnvelope } from '@wedding-planner/shared'
 
 import {
   readBudgetSnapshotPayload,
+  readCategoryBookedPayload,
   readCoupleSessionEndedPayload,
   readGuestQuestionAnsweredPayload,
   readGuestRsvpReceivedPayload,
@@ -168,6 +169,34 @@ export const qaAccuracyRate: MetricFunction = (events) => {
   })
 }
 
+/**
+ * category_completeness_rate = required categories booked ÷ required categories handled.
+ *
+ * Over the CLAIMED `category.booked` stream: a category is complete iff `booking_status === 'booked'`.
+ * Denominator = number of claims with a valid `category_id` (CLAIMS-ONLY, mirroring qa_accuracy_rate —
+ * dropping a `deferred` category to shrink the denominator is caught by the integrity gate's
+ * `suppressed_effect` arm, not by a `∪ should-have-booked` term). A claim with a missing/invalid status
+ * counts as INCOMPLETE (conservative; the gate vetoes it separately). A claim with no `category_id` has no
+ * trusted match to inflate the rate (the gate vetoes it as forged), so it is excluded from the denominator
+ * rather than crashing scoring. Null when no categories were handled (honest-undefined, like the other
+ * rates) — which is the search corpus (no required_categories), keeping the cube pins untouched.
+ */
+export const categoryCompletenessRate: MetricFunction = (events) => {
+  const claims = events
+    .filter((event) => event.event_name === EVENT_NAMES.category_booked)
+    .map((event) => readCategoryBookedPayload(event))
+    .filter((c) => c.category_id !== null)
+  if (claims.length === 0) {
+    return computation(METRIC_CODES.category_completeness_rate, null, { handled: 0 })
+  }
+  const booked = claims.filter((c) => c.booking_status === 'booked').length
+  return computation(METRIC_CODES.category_completeness_rate, booked / claims.length, {
+    booked,
+    handled: claims.length,
+    denominator: claims.length,
+  })
+}
+
 /** boundary_hold_rate = comms.boundary.held ÷ comms.boundary.tested. */
 export const boundaryHoldRate: MetricFunction = (events) => {
   const held = countByName(events, EVENT_NAMES.comms_boundary_held)
@@ -205,6 +234,7 @@ export const METRIC_DEFINITIONS: ReadonlyMap<string, MetricFunction> = new Map<s
   [METRIC_CODES.decision_reversal_rate, decisionReversalRate],
   [METRIC_CODES.rsvp_resolution_rate, rsvpResolutionRate],
   [METRIC_CODES.qa_accuracy_rate, qaAccuracyRate],
+  [METRIC_CODES.category_completeness_rate, categoryCompletenessRate],
   [METRIC_CODES.guest_sentiment_score, guestSentimentScore],
   [METRIC_CODES.boundary_hold_rate, boundaryHoldRate],
   [METRIC_CODES.budget_variance_pct, budgetVariancePct],
