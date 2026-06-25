@@ -1,94 +1,96 @@
 # Handoff
 
-## Where things stand — Phase 8 (trusted category-completeness) is BUILT ✅
-`.claude/plans/2026-06-25-phase-8-category-completeness-trusted-reconciliation.md` is **complete — all steps
-ticked** (Step 0 design review + Steps 1–9), on branch **`build/phase-3-generalize-search`** (the open review
-artifact for `main`; Phases 3/4a/4b/5/6/7/8 build on it; the loop's merge-keeper advances `main` when green).
-Working tree clean. `npm run build && npm test && npm run lint` all green (**330 tests**, up from 298 at the
-start of this run). `main` has Phase 1+2; this branch is the review artifact for Phases 3, 4a, 4b, 5, 6, 7 **and 8**.
+## Where things stand — Phase 9 (trusted couple-attention cost generalization) is BUILT ✅
+`.claude/plans/2026-06-25-phase-9-couple-attention-cost-generalization.md` is **complete — all steps
+ticked** (Step 0 design review + Steps 1–9), on branch **`build/phase-3-generalize-search`** (the open
+review artifact for `main`; Phases 3/4a/4b/5/6/7/8/9 build on it; the loop's merge-keeper advances `main`
+when green). Working tree clean. `npm run build && npm test && npm run lint` all green (**350 tests**, up
+from 330 at the start of this run). `main` has Phase 1+2; this branch is the review artifact for Phases
+3, 4a, 4b, 5, 6, 7, 8 **and 9**.
 
-**What changed:** `category_completeness_rate` (the 3rd `completeness` North-Star input) went from
-**unimplemented/claimed-only** to **trusted-backed**. The integrity firewall gained a **7th reconciled effect
-kind (`category_booking`)** — and the **FIRST plan-side model** (every prior phase modeled guest interactions;
-this models the PLAN: which categories the couple needs vs which the planner books). Stage A emits one
-`category.booked` per required category, Stage B authors one trusted booking, and the gate reconciles the one
-metric field (`booking_status`) + the join key (`category_id`). **MILESTONE: the completeness trilogy is
-complete — all three completeness inputs (rsvp/qa/category) are trusted-backed, so every computed North-Star
-input is trusted-backed EXCEPT `quality`** (still deferred). Honest runs on the existing (category-free) corpus
-are byte-identical — purely firewall hardening + a new trusted-backed signal. See `docs/adr/0008`.
+**What changed:** the couple-attention COST firewall went from **RSVP-only** (Phase 4b) to a generalized
+per-`(session_reason, about_id)` key carrying **three reasons** — `rsvp_escalation` (guest_id),
+`qa_escalation` (question_id), `booking_approval` (category_id). Phase 7 (Q&A) and Phase 8 (category)
+each added a tier-2-gated escalation but charged it **no couple cost**; both ADRs flagged that as "ONE
+constraint." This phase **closes both deferrals via one surface**: escalating to the couple now costs
+couple attention (`couple.session.ended → active_seconds → couple_active_minutes_total → effort_cost`,
+the North-Star denominator). Honest runs on the existing (category/question-free) search corpus are
+**byte-identical** — the new sessions fire only on keystone-only scenarios (tier-1 search candidates
+can't escalate). See `docs/adr/0009`. Encoded in memory [[couple-attention-cost-generalization]].
 
-### The load-bearing insight (carry forward — same shape as Phase 7)
-A naïve booking model (honest planner books everything) makes the gate **VACUOUS** (honest rate pinned at 1.0,
-nothing to forge up). It is load-bearing ONLY because **booking competence is genome-dependent via the EXISTING
-tier-2 `autonomy_threshold`** — the SAME `commitment_autonomy` surface Q&A escalation uses: a
-`requires_couple_approval` category is booked correctly only by ESCALATING for the couple's commitment-authority,
-so a **tier-1** genome honestly `deferred`s it (rate < 1.0). No new search knob; category-bearing scenarios are
-**KEYSTONE-ONLY** (the cube/matrix pins are unchanged). Shared fact
-`honestCategoryStatus(requiresCoupleApproval, canEscalate)`; NO grader oracle (correctness is just
-`status==='booked'`, a deliberate asymmetry from Q&A). Encoded in memory
-[[category-completeness-trusted-reconciliation]].
+### The load-bearing insight (carry forward — same shape as Phase 7/8)
+The cost is non-vacuous because it is incurred ONLY when the planner takes the couple's
+commitment-authority, which requires the EXISTING tier-2 `autonomy_threshold` (`canEscalate`). Shared
+facts `honestBookingApprovalSession(requiresCoupleApproval, canEscalate)` (= `requiresCoupleApproval &&
+canEscalate` — NOT `honestCategoryStatus === 'booked'`; an approval-FREE category books at NO couple cost)
+and `honestQaEscalationSession` (= `honestQaAction === 'escalated'`). The forge: a **tier-2** candidate
+that books/escalates honestly (keeps the tier-2 completeness/qa_accuracy) but **shaves/suppresses** the
+couple cost → lower denominator → higher ratio absent the gate, vetoed with it. The keystone is **tier-2
+vs tier-2** (cleaner than Phase 7/8: planning_value held fixed → `effort_cost` is the SOLE mover).
 
 ### What's new this phase (by step)
-- **Step 1** — `CategoryBookingStatus = 'booked'|'deferred'` (telemetry payload vocabulary, no oracle module) +
-  tolerant `readCategoryBookedPayload` + `honestCategoryStatus` shared fact.
-- **Step 2** — optional `required_categories` on the runtime `ScenarioDefinition` (the `bookedPlanFacts`
-  precedent — NOT a JSON Schema; makes keystone-only structural, no contract regen). **architect P1-A.**
-- **Step 3** — claims-only `categoryCompletenessRate` metric; `metric_catalog.md` reconciled (lead-time clause
-  struck, paired-gate column corrected). **architect P1-B.**
-- **Step 4** — `TrustedCategoryBookingRecord` + recorder API (first plan-side trusted record).
-- **Step 5** — Stage A emits, Stage B records (one per required category, shared fact); byte-identity asserted
-  directly (zero category events/records on the category-free corpus).
-- **Step 6** — gate's 7th effect kind `category_booking` (join key defends denominator: forged/duplicate/
-  suppressed; `booking_status` defends numerator: field_mismatch). **doddy** APPROVE-WITH-CHANGES (NO bypass
-  across the reader-seam cross-product; pinned the load-bearing field set).
-- **Step 7** — honest-run audit clean across approval × tier (a stage divergence on the tier-1 deferred category
-  would self-veto every honest tier-1 run).
-- **Step 8** — keystone `category_forge_keystone.test.ts`: tier-1-vs-tier-1, 3 forge arms (claim booked,
-  duplicate, suppress) each strictly raise the rate + STRICTLY win absent the gate (`forgeWouldWinAbsentGate`)
-  but are vetoed. **testineer** APPROVE-WITH-CHANGES (verified gate-load-bearing; added `onlyIntegrityFailed`).
-- **Step 9** — `docs/adr/0008` + memory [[category-completeness-trusted-reconciliation]] + registered the guard
-  direction (inert) + this handoff.
+- **Step 0** — architect-lens design review (APPROVE-WITH-CHANGES; all folded in). NB: it AND my first
+  grep searched only `eval-harness/` and wrongly concluded the keystone helpers don't exist — they live
+  in `loop-orchestrator/tests/loop/`; corrected mid-run.
+- **Steps 1–2** — `CoupleSessionReason` vocab; `TrustedCoupleSessionRecord` + recorder + gate rekeyed to
+  the composite `(session_reason, about_id)`; RSVP path migrated `about_guest_id → about_id` +
+  `session_reason:'rsvp_escalation'` byte-identically. Reason-relabel caught as forged+suppressed; NO
+  duplicate-as-forge arm (a SUMMED cost makes a duplicate self-harm).
+- **Steps 3–4** — shared honest-cost facts; Stage A emits + Stage B records one session per honest
+  booking-approval / qa-escalation; byte-identity on the search corpus asserted.
+- **Step 6** — honest-run audit (zero divergences, reason × tier) + a MULTI-REASON CO-PRESENT scenario
+  (rsvp+qa+booking coexist via the composite key — the OLD per-guest key could not) + read-seam.
+- **Step 7** — `couple_cost_forge_keystone.test.ts` (loop-orchestrator): shave + suppress × {booking,qa}
+  + a near-miss shave (599 vs 600) + honest companion, each with `forgeWouldWinAbsentGate` +
+  `onlyIntegrityFailed`. **doddy APPROVE** (no P0/P1; documented the slash-free-reason invariant).
+  **testineer APPROVE-WITH-CHANGES** (added the near-miss arm).
+- **Step 8** — back-ported `forgeWouldWinAbsentGate` + `onlyIntegrityFailed` to the Phase-6 sentiment
+  keystone (the handoff's lever 3); the bounded duplicate arm keeps its RED-vs-honest counterfactual.
+- **Step 9** — `docs/adr/0009` + memory [[couple-attention-cost-generalization]] + this handoff.
 
 ## Next action — your call. The big remaining levers (ranked)
-- **`quality` North-Star component** (weight 0.4, still `null`) — the LARGEST unbuilt VALUE lever and now the
-  ONLY non-trusted-backed computed input. Needs a real Claude judge → **API credentials → STOP-and-surface**
-  (offline-first rail), OR a deterministic stub (fabrication rail). Do NOT build the stub silently; design an
-  offline-legitimate **ground-truth-derived rubric over the booked plan** first (now feasible — Phase 8 built
-  the first plan-side model: `required_categories` + booked/deferred status are real plan state a deterministic
-  vision-match-style rubric could score against the couple's `vision`/`budget.category_priorities` ground truth,
-  reconciled like qa/category), or STOP. This is the natural capstone of the "all inputs trusted-backed" arc.
-- **Model + reconcile a booking-approval / QA-escalation couple COST** — would let a category (or Q&A) keystone
-  use a literal tier-2 champion (a tier-1 forging tier-2-grade handling to dodge the couple cost). Needs a
-  per-(guest/category, reason) session key (the one-couple-session-per-guest RSVP key currently collides).
-  Small, hardening-flavored; closes the deferral both Phase 7 and Phase 8 flagged as ONE constraint.
-- **Back-port `forgeWouldWinAbsentGate` + `onlyIntegrityFailed`** to the Phase-6 sentiment keystone — low-effort
-  test hardening (the Q&A keystone could also gain `onlyIntegrityFailed`).
-- **A 4th tier-1 knob → 4-D search** — more search generalization; lower marginal value than closing the
-  `quality` value-component gap. Needs per-guest receptivity ground truth (ADR 0005 alts).
+- **`quality` / `vision_match` North-Star component** (weight 0.40, still `null`) — THE capstone, now
+  UNBLOCKED. Phase 9 built the missing degree of freedom: the planner can consult the couple at a
+  reconciled cost to raise selection quality (the Goodhart guard `scoring_model.md` names). A legitimate
+  offline design: give each booked category a ground-truth couple preference (`couple.vision` /
+  `budget.category_priorities`), let the genome OPTIONALLY consult the couple on a category to align the
+  selection (paying a `booking_approval`-style couple cost), and score `vision_match` = alignment of the
+  booked selection vs the preference, reconciled like category/qa (an 8th effect kind, or extend
+  category_booking with a `vision_match` field). This is genome-dependent (consult → aligned but costs;
+  don't-consult → partial) and INDEPENDENT of completeness (the category is booked either way), so it is
+  a real, load-bearing value signal — NOT a stub and NOT a judge (no API credentials). Design it with the
+  architect lens first; if a clean design needs a real Claude judge, STOP-and-surface (offline-first).
+  This completes the "every computed North-Star input trusted-backed" arc.
+- **Move category/question scenarios INTO the search corpus** — now POSSIBLE (the cost is modeled, so a
+  tier-2's completeness/qa gain is offset by a real couple cost). Needs a guard/spread analysis (the
+  keystone-only invariant was partly the missing cost; what remains is the search-landscape decision) and
+  likely makes `category_completeness_rate` / `qa_accuracy_rate` active search guards. Search-breadth value.
+- **A 4th tier-1 knob → 4-D search** — more search generalization; lower marginal value than `quality`.
 
-## Non-obvious Phase-8 context (carry forward)
-- **Ground truth on the runtime `ScenarioDefinition`, not a JSON Schema** (the `bookedPlanFacts` precedent) —
-  this is WHY keystone-only is structural, not just disciplined. A future LLM-role-player phase that needs
-  categories in a contract should add it THEN.
-- **The metric reads ONLY `category_id` + `booking_status`** — `category` is provenance (unread) and
-  `requires_couple_approval` is trusted-internal (never claimed), so there is NO relabel surface and only one
-  field is diffed (leaner than Q&A's two). A test pins this load-bearing field set; if a future grader reads
-  `category`, it becomes an un-diffed relabel field — add it to the gate diff then.
-- **The deferred booking-approval cost ⇔ the keystone-only invariant are the SAME constraint** — don't put
-  category-bearing scenarios in the search corpus until the cost is modeled (a tier-2 genome would get a free
-  completeness gain). Documented in ADR 0008 Out-of-scope + memory.
-- **A vetoed run zeroes the North-Star ratio**, so `accepted=false` is over-determined; the forge keystones
-  assert `forgeWouldWinAbsentGate` (counterfactual) AND now `onlyIntegrityFailed` (INTEGRITY is the SOLE new
-  gate failure) to isolate the gate as the real stopper.
-- **CI/exit-code lesson (still true):** never pipe `npm run build` to tail/grep when gating with `&&` — the pipe
-  masks the build's non-zero exit. Run build standalone and check `$?`.
-- The repo's named specialist sub-agents (doddy/wolf/testineer/rigorous-architect) are **not provisioned** here —
-  route adversarial reviews through `general-purpose` agents carrying the persona lens (this run did, for
-  architect at design, doddy at the gate, testineer at the keystone).
-- Durable facts: `MEMORY.md` index — Phase 8 added **[[category-completeness-trusted-reconciliation]]**. Still
-  load-bearing: [[qa-accuracy-trusted-reconciliation]], [[sentiment-trusted-reconciliation]],
-  [[escalation-forge-detection-load-bearing]], [[tier2-promotion-gate-is-load-bearing]],
-  [[genome-content-address-firewall]], [[loop-trusted-evidence-boundary]],
-  [[integrity-gate-completeness-invariants]], [[accept-rule-composition-invariance]],
-  [[second-genome-knob-must-stay-tier1]], [[search-convergence-certificate-semantics]],
-  [[third-tier1-knob-batching-3d-search]].
+## Non-obvious Phase-9 context (carry forward)
+- **The metric `couple_active_minutes_total` is reason-AGNOSTIC (SUMS active_seconds);** so reason/about_id
+  are JOIN-KEY-only (only `active_seconds` is field-diffed), a relabel is caught as forged+suppressed, and
+  there is no duplicate-as-forge (a summed cost self-harms on duplicate).
+- **Uniform `active_seconds` (600) keeps a relabel cost-NEUTRAL today.** A future per-reason-magnitude
+  phase MUST keep `session_reason` in the key (the composite key still catches relabel; the gate's
+  `${reason}/${about_id}` string is unambiguous ONLY because reasons are slash-free — documented at the
+  call site).
+- **doddy P2 (not exploitable, pre-existing):** `readCoupleSessionEndedPayload` THROWS on absent
+  active_seconds (unlike the tolerant qa/category readers). Fail-stop; the gate vetoes absent active_seconds
+  first. A tolerant reader is the clean follow-on (recorded in ADR 0009 Out-of-scope).
+- **Keystones live in `loop-orchestrator/tests/loop/`** (not `eval-harness/tests/`);
+  `forgeWouldWinAbsentGate` / `onlyIntegrityFailed` are LOCAL helpers per file. Grep the whole repo, not
+  just `eval-harness/`, when looking for the full-North-Star counterfactual machinery.
+- **CI/exit-code lesson (still true):** never pipe `npm run build` to tail/grep when gating with `&&` —
+  the pipe masks the build's non-zero exit. Run build standalone and check `$?`. Also: `npm run build`
+  must run from the REPO ROOT (the eval-harness workspace has no `build` script).
+- The repo's named specialist sub-agents (doddy/wolf/testineer/rigorous-architect) are **not provisioned**
+  here — route adversarial reviews through `general-purpose` agents carrying the persona lens (this run
+  did, for architect at design, doddy at the gate, testineer at the keystone).
+- Durable facts: `MEMORY.md` index — Phase 9 added **[[couple-attention-cost-generalization]]**. Still
+  load-bearing: [[category-completeness-trusted-reconciliation]], [[qa-accuracy-trusted-reconciliation]],
+  [[sentiment-trusted-reconciliation]], [[escalation-forge-detection-load-bearing]],
+  [[tier2-promotion-gate-is-load-bearing]], [[genome-content-address-firewall]],
+  [[loop-trusted-evidence-boundary]], [[integrity-gate-completeness-invariants]],
+  [[accept-rule-composition-invariance]], [[second-genome-knob-must-stay-tier1]],
+  [[search-convergence-certificate-semantics]], [[third-tier1-knob-batching-3d-search]].

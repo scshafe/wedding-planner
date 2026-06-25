@@ -193,10 +193,10 @@ key twice). Findings folded into the steps below:
   booking_approval / qa_escalation couple cost. Each arm: `couple_active_minutes_total` strictly DOWN →
   aggregate ratio strictly UP, `forgeWouldWinAbsentGate(r) === true`, `onlyIntegrityFailed(r) === true`,
   `accepted === false`. Honest companion gate-clean. **testineer lens** review.
-- [ ] **Step 8 — Back-port `forgeWouldWinAbsentGate` + `onlyIntegrityFailed`** to
+- [x] **Step 8 — Back-port `forgeWouldWinAbsentGate` + `onlyIntegrityFailed`** to
   `sentiment_forge_keystone.test.ts` (the helpers exist in qa/category keystones but not there yet — the
   handoff's lever 3). Low-effort hardening; do if green.
-- [ ] **Step 9 — ADR 0009 + memory + handoff.** ADR documenting the generalized cost surface, the
+- [x] **Step 9 — ADR 0009 + memory + handoff.** ADR documenting the generalized cost surface, the
   load-bearing argument, the relabel/uniform-magnitude analysis (Step 0 finding 3), and the keystone
   decomposition (gate-level + full North-Star, both in the established pattern). Memory
   `[[couple-attention-cost-generalization]]` indexed in MEMORY.md; register any guard-direction constants
