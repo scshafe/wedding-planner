@@ -64,6 +64,10 @@ export const GUARD_DIRECTIONS: Readonly<Record<string, 'higher_better' | 'lower_
   // is NEVER added to an active search guard set while category-bearing scenarios are keystone-only (an
   // honest tier-1 candidate would guard-regress on it vs an enthroned tier-2 champion). See ADR 0008.
   category_completeness_rate: 'higher_better',
+  // Phase 10: same inert-while-keystone-only caveat as category_completeness_rate — registered for
+  // catalog consistency, but NEVER an active search guard while vision-bearing scenarios are keystone-only
+  // (an honest tier-1 candidate would guard-regress on vision_match vs an enthroned tier-2 champion). See ADR 0010.
+  vision_match_rate: 'higher_better',
   guest_sentiment_score: 'higher_better',
   boundary_hold_rate: 'higher_better',
   autonomy_rate: 'higher_better',

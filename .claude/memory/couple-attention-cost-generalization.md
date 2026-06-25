@@ -45,10 +45,14 @@ tier-2** (cleaner than the tier-1-vs-tier-1 category/Q&A keystones: planning_val
   KEYSTONE-ONLY scenarios (tier-1 search candidates can't escalate). Phase 9 does NOT move those into the
   search corpus (separate decision) — but with the cost modeled, a future keystone MAY use a literal
   tier-2 champion, strengthening Phase 7/8.
-- **doddy P2 (not exploitable, pre-existing):** `readCoupleSessionEndedPayload` THROWS on absent
-  active_seconds (unlike the tolerant qa/category readers). Fail-stop, and the gate vetoes absent
-  active_seconds (`skipWhenClaimAbsent:false`) before the metric runs — so no cheat, but a tolerant reader
-  is the clean follow-on.
+- **doddy P2 — FIXED in Phase 10 (and the old rationale CORRECTED):** `readCoupleSessionEndedPayload` used
+  to THROW on absent/NaN active_seconds. The Phase-9 note claimed this was safe because "the gate vetoes
+  before the metric runs" — that ordering claim is **factually wrong**: `offline_scorer` runs `runVetoGates`
+  AND `computeMany` UNCONDITIONALLY and sequentially (the veto does NOT prevent the throw), so a malformed
+  active_seconds CRASHED scoring of the whole run (a DoS, not a score-lift — the run never passes). Phase 10
+  widened the trigger surface (the `vision_consult` reason = a 4th session emit site) and FIXED it: the
+  reader is now tolerant (null → 0-minute contribution); the gate still vetoes the malformed session via its
+  OWN raw `readNumber` (`skipWhenClaimAbsent:false`), so the firewall is unweakened. See [[vision-match-trusted-reconciliation]].
 - **Keystones live in `loop-orchestrator/tests/loop/`, NOT `eval-harness/tests/`** — `forgeWouldWinAbsentGate`
   / `onlyIntegrityFailed` are LOCAL helpers per keystone file (not exported). A grep over `eval-harness/`
   alone misses them (this tripped both the architect lens and the first pass this run).

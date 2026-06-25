@@ -224,7 +224,7 @@ load-bearing claim (Q4) and byte-identity (Q5) are confirmed real. Findings fold
   `category.vision.aligned`, all reconciling clean) — guards that the completeness and quality surfaces, and
   the two couple-session reasons, compose. (d) Read-seam: the `vision_match_rate` metric reader and the
   integrity gate reader agree on an honest vision-bearing stream.
-- [ ] **Step 7 — Forge keystone(s) (full North-Star).** `loop-orchestrator/tests/loop/
+- [x] **Step 7 — Forge keystone(s) (full North-Star).** `loop-orchestrator/tests/loop/
   vision_match_forge_keystone.test.ts`, mirroring `category_forge_keystone.test.ts`. **Corpus is pinned:
   a SINGLE approval-free, vision-sensitive category + a SINGLE immediate-responder guest (not
   couple-resolvable, no questions)** — so vision_match is the sole value mover and `vision_consult` is the
@@ -246,7 +246,7 @@ load-bearing claim (Q4) and byte-identity (Q5) are confirmed real. Findings fold
   keystones, because on the single-element uniform claimed stream they cannot raise a claims-only mean
   (suppress→empty→null, duplicate→`{0.5,0.5}`→0.5); state this reason explicitly (P0 finding 1).
   **testineer lens** review; add any missing near-miss/arm it flags.
-- [ ] **Step 8 — ADR 0010 + memory + handoff.** ADR documenting: the `vision_match` value surface, the
+- [x] **Step 8 — ADR 0010 + memory + handoff.** ADR documenting: the `vision_match` value surface, the
   no-judge honesty argument (deterministic persona-grounded quantity; `quality = meanOfPresent` over present
   rubrics; comms/intuitiveness still STOP), the orthogonal-to-completeness independence, the cost side
   riding Phase 9's `vision_consult` reason, and the keystone decomposition. Note the "every computed
