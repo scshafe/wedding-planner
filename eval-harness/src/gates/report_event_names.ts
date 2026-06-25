@@ -70,3 +70,18 @@ export const SENTIMENT_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
 export const QA_ANSWERED_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
   EVENT_NAMES.guest_question_answered,
 ])
+
+/**
+ * PHASE 8. The product reports its booking of a required category via `category.booked` — the claim the
+ * `category_completeness_rate` metric scores (complete = `booking_status === 'booked'`). The integrity
+ * gate reconciles each (by `category_id`) against the trusted category booking Stage B authors per
+ * required category, field-diffing `booking_status` (so a tier-1 candidate that CLAIMS it booked an
+ * approval-required category — honest `deferred` — without the couple commitment cost is vetoed), with a
+ * duplicate-claim check (a per-category rate is gamed by re-emitting a `booked` claim) and a suppression
+ * check (dropping a `deferred` category would raise the claims-only rate). The join key `category_id`
+ * defends the denominator; `booking_status` defends the numerator; `requires_couple_approval` is never
+ * claimed (the metric does not read it) so there is no relabel surface to diff.
+ */
+export const CATEGORY_BOOKED_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
+  EVENT_NAMES.category_booked,
+])

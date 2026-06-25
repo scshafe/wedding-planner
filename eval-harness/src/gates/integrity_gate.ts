@@ -7,6 +7,7 @@ import {
 import { type TrustedRecorder } from '../trusted_recorder/trusted_recorder'
 import { GATE_CODES, type GateResult } from './gate_types'
 import {
+  CATEGORY_BOOKED_REPORT_EVENT_NAMES,
   COMMITMENT_REPORT_EVENT_NAMES,
   COUPLE_SESSION_REPORT_EVENT_NAMES,
   INTEGRATION_REPORT_EVENT_NAMES,
@@ -40,7 +41,7 @@ import {
 
 export interface SelfReportDivergence {
   readonly kind: 'forged_effect' | 'field_mismatch' | 'suppressed_effect'
-  readonly effect_kind: 'commitment' | 'integration' | 'rsvp_resolution' | 'couple_session' | 'guest_sentiment' | 'qa_outcome'
+  readonly effect_kind: 'commitment' | 'integration' | 'rsvp_resolution' | 'couple_session' | 'guest_sentiment' | 'qa_outcome' | 'category_booking'
   readonly effect_id: string
   readonly field: string | null
   readonly claimed: unknown
@@ -591,6 +592,101 @@ function detectQaDivergences(
 }
 
 /**
+ * PHASE 8 — reconcile the product's claimed CATEGORY BOOKINGS against the trusted category record. Every
+ * `category.booked` is a claim the scorer scores into `category_completeness_rate` (complete iff
+ * `booking_status === 'booked'`). The trusted record (Stage B) holds the honest status for EVERY required
+ * category. Keyed on `category_id`. The reconciliation is what makes the category firewall load-bearing: a
+ * TIER-1 candidate cannot secure couple approval for a `requires_couple_approval` category (honest status
+ * `deferred`), so a CLAIM of `booking_status='booked'` (completeness up) without the couple commitment cost
+ * diverges from the trusted `deferred` → field_mismatch. Two reconciliation surfaces:
+ *   - the JOIN KEY `category_id` defends the DENOMINATOR: forged (a claim for a category the trusted record
+ *     never observed, OR a DUPLICATE claim for an already-claimed category_id — a per-category rate is gamed
+ *     by re-emitting a `booked` claim to dilute deferred ones, so the 2nd claim is a forge, checked BEFORE
+ *     the trusted lookup, mirroring the sentiment/Q&A duplicate guard), and suppressed (a trusted required
+ *     category with no claim — dropping a `deferred` category would otherwise raise the claims-only rate);
+ *   - the field `booking_status` defends the NUMERATOR (`skipWhenClaimAbsent:false` — an absent/blank status
+ *     against a trusted value is a veto, since the honest planner always emits it and the metric reads it).
+ * `requires_couple_approval` is NOT reconciled: the metric never reads it (no relabel surface), so unlike
+ * Q&A only one field is diffed. Like sentiment/Q&A this backs a GRADER input, not a VETO-GATE input.
+ */
+function detectCategoryBookingDivergences(
+  productEvents: readonly EventEnvelope[],
+  recorder: TrustedRecorder,
+): SelfReportDivergence[] {
+  const divergences: SelfReportDivergence[] = []
+  const claimedCategoryIds = new Set<string>()
+
+  for (const event of productEvents.filter((e) => CATEGORY_BOOKED_REPORT_EVENT_NAMES.has(e.event_name))) {
+    const payload = asRecord(event)
+    const categoryId = readString(payload, 'category_id')
+    if (categoryId === null) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'category_booking',
+        effect_id: event.event_id,
+        field: 'category_id',
+        claimed: null,
+        trusted: null,
+        detail: 'product reported a category booking with no category_id (no trusted join key)',
+      })
+      continue
+    }
+    if (claimedCategoryIds.has(categoryId)) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'category_booking',
+        effect_id: categoryId,
+        field: null,
+        claimed: 'a second booking for this category',
+        trusted: 'only one category booking observed for this category',
+        detail: `product reported a duplicate booking for category ${categoryId}; the trusted record observed exactly one (a per-category rate is gamed by re-emitting a claim to dilute deferred ones)`,
+      })
+      continue
+    }
+    claimedCategoryIds.add(categoryId)
+    const trusted = recorder.categoryBooking(categoryId)
+    if (trusted === undefined) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'category_booking',
+        effect_id: categoryId,
+        field: null,
+        claimed: 'category booked',
+        trusted: 'no such required category observed',
+        detail: `product reports booking category ${categoryId}, but the trusted record observed no such required category`,
+      })
+      continue
+    }
+    divergences.push(
+      ...fieldDivergences('category_booking', categoryId, [
+        {
+          field: 'booking_status',
+          claimed: readString(payload, 'booking_status'),
+          trusted: trusted.booking_status,
+          skipWhenClaimAbsent: false,
+        },
+      ]),
+    )
+  }
+
+  for (const trusted of recorder.allCategoryBookings()) {
+    if (!claimedCategoryIds.has(trusted.category_id)) {
+      divergences.push({
+        kind: 'suppressed_effect',
+        effect_kind: 'category_booking',
+        effect_id: trusted.category_id,
+        field: null,
+        claimed: 'no event emitted',
+        trusted: `category ${trusted.booking_status} (${trusted.category})`,
+        detail: `trusted record observed required category ${trusted.category_id}, but the product emitted no category.booked`,
+      })
+    }
+  }
+
+  return divergences
+}
+
+/**
  * Find every divergence between the product's self-reported events and the trusted record.
  * Pure function of (product events, trusted recorder).
  */
@@ -605,6 +701,7 @@ export function detectSelfReportDivergence(
     ...detectCoupleSessionDivergences(productEvents, recorder),
     ...detectSentimentDivergences(productEvents, recorder),
     ...detectQaDivergences(productEvents, recorder),
+    ...detectCategoryBookingDivergences(productEvents, recorder),
   ]
 }
 

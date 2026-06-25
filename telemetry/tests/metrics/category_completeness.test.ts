@@ -86,4 +86,32 @@ describe('category_completeness_rate — completeness over the claimed stream', 
   it('no category events → null (honest-undefined), never 0 — this is the search corpus', () => {
     expect(cat([]).value).toBeNull()
   })
+
+  it('reads ONLY category_id + booking_status — the `category` provenance value is not load-bearing (doddy P2-1)', () => {
+    // The metric must not depend on `category`; if a future grader ever reads it, it becomes an
+    // un-diffed relabel field. Pin the load-bearing field set: same ids/statuses, different `category`
+    // strings (and no requires_couple_approval claimed at all) → identical rate.
+    const a = stream([
+      { category_id: 'c1', category: 'venue', booking_status: 'booked' },
+      { category_id: 'c2', category: 'catering', booking_status: 'deferred' },
+    ])
+    const b = stream([
+      { category_id: 'c1', category: 'WILDLY_DIFFERENT', booking_status: 'booked' },
+      { category_id: 'c2', category: 'also_different', booking_status: 'deferred', requires_couple_approval: false },
+    ])
+    expect(cat(a).value).toBe(0.5)
+    expect(cat(b).value).toBe(0.5)
+  })
+
+  it('a DUPLICATE booked claim DOES inflate the rate — so the gate duplicate-guard is the sole stopper (doddy P2-3)', () => {
+    // honest {booked, deferred} = 1/2; re-emitting the booked claim → {booked, booked, deferred} = 2/3.
+    // The metric has no dedup by design (mirrors sentiment/Q&A); the integrity gate's duplicate→forged arm
+    // is what vetoes this, pinned in integrity_category.test.ts. This test pins that the lift is real.
+    const events = stream([
+      { category_id: 'c1', category: 'invitations', booking_status: 'booked' },
+      { category_id: 'c1', category: 'invitations', booking_status: 'booked' }, // duplicate
+      { category_id: 'c2', category: 'venue', booking_status: 'deferred' },
+    ])
+    expect(cat(events).value).toBeCloseTo(2 / 3, 10)
+  })
 })
