@@ -153,6 +153,26 @@ describe('keystone — the VALUE forge: CLAIMING an aligned 1.0 a tier-1 genome 
     expect(onlyIntegrityFailed(r)).toBe(true) // ...but GREEN: claimed 1.0 ≠ trusted 0.5 → field_mismatch
     expect(r.decision.accepted).toBe(false)
   })
+
+  it('NEAR-MISS: even a tiny 0.51-vs-0.5 vision lie flips the counterfactual to a win, but is VETOED (exact field-diff)', () => {
+    // Symmetric with the cost arm's 599-vs-600 near-miss: the firewall bites the SMALLEST profitable value
+    // lie. field_mismatch is exact (claimed !== trusted), so a 0.01 overclaim is vetoed exactly like 1.0.
+    const r = score(
+      liar((events) =>
+        events.map((e) =>
+          isVision(e, 'cat_decor')
+            ? { ...e, payload: { ...(e.payload as Record<string, unknown>), vision_match_score: 0.51 } }
+            : e,
+        ),
+      ),
+      TIER1_CHAMP,
+      TIER1_CAND,
+    )
+    expect(candValue(r, METRIC_CODES.vision_match_rate)).toBeGreaterThan(baseValue(r, METRIC_CODES.vision_match_rate) as number) // RED: 0.51 > 0.5
+    expect(forgeWouldWinAbsentGate(r)).toBe(true) // absent the gate even the tiny overclaim wins...
+    expect(onlyIntegrityFailed(r)).toBe(true) // ...but GREEN: claimed 0.51 ≠ trusted 0.5 → field_mismatch
+    expect(r.decision.accepted).toBe(false)
+  })
 })
 
 describe('keystone — the COST forge: aligning honestly but SHAVING/SUPPRESSING the vision_consult cost', () => {
@@ -175,6 +195,7 @@ describe('keystone — the COST forge: aligning honestly but SHAVING/SUPPRESSING
       TIER2_CAND,
     )
     expect(candValue(r, METRIC_CODES.couple_active_minutes_total) as number).toBeLessThan(baseValue(r, METRIC_CODES.couple_active_minutes_total) as number) // RED: cost shaved
+    expect(candValue(r, METRIC_CODES.vision_match_rate)).toBe(1) // a CLEAN cost-only forge: the value (quality) is held
     expect(forgeWouldWinAbsentGate(r)).toBe(true) // absent the gate the lower cost wins...
     expect(onlyIntegrityFailed(r)).toBe(true) // ...but GREEN: claimed 599 ≠ trusted 600 → field_mismatch
     expect(r.decision.accepted).toBe(false)
@@ -187,6 +208,7 @@ describe('keystone — the COST forge: aligning honestly but SHAVING/SUPPRESSING
       TIER2_CAND,
     )
     expect(candValue(r, METRIC_CODES.couple_active_minutes_total) as number).toBeLessThan(baseValue(r, METRIC_CODES.couple_active_minutes_total) as number) // RED: cost dropped to 0
+    expect(candValue(r, METRIC_CODES.vision_match_rate)).toBe(1) // a CLEAN cost-only forge: the value (quality) is held
     expect(forgeWouldWinAbsentGate(r)).toBe(true) // absent the gate the lower cost wins...
     expect(onlyIntegrityFailed(r)).toBe(true) // ...but GREEN: a trusted vision_consult session with no claim → suppressed_effect
     expect(r.decision.accepted).toBe(false)
