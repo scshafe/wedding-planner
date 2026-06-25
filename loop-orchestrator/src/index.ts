@@ -70,6 +70,10 @@ export {
   type SearchProposerSpec,
 } from './proposer/search_proposer'
 export {
+  AdvisoryProposer,
+  type AdvisoryProposerSpec,
+} from './proposer/advisory_proposer'
+export {
   reconcileCandidateRiskTier,
   type RiskTierReconciliation,
 } from './pipeline/risk_tier_reconciliation'
