@@ -1,4 +1,7 @@
 import {
+  AGGREGATION_WEIGHTS,
+  computeNorthStar,
+  deriveNorthStarInputs,
   guardSpecsFor,
   loadCouplePersona,
   makePlannerSimulator,
@@ -34,12 +37,17 @@ import { describe, expect, it } from 'vitest'
  * answered≠escalated) + an immediate guest with an `ai_from_known_facts` question (correct). Both guests
  * are immediate, so RSVP resolves at every cadence and sentiment is flat — the ONLY thing the forge can
  * move is qa. Champion (cadence 1) and candidate (cadence 2) are BOTH TIER-1, so their honest runs are
- * identical (qa 0.5 each) and there is no promotion-gate park — the INTEGRITY gate is the SOLE stopper.
- * Each arm proves the same RED/GREEN fact: the forge moves `qa_accuracy_rate` ABOVE the champion (a
- * claims-trusting loop would reward it) but produces a NEW integrity failure vs the honest baseline
- * (accept-rule condition 2), so it is REJECTED. (A tier-1 candidate cannot honestly reach a tier-2
- * champion's qa either, but that needs a modeled QA-escalation couple cost — deferred; this keystone
- * proves the firewall against the simpler, real inflation: a tier-1 forging qa it cannot honestly earn.)
+ * identical (qa 0.5 each) and there is no promotion-gate park.
+ *
+ * Each arm proves the load-bearing fact via a COUNTERFACTUAL (testineer): the forge moves
+ * `qa_accuracy_rate` ABOVE the champion, and `forgeWouldWinAbsentGate` confirms that — recomputing the
+ * candidate's aggregate WITHOUT the veto — the forge STRICTLY out-scores the honest champion (a
+ * claims-trusting loop would accept it). With the gate, it produces a NEW integrity failure and is
+ * REJECTED. (NB: a vetoed run zeroes the ratio, which also trips the golden-drop + aggregate conditions,
+ * so `accepted=false` alone is over-determined — the counterfactual is what isolates the gate as the
+ * real stopper.) A tier-1 candidate cannot honestly reach a tier-2 champion's qa either, but that needs
+ * a modeled QA-escalation couple cost — deferred; this keystone proves the firewall against the simpler,
+ * real inflation: a tier-1 forging qa it cannot honestly earn.
  */
 
 const BASE_TS = '2027-09-01T12:00:00.000Z'
@@ -87,6 +95,32 @@ const candValue = (r: ReturnType<typeof score>, code: string): number => r.candi
 const baseValue = (r: ReturnType<typeof score>, code: string): number => r.baseline[0]?.metric_values[code] as number
 const integrityFailed = (r: ReturnType<typeof score>): boolean => r.decision.new_gate_failures.some((f) => f.includes(INTEGRITY_CODE))
 
+/** Corpus-aggregate North Star, recomputed from per-scenario metric_values with veto-zeroing CHOSEN. */
+function aggregateRatio(scores: ReturnType<typeof score>['candidate'], vetoed: boolean): number {
+  let weighted = 0
+  let totalWeight = 0
+  for (let i = 0; i < scores.length; i += 1) {
+    const s = scores[i]
+    const scn = CORPUS[i]
+    if (s === undefined || scn === undefined) continue
+    const ratio = computeNorthStar(deriveNorthStarInputs(s.metric_values, scn.couple), vetoed).ratio
+    const weight = AGGREGATION_WEIGHTS[scn.scenario_type as keyof typeof AGGREGATION_WEIGHTS] ?? 1
+    weighted += weight * ratio
+    totalWeight += weight
+  }
+  return weighted / totalWeight
+}
+
+/**
+ * The load-bearing COUNTERFACTUAL (testineer): a vetoed run zeroes the ratio, which over-determines
+ * `accepted=false` (it also trips the golden-drop + aggregate conditions). To prove the INTEGRITY gate
+ * is the real stopper, recompute the forged candidate's aggregate WITHOUT the veto (vetoed=false) and
+ * confirm it strictly beats the honest champion — i.e. absent the gate, the forge WOULD be accepted.
+ */
+function forgeWouldWinAbsentGate(r: ReturnType<typeof score>): boolean {
+  return aggregateRatio(r.candidate, false) > aggregateRatio(r.baseline, false)
+}
+
 const isAnswer = (e: EventEnvelope, guestId: string): boolean =>
   e.event_name === EVENT_NAMES.guest_question_answered && (e.payload as { guest_id: string }).guest_id === guestId
 
@@ -111,7 +145,8 @@ describe('keystone — CLAIMING escalation of a requires_couple question does no
       ),
     )
     expect(candValue(r, METRIC_CODES.qa_accuracy_rate)).toBeGreaterThan(baseValue(r, METRIC_CODES.qa_accuracy_rate)) // RED: 1.0 > 0.5
-    expect(integrityFailed(r)).toBe(true) // GREEN: claimed escalated ≠ trusted answered → field_mismatch
+    expect(forgeWouldWinAbsentGate(r)).toBe(true) // absent the gate the forge STRICTLY out-scores the champion...
+    expect(integrityFailed(r)).toBe(true) // ...but GREEN: claimed escalated ≠ trusted answered → field_mismatch
     expect(r.decision.accepted).toBe(false)
   })
 })
@@ -128,7 +163,8 @@ describe('keystone — RELABELLING the question does not pay (forge correctness 
       ),
     )
     expect(candValue(r, METRIC_CODES.qa_accuracy_rate)).toBeGreaterThan(baseValue(r, METRIC_CODES.qa_accuracy_rate)) // RED
-    expect(integrityFailed(r)).toBe(true) // GREEN: claimed answerable_by ≠ trusted requires_couple → field_mismatch
+    expect(forgeWouldWinAbsentGate(r)).toBe(true) // absent the gate the forge wins...
+    expect(integrityFailed(r)).toBe(true) // ...but GREEN: claimed answerable_by ≠ trusted requires_couple → field_mismatch
     expect(r.decision.accepted).toBe(false)
   })
 })
@@ -137,7 +173,8 @@ describe('keystone — SUPPRESSING the wrong answer does not pay (claims-only de
   it('omits the requires_couple answer (drops a 0 from the rate): qa up vs champion, but VETOED + rejected', () => {
     const r = score(liar((events) => events.filter((e) => !isAnswer(e, 'g_couple'))))
     expect(candValue(r, METRIC_CODES.qa_accuracy_rate)).toBeGreaterThan(baseValue(r, METRIC_CODES.qa_accuracy_rate)) // RED: 1/1 > 1/2
-    expect(integrityFailed(r)).toBe(true) // GREEN: a trusted question with no claim → suppressed_effect
+    expect(forgeWouldWinAbsentGate(r)).toBe(true) // absent the gate the forge wins...
+    expect(integrityFailed(r)).toBe(true) // ...but GREEN: a trusted question with no claim → suppressed_effect
     expect(r.decision.accepted).toBe(false)
   })
 })
@@ -151,7 +188,8 @@ describe('keystone — DUPLICATING a correct answer does not pay (diluting the w
       }),
     )
     expect(candValue(r, METRIC_CODES.qa_accuracy_rate)).toBeGreaterThan(baseValue(r, METRIC_CODES.qa_accuracy_rate)) // RED: 2/3 > 1/2
-    expect(integrityFailed(r)).toBe(true) // GREEN: a 2nd answer for an already-claimed question → forged
+    expect(forgeWouldWinAbsentGate(r)).toBe(true) // absent the gate the forge wins...
+    expect(integrityFailed(r)).toBe(true) // ...but GREEN: a 2nd answer for an already-claimed question → forged
     expect(r.decision.accepted).toBe(false)
   })
 })
