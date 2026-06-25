@@ -215,7 +215,7 @@ load-bearing claim (Q4) and byte-identity (Q5) are confirmed real. Findings fold
   **doddy lens** review post-build: a claimed-high / duplicated / suppressed / phantom vision alignment
   cannot raise `vision_match_rate` while passing; the value and cost (`vision_consult`) surfaces compose
   without a bypass.
-- [ ] **Step 6 — Wire `quality` + honest-run audit + read-seam.** (a) `metric_normalization.ts`:
+- [x] **Step 6 — Wire `quality` + honest-run audit + read-seam.** (a) `metric_normalization.ts`:
   `quality: meanOfPresent([get('vision_match_rate')])`; document that `comms_quality`/`intuitiveness` stay
   absent (judge→STOP). (b) Honest-run sweep over {vision-sensitive × tier-1/tier-2} reconciling clean
   (Stage A ≡ Stage B, zero divergences) — a stage divergence would self-veto every honest tier-2 vision run.
