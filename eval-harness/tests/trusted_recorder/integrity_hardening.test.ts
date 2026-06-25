@@ -206,3 +206,30 @@ describe('integrity hardening — #4 seal() closes the record-after-read TOCTOU'
     ).toThrowError(/SEALED|sealed/)
   })
 })
+
+describe('trusted recorder — sentiment observations are append-only and sealable (Phase 6)', () => {
+  it('records, retrieves, and aggregates one trusted sentiment observation per guest', () => {
+    const recorder = new TrustedRecorder()
+    recorder.recordSentimentObservation({ guest_id: 'g1', sentiment_score: 0.75 })
+    recorder.recordSentimentObservation({ guest_id: 'g2', sentiment_score: 1 })
+    expect(recorder.sentimentObservation('g1')?.sentiment_score).toBe(0.75)
+    expect(recorder.sentimentObservation('absent')).toBeUndefined()
+    expect(recorder.allSentimentObservations()).toHaveLength(2)
+  })
+
+  it('rejects a duplicate sentiment observation for the same guest (append-only)', () => {
+    const recorder = new TrustedRecorder()
+    recorder.recordSentimentObservation({ guest_id: 'g1', sentiment_score: 0.5 })
+    expect(() => recorder.recordSentimentObservation({ guest_id: 'g1', sentiment_score: 0.9 })).toThrowError(
+      /DUPLICATE_EFFECT|append-only/,
+    )
+  })
+
+  it('refuses to record a sentiment observation after the recorder is sealed', () => {
+    const recorder = new TrustedRecorder()
+    recorder.seal()
+    expect(() => recorder.recordSentimentObservation({ guest_id: 'g1', sentiment_score: 0.5 })).toThrowError(
+      /SEALED|sealed/,
+    )
+  })
+})

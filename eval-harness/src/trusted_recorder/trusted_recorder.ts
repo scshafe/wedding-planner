@@ -8,12 +8,14 @@ import {
   type RecordGuestMessageInput,
   type RecordIntegrationActionInput,
   type RecordRsvpOutcomeInput,
+  type RecordSentimentObservationInput,
   type TrustedCommitmentRecord,
   type TrustedConstraintDetermination,
   type TrustedCoupleSessionRecord,
   type TrustedGuestMessageRecord,
   type TrustedIntegrationActionRecord,
   type TrustedRsvpOutcomeRecord,
+  type TrustedSentimentObservationRecord,
 } from './trusted_outcomes'
 
 /**
@@ -52,6 +54,7 @@ export class TrustedRecorder {
   private readonly guestMessagesById = new Map<string, TrustedGuestMessageRecord>()
   private readonly rsvpOutcomesByGuestId = new Map<string, TrustedRsvpOutcomeRecord>()
   private readonly coupleSessionsByGuestId = new Map<string, TrustedCoupleSessionRecord>()
+  private readonly sentimentObservationsByGuestId = new Map<string, TrustedSentimentObservationRecord>()
   private runningCommittedCents = 0
   private sealed = false
 
@@ -171,6 +174,25 @@ export class TrustedRecorder {
     return record
   }
 
+  /**
+   * Record the harness-observed honest sentiment score for one guest (Phase 6). Append-only, one per
+   * guest. Feeds the integrity gate's sentiment reconciliation (the trusted backing for the claimed
+   * `guest_sentiment_score` numerator). Throws DUPLICATE_EFFECT on a repeat for the same guest.
+   */
+  recordSentimentObservation(input: RecordSentimentObservationInput): TrustedSentimentObservationRecord {
+    this.assertNotSealed('guest_sentiment', input.guest_id)
+    if (this.sentimentObservationsByGuestId.has(input.guest_id)) {
+      throw new EvalHarnessError(
+        'TRUSTED_RECORDER.DUPLICATE_EFFECT',
+        `Guest ${input.guest_id} already has a recorded sentiment observation; the trusted record is append-only.`,
+        { context: { guest_id: input.guest_id } },
+      )
+    }
+    const record = deepFreeze<TrustedSentimentObservationRecord>({ ...input })
+    this.sentimentObservationsByGuestId.set(input.guest_id, record)
+    return record
+  }
+
   /** The trusted RSVP outcome for one guest, or undefined if the harness observed no resolution. */
   rsvpOutcome(guestId: string): TrustedRsvpOutcomeRecord | undefined {
     return this.rsvpOutcomesByGuestId.get(guestId)
@@ -189,6 +211,16 @@ export class TrustedRecorder {
   /** All trusted couple sessions (escalation costs). Feeds the integrity couple-cost reconciliation. */
   allCoupleSessions(): readonly TrustedCoupleSessionRecord[] {
     return [...this.coupleSessionsByGuestId.values()]
+  }
+
+  /** The trusted sentiment observation for one guest, or undefined if none was observed. */
+  sentimentObservation(guestId: string): TrustedSentimentObservationRecord | undefined {
+    return this.sentimentObservationsByGuestId.get(guestId)
+  }
+
+  /** All trusted sentiment observations. Feeds the integrity sentiment reconciliation. */
+  allSentimentObservations(): readonly TrustedSentimentObservationRecord[] {
+    return [...this.sentimentObservationsByGuestId.values()]
   }
 
   /** All trusted constraint determinations. Feeds CONSTRAINT.HARD_VIOLATED. */

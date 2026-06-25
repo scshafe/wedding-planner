@@ -104,6 +104,29 @@ export interface TrustedCoupleSessionRecord {
 
 export type RecordCoupleSessionInput = TrustedCoupleSessionRecord
 
+/**
+ * What the harness independently observed about one guest's SENTIMENT under the genome's reminder policy
+ * (Phase 6). The product claims a per-guest score via `guest.sentiment.sampled`; the scorer means those
+ * CLAIMED scores into `guest_sentiment_score` (half of the `guest_experience` North-Star component). This
+ * is the trusted backing — the honest score Stage B re-derives from `honestSentimentScore` (the SHARED
+ * fact) on persona ground truth + the trusted genome policy alone, never from the product's claim. One
+ * is recorded per guest (Stage A samples every guest unconditionally), so the integrity gate covers all
+ * three forges: an inflated score (field_mismatch), a dropped low-sentiment sample (suppressed_effect —
+ * which raises the mean), and a phantom-happy guest (forged_effect).
+ *
+ * Note this backs a GRADER input (the North-Star numerator), not a VETO-GATE input — so it extends the
+ * firewall the way Phase 4b did for resolution/cost, without changing the integrity-gate completeness
+ * invariant (which concerns the fields veto gates read). Phase 5's batching ENLARGED this claimed value
+ * (the comfort-consolidation upside), which is why it is reconciled now (escalation-forge-detection D7).
+ */
+export interface TrustedSentimentObservationRecord {
+  readonly guest_id: string
+  /** The honest sentiment score in [0,1]; the gate field-diffs the claimed sentiment_score against this. */
+  readonly sentiment_score: number
+}
+
+export type RecordSentimentObservationInput = TrustedSentimentObservationRecord
+
 /** Grader-side determination of whether one hard constraint is satisfied by the final plan. */
 export interface TrustedConstraintDetermination {
   readonly constraint_id: string

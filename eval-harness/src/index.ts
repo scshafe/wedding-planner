@@ -26,6 +26,8 @@ export {
   type RecordIntegrationActionInput,
   type RecordConstraintDeterminationInput,
   type RecordGuestMessageInput,
+  type TrustedSentimentObservationRecord,
+  type RecordSentimentObservationInput,
   type VerifiedStatus,
 } from './trusted_recorder/trusted_outcomes'
 
