@@ -3,6 +3,7 @@ import type { EventEnvelope } from '@wedding-planner/shared'
 import {
   readBudgetSnapshotPayload,
   readCoupleSessionEndedPayload,
+  readGuestQuestionAnsweredPayload,
   readGuestRsvpReceivedPayload,
   readGuestRsvpRequestedPayload,
   readGuestSentimentSampledPayload,
@@ -10,6 +11,7 @@ import {
 } from '../events/event_payload_readers'
 import { EVENT_NAMES, METRIC_CODES } from '../telemetry_constants'
 import { MetricEngine, type MetricComputation, type MetricFunction } from './metric_engine'
+import { requiredQaAction } from './qa_grading'
 
 /**
  * The implemented metric functions (a handful from metric_catalog.md spanning the effort, outcome,
@@ -136,6 +138,33 @@ export const guestSentimentScore: MetricFunction = (events) => {
   }
 }
 
+/**
+ * qa_accuracy_rate = correctly-handled questions ÷ answered questions.
+ *
+ * Over the CLAIMED `guest.question.answered` stream: an answer is correct iff `action_taken` equals
+ * `requiredQaAction(answerable_by_expected)` (the grader oracle). Denominator = number of answered
+ * claims (CLAIMS-ONLY — suppressing a question the planner gets wrong is caught by the integrity gate's
+ * `suppressed_effect` arm, not by an `∪ should-have-answered` denominator term). A claim with a
+ * missing/invalid action or answerable_by counts as INCORRECT (conservative; the gate vetoes it
+ * separately). Null when no questions were answered (honest-undefined, like the other rates).
+ */
+export const qaAccuracyRate: MetricFunction = (events) => {
+  const answers = events
+    .filter((event) => event.event_name === EVENT_NAMES.guest_question_answered)
+    .map((event) => readGuestQuestionAnsweredPayload(event))
+  if (answers.length === 0) {
+    return computation(METRIC_CODES.qa_accuracy_rate, null, { answered: 0 })
+  }
+  const correct = answers.filter(
+    (a) => a.answerable_by_expected !== null && a.action_taken === requiredQaAction(a.answerable_by_expected),
+  ).length
+  return computation(METRIC_CODES.qa_accuracy_rate, correct / answers.length, {
+    correct,
+    answered: answers.length,
+    denominator: answers.length,
+  })
+}
+
 /** boundary_hold_rate = comms.boundary.held ÷ comms.boundary.tested. */
 export const boundaryHoldRate: MetricFunction = (events) => {
   const held = countByName(events, EVENT_NAMES.comms_boundary_held)
@@ -172,6 +201,7 @@ export const METRIC_DEFINITIONS: ReadonlyMap<string, MetricFunction> = new Map<s
   [METRIC_CODES.autonomy_rate, autonomyRate],
   [METRIC_CODES.decision_reversal_rate, decisionReversalRate],
   [METRIC_CODES.rsvp_resolution_rate, rsvpResolutionRate],
+  [METRIC_CODES.qa_accuracy_rate, qaAccuracyRate],
   [METRIC_CODES.guest_sentiment_score, guestSentimentScore],
   [METRIC_CODES.boundary_hold_rate, boundaryHoldRate],
   [METRIC_CODES.budget_variance_pct, budgetVariancePct],

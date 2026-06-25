@@ -158,7 +158,13 @@ boundary), wolf (stats/aggregation), rigorous-architect (design), and testineer 
   append-only (DUPLICATE_EFFECT on repeat composite key), sealed-guard, deep-frozen — mirroring
   `recordSentimentObservation`. Tests: append-only + sealed + retrieval by composite key.
 
-- [ ] **Step 3 — Telemetry: payload reader + the `qa_accuracy_rate` metric (+ catalog reconcile).**
+- [x] **Step 3 — Telemetry: payload reader + the `qa_accuracy_rate` metric (+ catalog reconcile).**
+  DONE — TOLERANT `readGuestQuestionAnsweredPayload` (enum-or-null for action/answerable, so an
+  adversarial/malformed claim scores conservatively + lets the gate veto, never crashes scoring);
+  `qaAccuracyRate` (claims-only, correct = action matches `requiredQaAction(answerable)`, null when 0)
+  registered + exported. `metric_catalog.md` formula + footnote updated to claims-only with rationale.
+  `qa_accuracy.test.ts`: all-correct → 1.0, mixed → 0.5, missing-field → conservative, empty → null.
+  275 tests green.
   `event_payload_readers.ts`: `readGuestQuestionAnsweredPayload` (guest_id, question_id,
   answerable_by_expected, action_taken — validated enums). `metric_definitions.ts`: `qaAccuracyRate`
   (claims-only numerator/denominator/null per the design) registered in `METRIC_DEFINITIONS`. **Update

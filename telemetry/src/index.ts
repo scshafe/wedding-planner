@@ -50,6 +50,7 @@ export {
   autonomyRate,
   decisionReversalRate,
   rsvpResolutionRate,
+  qaAccuracyRate,
   guestSentimentScore,
   boundaryHoldRate,
   budgetVariancePct,

@@ -53,14 +53,23 @@ gates production. `>1` means more outcome quality per dollar than baseline.
 |---|---|---|---|---|---|
 | `rsvp_resolution_rate` | count(distinct guest with `guest.rsvp.received` status∈{yes,no} by rsvp_window close) ÷ count(distinct guest with `guest.rsvp.requested`) | ratio 0–1 · gte | rsvp | eval+telem | qa_accuracy_rate |
 | `rsvp_reminder_effectiveness` | count(`guest.rsvp.received` after ≥1 `guest.rsvp.reminded`, for prior pending/maybe) ÷ count(guests reminded) | ratio 0–1 · max | rsvp | eval+telem | guest_sentiment_score (don't nag) |
-| `qa_accuracy_rate` | count(`guest.question.answered` correct=true²) ÷ count(answered ∪ should-have-answered) | ratio 0–1 · gte | guest_qa | eval (+telem audit) | answer_coverage (don't suppress answering) |
+| `qa_accuracy_rate` | count(`guest.question.answered` correct=true²) ÷ count(`guest.question.answered`) | ratio 0–1 · gte | guest_qa | eval (+telem audit) | answer_coverage (don't suppress answering) |
 | `guest_sentiment_score` | mean(`guest.sentiment.sampled`.sentiment_score) | 0–1 · gte | comms_personalization | eval+telem | — |
 | `boundary_hold_rate` | count(`comms.boundary.held`) ÷ count(`comms.boundary.tested`) | ratio 0–1 · gte | comms_personalization | eval+telem | guest_sentiment_score, comms_quality.boundary_grace |
 | `escalation_correct` | count(`guest.question.answered` expected=requires_couple & action=escalated) ÷ count(expected=requires_couple) | ratio 0–1 · gte | guest_qa | eval | qa_accuracy_rate |
 
-² *correct* = `action_taken` matches `answerable_by_expected` AND every `answer_fact_id` matches
-the booked plan. Answering a `must_refuse` (surprise/privacy) or a `requires_couple` question is
-incorrect even if the prose is nice. `answer_coverage` = answered ÷ ai_from_known_facts questions.
+² *correct* = `action_taken` matches the required action for `answerable_by_expected`
+(ai_from_known_facts→answered, requires_couple→escalated, must_refuse→refused). Answering a
+`must_refuse` (surprise/privacy) or a `requires_couple` question is incorrect even if the prose is
+nice. `answer_coverage` = answered ÷ ai_from_known_facts questions.
+
+**Denominator is CLAIMS-ONLY** (Phase 7): `count(guest.question.answered)`, not the earlier
+`count(answered ∪ should-have-answered)`. Suppressing a question the planner would get wrong is caught
+by the integrity gate's `suppressed_effect` arm (a trusted Q&A outcome with no claim → veto), so the
+`∪ should-have-answered` term is unnecessary — and claims-only mirrors the trusted-backed
+`guest_sentiment_score` denominator. The `answer_fact_id` half of *correct* (fact-checking the answer
+prose) awaits a fact-assertion simulator model and is out of scope; today *correct* is the
+action↔answerable_by match alone, reconciled field-by-field against the trusted record.
 
 ---
 

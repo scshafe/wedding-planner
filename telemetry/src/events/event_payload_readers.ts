@@ -1,6 +1,7 @@
 import type { EventEnvelope } from '@wedding-planner/shared'
 
 import { malformedPayloadError } from '../telemetry_error'
+import type { QaAction, QaAnswerableBy } from '../metrics/qa_grading'
 
 /**
  * Typed readers for the event payloads the metric engine consumes.
@@ -96,6 +97,47 @@ export function readGuestSentimentSampledPayload(
   return {
     guest_id: requireString(event, 'guest_id'),
     sentiment_score: requireNumber(event, 'sentiment_score'),
+  }
+}
+
+// --- guest.question.answered ----------------------------------------------------------------
+
+const QA_ACTIONS: ReadonlySet<string> = new Set(['answered', 'escalated', 'refused'])
+const QA_ANSWERABLE_BY: ReadonlySet<string> = new Set([
+  'ai_from_known_facts',
+  'requires_couple',
+  'must_refuse',
+])
+
+/**
+ * The product's claimed handling of one guest question. Unlike the other readers this is TOLERANT of a
+ * missing/invalid `action_taken` or `answerable_by_expected`: an adversarial or malformed claim must
+ * score CONSERVATIVELY (counted incorrect by `qa_accuracy_rate`) and be VETOED by the integrity gate
+ * (whose `skipWhenClaimAbsent:false` field-diff treats an absent claimed field against a trusted value
+ * as a divergence) — never crash scoring, which runs metrics even after a gate fails. So enum fields
+ * are returned as the valid value or `null`; only the identifying ids are required.
+ */
+export interface GuestQuestionAnsweredPayload {
+  readonly guest_id: string
+  readonly question_id: string
+  readonly action_taken: QaAction | null
+  readonly answerable_by_expected: QaAnswerableBy | null
+}
+
+export function readGuestQuestionAnsweredPayload(
+  event: EventEnvelope,
+): GuestQuestionAnsweredPayload {
+  const record = payloadRecord(event)
+  const action = record.action_taken
+  const answerable = record.answerable_by_expected
+  return {
+    guest_id: requireString(event, 'guest_id'),
+    question_id: requireString(event, 'question_id'),
+    action_taken: typeof action === 'string' && QA_ACTIONS.has(action) ? (action as QaAction) : null,
+    answerable_by_expected:
+      typeof answerable === 'string' && QA_ANSWERABLE_BY.has(answerable)
+        ? (answerable as QaAnswerableBy)
+        : null,
   }
 }
 
