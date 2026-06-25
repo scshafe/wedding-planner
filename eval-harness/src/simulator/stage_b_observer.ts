@@ -11,6 +11,8 @@ import {
   honestQaAction,
   honestQaEscalationSession,
   honestSentimentScore,
+  honestVisionConsultSession,
+  honestVisionMatch,
   isCoupleResolvable,
   NEVER,
   REMINDERS_NEEDED,
@@ -186,10 +188,11 @@ export function observeTrustedRecord(
   // exactly on an honest run, so the integrity gate stays load-bearing. A category-free scenario (the
   // search corpus) records ZERO category bookings, preserving byte-identity with the pre-Phase-8 record.
   for (const required of scenario.required_categories ?? []) {
+    const bookingStatus = honestCategoryStatus(required.requires_couple_approval, canEscalate)
     recorder.recordCategoryBooking({
       category_id: required.category_id,
       category: required.category,
-      booking_status: honestCategoryStatus(required.requires_couple_approval, canEscalate),
+      booking_status: bookingStatus,
     })
     // PHASE-9: the trusted couple-attention cost of securing approval on this booking — re-derived from
     // the SAME shared fact Stage A uses (incurred IFF requires_couple_approval && canEscalate), keyed by
@@ -200,6 +203,23 @@ export function observeTrustedRecord(
         about_id: required.category_id,
         active_seconds: COUPLE_SESSION_ACTIVE_SECONDS,
       })
+    }
+    // PHASE-10: the trusted vision alignment of this booked vision-sensitive category + its consult cost —
+    // re-derived from the SAME shared facts Stage A uses (bit-identical). The value backing for the claimed
+    // `vision_match_rate`; the `vision_consult` cost rides Phase 9's couple-session reconciliation. A
+    // non-vision-sensitive / deferred category records NOTHING (byte-identity on the search/Phase-8 corpus).
+    if (required.vision_sensitive === true && bookingStatus === 'booked') {
+      recorder.recordVisionAlignment({
+        category_id: required.category_id,
+        vision_match_score: honestVisionMatch(canEscalate),
+      })
+      if (honestVisionConsultSession(canEscalate)) {
+        recorder.recordCoupleSession({
+          session_reason: 'vision_consult',
+          about_id: required.category_id,
+          active_seconds: COUPLE_SESSION_ACTIVE_SECONDS,
+        })
+      }
     }
   }
 

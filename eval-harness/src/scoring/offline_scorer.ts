@@ -46,6 +46,18 @@ export interface RequiredCategory {
   readonly category_id: string
   readonly category: string
   readonly requires_couple_approval: boolean
+  /**
+   * PHASE 10 — does this category have a couple vision preference its booked selection should align to? A
+   * `vision_sensitive` booked category is aligned (vision_match 1.0) only by a genome that can CONSULT the
+   * couple (tier-2, paying a `vision_consult` couple session); a tier-1 genome books a DEFAULT (0.5)
+   * selection. Orthogonal to `requires_couple_approval` (a category can be approval-free yet
+   * vision-sensitive — the cleanest keystone shape, where completeness is held and vision is the sole
+   * mover). Absent/false ⇒ aligned by default at no cost, NO `category.vision.aligned` claim — which keeps
+   * the vision-free search corpus byte-identical (the metric is null there, `quality` stays null). Like
+   * `requires_couple_approval`, runtime-only (NOT in any JSON Schema), so vision-bearing scenarios are
+   * KEYSTONE-ONLY by construction.
+   */
+  readonly vision_sensitive?: boolean
 }
 
 export interface ScenarioDefinition {

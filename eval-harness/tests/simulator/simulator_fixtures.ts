@@ -80,13 +80,20 @@ const COUPLE = loadCouplePersona('couple_standard_baseline')
 
 type RequiredCategory = NonNullable<ScenarioDefinition['required_categories']>[number]
 
-/** A required-category ground-truth fact (Phase 8). `requires_couple_approval` ⇒ booked only at tier-2. */
+/** A required-category ground-truth fact (Phase 8). `requires_couple_approval` ⇒ booked only at tier-2.
+ *  `visionSensitive` (Phase 10) ⇒ a booked one carries a vision-alignment claim (aligned only at tier-2). */
 export function makeRequiredCategory(
   categoryId: string,
   category: string,
   requiresCoupleApproval: boolean,
+  visionSensitive?: boolean,
 ): RequiredCategory {
-  return { category_id: categoryId, category, requires_couple_approval: requiresCoupleApproval }
+  return {
+    category_id: categoryId,
+    category,
+    requires_couple_approval: requiresCoupleApproval,
+    ...(visionSensitive === undefined ? {} : { vision_sensitive: visionSensitive }),
+  }
 }
 
 /** A scenario with a configurable guest list (default: a mix spanning the latency spectrum). */

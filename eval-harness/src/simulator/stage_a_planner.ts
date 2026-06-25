@@ -17,6 +17,8 @@ import {
   honestQaAction,
   honestQaEscalationSession,
   honestSentimentScore,
+  honestVisionConsultSession,
+  honestVisionMatch,
   isCoupleResolvable,
   NEVER,
   REMINDERS_NEEDED,
@@ -217,6 +219,7 @@ export const rsvpCadencePlanner: Planner = ({ scenario, genome, clock, ids }) =>
   // record. A category-FREE scenario (the search corpus) has no required_categories, so ZERO category
   // events are emitted and the metric stays null — the cube pins are untouched.
   for (const required of scenario.required_categories ?? []) {
+    const bookingStatus = honestCategoryStatus(required.requires_couple_approval, canEscalate)
     events.push(
       buildEvent(clock, ids, {
         event_name: EVENT_NAMES.category_booked,
@@ -229,7 +232,7 @@ export const rsvpCadencePlanner: Planner = ({ scenario, genome, clock, ids }) =>
         payload: {
           category_id: required.category_id,
           category: required.category,
-          booking_status: honestCategoryStatus(required.requires_couple_approval, canEscalate),
+          booking_status: bookingStatus,
         },
         meta: { schema_version: '1.0.0' },
       }),
@@ -258,6 +261,51 @@ export const rsvpCadencePlanner: Planner = ({ scenario, genome, clock, ids }) =>
         }),
       )
       clock.advance(1000)
+    }
+    // PHASE-10: a vision-sensitive BOOKED category carries a vision-alignment claim (the only present
+    // `quality` rubric, `vision_match_rate`). Aligned (1.0) only if the genome can CONSULT the couple
+    // (tier-2) — which also pays a `vision_consult` couple session — else a DEFAULT (0.5) selection at no
+    // cost. Orthogonal to completeness (the category is booked either way). A non-vision-sensitive category
+    // (incl. EVERY search-corpus / Phase-8 category) emits NO vision claim, keeping those runs byte-identical.
+    if (required.vision_sensitive === true && bookingStatus === 'booked') {
+      events.push(
+        buildEvent(clock, ids, {
+          event_name: EVENT_NAMES.category_vision_aligned,
+          trace_id: `t_${scenario.scenario_id}`,
+          wedding_id: scenario.scenario_id,
+          phase: 'booking',
+          capability: 'budget_management',
+          actor: 'ai',
+          source: 'eval',
+          payload: {
+            category_id: required.category_id,
+            vision_match_score: honestVisionMatch(canEscalate),
+          },
+          meta: { schema_version: '1.0.0' },
+        }),
+      )
+      clock.advance(1000)
+      if (honestVisionConsultSession(canEscalate)) {
+        events.push(
+          buildEvent(clock, ids, {
+            event_name: EVENT_NAMES.couple_session_ended,
+            trace_id: `t_${scenario.scenario_id}`,
+            wedding_id: scenario.scenario_id,
+            phase: 'booking',
+            capability: 'budget_management',
+            actor: 'couple',
+            source: 'eval',
+            payload: {
+              session_id: `cs_vision_${required.category_id}`,
+              session_reason: 'vision_consult',
+              about_id: required.category_id,
+              active_seconds: COUPLE_SESSION_ACTIVE_SECONDS,
+            },
+            meta: { schema_version: '1.0.0' },
+          }),
+        )
+        clock.advance(1000)
+      }
     }
   }
 
