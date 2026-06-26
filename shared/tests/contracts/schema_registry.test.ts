@@ -9,9 +9,9 @@ import {
 } from '@wedding-planner/shared'
 
 describe('schema registry', () => {
-  it('registers exactly the 13 canonical contracts', () => {
-    expect(CONTRACT_COUNT).toBe(13)
-    expect(CONTRACT_DEFINITIONS).toHaveLength(13)
+  it('registers exactly the 15 canonical contracts', () => {
+    expect(CONTRACT_COUNT).toBe(15)
+    expect(CONTRACT_DEFINITIONS).toHaveLength(15)
   })
 
   it('compiles every contract under ajv without error', () => {

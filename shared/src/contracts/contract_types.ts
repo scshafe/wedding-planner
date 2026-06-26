@@ -41,3 +41,7 @@ export type { RolloutStage } from './generated/rollout_stage'
 export type { EscalationRecord } from './generated/escalation_record'
 export type { OversightRecord } from './generated/oversight_record'
 export type { TrustedFeed } from './generated/trusted_feed'
+
+// Product contracts (the customer-facing surface: the multi-tenant aggregates).
+export type { Tenant } from './generated/tenant'
+export type { Wedding } from './generated/wedding'

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/wedding.json",
+  "title": "Wedding",
+  "description": "A couple's wedding, owned by exactly one tenant. The aggregate the planner and the couple collaborate on, and the seam where the planning engine (strategy genome / North Star) connects in a later phase. Always accessed through a tenant-scoped repository: the lookup key is (tenant_id, wedding_id), never wedding_id alone, so ids need not be globally unique. See product/README.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["wedding_id", "tenant_id", "couple_display_name", "event_date", "status", "created_at"],
+  "properties": {
+    "wedding_id": { "type": "string", "minLength": 1, "description": "Identity within the owning tenant's partition, injected from the id generator. Not a global key — two tenants may hold the same wedding_id without collision because the lookup key is (tenant_id, wedding_id)." },
+    "tenant_id": { "type": "string", "minLength": 1, "description": "The owning tenant. In the tenant-scoped repository this field is ONLY ever compared to the context's tenant_id (to veto a cross-tenant write); it is never used to select the partition (the context is). A payload tenant_id different from the context is rejected (PRODUCT.CROSS_TENANT_WRITE)." },
+    "couple_display_name": { "type": "string", "minLength": 1, "description": "The couple's display name, e.g. 'Alex & Sam'." },
+    "event_date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "The wedding date (YYYY-MM-DD)." },
+    "status": { "type": "string", "enum": ["planning", "active", "completed", "cancelled"], "description": "Planning lifecycle. planning = onboarding the couple; active = under active planning; completed = the wedding has happened; cancelled = called off." },
+    "created_at": { "type": "string", "minLength": 1, "description": "ISO 8601 UTC creation time, from the injected clock (never ambient)." }
+  }
+}

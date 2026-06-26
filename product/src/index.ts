@@ -12,3 +12,6 @@
 export const PRODUCT_PACKAGE_NAME = '@wedding-planner/product'
 
 export { ProductError } from './product_error'
+
+// The product aggregates (generated from product/schemas/*, surfaced via shared's clean-named types).
+export type { Tenant, Wedding } from '@wedding-planner/shared'

@@ -1,7 +1,7 @@
 /**
  * @canonical contract_manifest -- the authoritative list of the system's JSON Schema contracts.
  *
- * The 13 `* /schemas/*.json` files are the canonical contracts of the system (root README).
+ * The 15 `* /schemas/*.json` files are the canonical contracts of the system (root README).
  * This manifest names each one (so "the grade_report schema" maps to exactly one entry),
  * records its `$id` (as declared inside the file) and its repo-relative path, and is the single
  * source the schema registry loads from. A test cross-checks this manifest against on-disk glob
@@ -16,6 +16,7 @@ export type ContractDomain =
   | 'eval-harness'
   | 'loop-orchestrator'
   | 'agent-operations'
+  | 'product'
 
 export type ContractKey =
   | 'strategy_genome'
@@ -31,6 +32,8 @@ export type ContractKey =
   | 'escalation_record'
   | 'oversight_record'
   | 'trusted_feed'
+  | 'tenant'
+  | 'wedding'
 
 export interface ContractDefinition {
   /** Stable friendly key, e.g. 'grade_report'. */
@@ -128,6 +131,19 @@ export const CONTRACT_DEFINITIONS: readonly ContractDefinition[] = [
     schemaId: `${SCHEMA_ID_PREFIX}/trusted_feed.json`,
     repoRelativePath: 'agent-operations/schemas/trusted_feed_schema.json',
     domain: 'agent-operations',
+  },
+  // product (the customer-facing surface: the multi-tenant aggregates)
+  {
+    key: 'tenant',
+    schemaId: `${SCHEMA_ID_PREFIX}/tenant.json`,
+    repoRelativePath: 'product/schemas/tenant_schema.json',
+    domain: 'product',
+  },
+  {
+    key: 'wedding',
+    schemaId: `${SCHEMA_ID_PREFIX}/wedding.json`,
+    repoRelativePath: 'product/schemas/wedding_schema.json',
+    domain: 'product',
   },
 ] as const
 

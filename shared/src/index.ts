@@ -83,4 +83,6 @@ export type {
   EscalationRecord,
   OversightRecord,
   TrustedFeed,
+  Tenant,
+  Wedding,
 } from './contracts/contract_types'
