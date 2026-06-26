@@ -56,22 +56,31 @@ offline core (telemetry, eval-harness, loop-orchestrator) — see the git histor
 
 ## Status & next step
 
-All four domains are **specs**, reviewed (security / statistics / architecture) and hardened. None
-is implemented as running code yet. The **oversight-loop mechanics** are now designed and hardened
-(security + architecture review, P0/P1/P2 applied) in
-[`agent-operations/oversight_loops.md`](agent-operations/oversight_loops.md): three oversight tempos,
-the additive-only review gate, the L0–L4 who-watches-whom DAG, and the eval→prod evidence boundary —
-whose production realization is specified in
-[`agent-operations/trusted_evidence_channel.md`](agent-operations/trusted_evidence_channel.md)
-(verifying path ≠ acting path, signed liveness that fails closed, key custody outside every agent).
+**The offline core is real, running code.** `telemetry/`, `eval-harness/`, and `loop-orchestrator/`
+are implemented and green through eleven autonomous build phases — the trusted-evidence integrity arc
+(every North-Star input is now trusted-backed, not self-reported) plus an advisory tier-2
+recommendation layer. `agent-operations/` is specs + the hardened **oversight-loop mechanics**
+([`agent-operations/oversight_loops.md`](agent-operations/oversight_loops.md): three tempos, the
+additive-only review gate, the L0–L4 who-watches-whom DAG) and the eval→prod evidence boundary
+([`agent-operations/trusted_evidence_channel.md`](agent-operations/trusted_evidence_channel.md):
+verifying path ≠ acting path, signed liveness that fails closed, key custody outside every agent). The
+autonomous loop advances `main` when green; where the last run left off is in
+[`.claude/handoff.local.md`](.claude/handoff.local.md).
 
-**Next steps:**
+**The next strategic direction — the customer-facing product surface.** Everything above is the
+*engine*: how the system scores, measures, and improves itself. For this to be the **business** it is
+meant to be, it needs the **product** — a **white-label, multi-tenant** web app that real wedding
+planners and their couples sign up for, theme, and use. This is now a first-class goal. It is built
+**offline-first as a deployable Docker container** (locally runnable, demoable, launch-*ready*;
+onboarding/billing/comms simulated offline); **actually going live stays human-reserved** (real
+hosting, tenants, money, comms). The autonomous loop owns when it starts and how it's built — see the
+boundary in [`CLAUDE.md`](CLAUDE.md).
+
+**Also open / earlier threads:**
 - The **action→surface/scope map** — trusted config mapping an operational action to its blast-radius
   surface and each role to a machine-checkable scope; the ops analogue of
   [`loop-orchestrator/risk_tier_derivation.md`](loop-orchestrator/risk_tier_derivation.md), required
   before derived-tier and `SCOPE_EXCEEDED` are computable for ops actions. *(Named dependency, open.)*
-- **Agent strategy-autonomy scope** — whether/how agents may ideate and ship *growth* (e.g. a
-  white-label multi-tenant pivot), with irreversible business commitments still human-reserved. A
-  design thread, not yet decided.
-- **Implementation** — the Claude Agent SDK substrate the loop README sketches; the repo is still
-  all design specs.
+- **Agent strategy-autonomy scope** — whether/how agents may ideate and ship *growth* (e.g. setting
+  pricing or signing planner contracts for the white-label platform), with irreversible business
+  commitments still human-reserved. A design thread, not yet decided.

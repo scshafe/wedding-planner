@@ -7,6 +7,14 @@ metadata:
   originSessionId: 8da949e0-569a-4b65-a730-9b06b67ba00c
 ---
 
+**UPDATE (2026-06-25) — the BUILD is now RATIFIED.** The human owner promoted the customer-facing
+product surface to a **first-class build goal**: build the white-label / multi-tenant web app
+**offline-first, as a deployable Docker container** (locally runnable, launch-*ready*; going live
+stays human-reserved). Canonical: [[customer-facing-product-surface-is-a-first-class-goal]]. What is
+ratified is the *technical build up to the line*; the **strategy-autonomy** expansion described below
+(agents *deciding* pricing / contracts / growth commitments) is **unchanged and still unsettled** —
+those irreversible business commitments remain human-reserved (exception #4).
+
 **Candidate growth direction (user-floated, 2026-06-23):** turn the planner into a **white-labeled /
 multi-tenant platform** — let *actual wedding planners* sign up and theme their own site. A possible
 way to grow the business.

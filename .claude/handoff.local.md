@@ -15,6 +15,20 @@ ones as ranked **"promotable, pending human approval" recommendations** — neve
 safety rail: `MAX_AUTONOMOUS_PROMOTION_TIER = 1`). This is the deferred **§4**. See `docs/adr/0011`,
 memory [[advisory-tier2-promotable-recommendations]].
 
+## Standing directional goal (human-set 2026-06-25) — build the customer-facing PRODUCT surface
+The human owner course-corrected the roadmap. The four domains so far are all **inward-facing**
+(score / measure / improve / operate the system). For this to be the **business** it is meant to be, it
+needs a **customer-facing product surface** — a **white-label, multi-tenant** web app planners + their
+couples actually use. This is now a **first-class goal**, co-equal with the self-improvement loop, and
+it is **on the horizon: you own the timing** (finish in-flight threads or pivot when you judge best).
+**Boundary (keeps the offline-first model intact):** build it **offline-first, as a deployable Docker
+container** — locally runnable, demoable, launch-*ready*; onboarding/billing/comms are offline
+simulations. **Going live is human-reserved** (real deploy/hosting/registry/DNS/secrets/tenants/money/
+comms = the human crossing, exception #4). Producing the image is in-scope; running it for real is not.
+Now anchored in `CLAUDE.md` ("The product direction"), the README roadmap, and memory
+[[customer-facing-product-surface-is-a-first-class-goal]] (+ the now-ratified
+[[white-label-growth-and-agent-strategy-autonomy]]). The auto-landing tier-1 offline loop is untouched.
+
 ## The load-bearing insight (carry forward)
 The advisory pass is **reuse, not fork**: `runAdvisoryLoop` wraps the SAME `runOfflineLoop` (same scorer
 + veto gates + integrity reconciliation + promotion gate) with a SEPARATE `AdvisoryProposer` (tier-2
@@ -46,6 +60,12 @@ from the genome/scenario, so a lying planner self-incriminates).
 - **Step 6** — `docs/adr/0011` + memory [[advisory-tier2-promotable-recommendations]] + MEMORY.md index + this handoff.
 
 ## Next action — your call. The big remaining levers (ranked)
+- **★ STRATEGIC (new, human-set) — start the customer-facing product surface.** The biggest gap in the
+  roadmap (see "Standing directional goal" above): the white-label, multi-tenant web app, built
+  offline-first + Docker-packaged + launch-ready (going live human-reserved). This is **on the horizon,
+  your timing** — it is a larger arc than the offline-loop levers below, so you may finish a clean
+  in-flight thread first or pivot to it now; your call. When you start, write a plan (`writing-plans`)
+  and design the product/ domain from scratch (stack/structure yours to choose).
 - **Enrich the advisory corpus / report** — add category & qa scenarios to the advisory corpus so the
   recommendations span more plan-side value (more variety, mixed-axis tier-2 tradeoffs). Clean follow-on,
   low risk, directly increases the advisory pass's reach. The mechanism is built; this is corpus-authoring
