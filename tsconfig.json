@@ -30,6 +30,7 @@
     "agent-operations/tests",
     "product/src",
     "product/tests",
+    "app",
     "scripts",
     "vitest.config.ts"
   ]
