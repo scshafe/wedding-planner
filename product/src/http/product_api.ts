@@ -1,8 +1,11 @@
-import { deepFreeze, type Wedding, WeddingPlannerError } from '@wedding-planner/shared'
+import { deepFreeze, type Tenant, type Wedding, WeddingPlannerError } from '@wedding-planner/shared'
 
+import type { OperatorCredentialStore } from '../auth/operator_credential'
 import type { Principal } from '../auth/principal'
 import type { SessionStore } from '../auth/session_store'
 import type { WeddingAuthorizer } from '../auth/wedding_authorizer'
+import type { PlanTier } from '../billing/price_book'
+import type { OnboardingService } from '../onboarding/onboarding_service'
 import { ProductError } from '../product_error'
 import type { TenantContext, TenantContextResolver } from '../tenant/tenant_context'
 import type { CreateWeddingInput, WeddingRepository } from '../wedding/wedding_repository'
@@ -47,6 +50,7 @@ const RESP_NOT_FOUND: ApiResponse = deepFreeze({ status: 404, body: { error: 'no
 const RESP_UNAUTHORIZED: ApiResponse = deepFreeze({ status: 401, body: { error: 'unauthorized' } })
 const RESP_FORBIDDEN: ApiResponse = deepFreeze({ status: 403, body: { error: 'forbidden' } })
 const RESP_BAD_REQUEST: ApiResponse = deepFreeze({ status: 400, body: { error: 'bad_request' } })
+const RESP_CONFLICT: ApiResponse = deepFreeze({ status: 409, body: { error: 'conflict' } })
 const RESP_METHOD_NOT_ALLOWED: ApiResponse = deepFreeze({ status: 405, body: { error: 'method_not_allowed' } })
 const RESP_INTERNAL: ApiResponse = deepFreeze({ status: 500, body: { error: 'internal_error' } })
 const RESP_HEALTHZ: ApiResponse = deepFreeze({ status: 200, body: { status: 'ok' } })
@@ -57,24 +61,38 @@ export interface WeddingHandlerDeps {
   readonly authorizer: WeddingAuthorizer
 }
 
-/** Everything the pipeline needs. The resolver/sessionStore live ONLY here, never in a handler. */
+/** The narrow bag handed to the operator-gated /admin handlers — DELIBERATELY excludes the operator store. */
+export interface AdminHandlerDeps {
+  readonly onboarding: OnboardingService
+}
+
+/** Everything the pipeline needs. resolver/sessionStore/operators live ONLY here, never in a handler. */
 export interface ProductApiDeps {
   readonly resolver: TenantContextResolver
   readonly sessionStore: SessionStore
   readonly weddings: WeddingRepository
   readonly authorizer: WeddingAuthorizer
+  /** Phase 15: the platform-operator credential store (the /admin auth tier) + the onboarding driver. */
+  readonly operators: OperatorCredentialStore
+  readonly onboarding: OnboardingService
 }
 
 export class ProductApi {
   readonly #resolver: TenantContextResolver
   readonly #sessionStore: SessionStore
-  /** The narrow bag handed to every dispatch handler — no resolver/sessionStore. */
+  /** The platform-operator credential store — lives ONLY in the pipeline (like #sessionStore). */
+  readonly #operators: OperatorCredentialStore
+  /** The narrow bag handed to every wedding dispatch handler — no resolver/sessionStore. */
   readonly #handlerDeps: WeddingHandlerDeps
+  /** The narrow bag handed to every /admin handler — no operator store. */
+  readonly #adminDeps: AdminHandlerDeps
 
   constructor(deps: ProductApiDeps) {
     this.#resolver = deps.resolver
     this.#sessionStore = deps.sessionStore
+    this.#operators = deps.operators
     this.#handlerDeps = { weddings: deps.weddings, authorizer: deps.authorizer }
+    this.#adminDeps = { onboarding: deps.onboarding }
   }
 
   /** Run a request through the pipeline. Never throws — every failure maps to a code-free response. */
@@ -96,6 +114,15 @@ export class ProductApi {
     if (segments.length === 1 && segments[0] === 'healthz') {
       if (req.method !== 'GET') throw methodNotAllowed()
       return RESP_HEALTHZ
+    }
+
+    // /admin/... — the operator-gated platform surface (tenant-less, never touches a TenantContext).
+    // Operator auth is the LITERAL FIRST statement, BEFORE any /admin route-shape/method/:id distinction,
+    // so an unauthenticated prober gets a byte-identical 401 for ANY /admin path+method (route shape is
+    // not a pre-auth oracle). Only after auth passes can a 404/405/400 surface.
+    if (segments.length >= 1 && segments[0] === 'admin') {
+      this.#authenticateOperator(req)
+      return dispatchAdmin(req, segments, this.#adminDeps)
     }
 
     // All other routes are tenant-scoped: /t/:slug/...
@@ -122,6 +149,19 @@ export class ProductApi {
     }
 
     throw routeNotFound()
+  }
+
+  /**
+   * Operator auth for /admin: resolve the bearer token via the operator store (a SEPARATE namespace from
+   * the session store). Absent/unknown -> NO_OPERATOR (a constant 401). A tenant session token is simply
+   * absent here, so it fails identically — no cross-namespace privilege. The Operator is platform-wide;
+   * there is no per-operator scoping to apply downstream, so the gate IS the authorization.
+   */
+  #authenticateOperator(req: ApiRequest): void {
+    const operator = this.#operators.resolve(bearerToken(req.headers.authorization))
+    if (operator === undefined) {
+      throw new ProductError('PRODUCT.NO_OPERATOR', 'No valid operator credential for this request.', {})
+    }
   }
 
   /** Stage 3 + 4: resolve the bearer token to a principal and bind it to the resolved tenant. */
@@ -165,16 +205,24 @@ function errorToResponse(error: WeddingPlannerError): ApiResponse {
     case 'PRODUCT.TENANT_NOT_USABLE':
     case 'PRODUCT.ROUTE_NOT_FOUND':
       return RESP_NOT_FOUND
+    // NO_OPERATOR: an /admin request with no/unknown operator credential — the same constant 401 as a
+    // missing tenant session, so /admin auth-failure is indistinguishable from any other unauthenticated.
     case 'PRODUCT.NO_SESSION':
     case 'PRODUCT.SESSION_TENANT_MISMATCH':
+    case 'PRODUCT.NO_OPERATOR':
       return RESP_UNAUTHORIZED
     case 'PRODUCT.FORBIDDEN':
       return RESP_FORBIDDEN
-    // CONTRACT.VALIDATION_FAILED: a wedding create/update with bad client data (event_date/status enum).
+    // CONTRACT.VALIDATION_FAILED: a wedding/tenant create with bad client data (event_date/status/tier enum).
     case 'PRODUCT.BAD_REQUEST':
     case 'PRODUCT.VALIDATION_FAILED':
     case 'CONTRACT.VALIDATION_FAILED':
       return RESP_BAD_REQUEST
+    // DUPLICATE_SLUG / ILLEGAL_LIFECYCLE_TRANSITION: honest 409s to the TRUSTED operator (NOT masked — the
+    // absent-vs-suspended mask is an ANONYMOUS-edge property; the operator legitimately sees tenant state).
+    case 'PRODUCT.DUPLICATE_SLUG':
+    case 'PRODUCT.ILLEGAL_LIFECYCLE_TRANSITION':
+      return RESP_CONFLICT
     case 'PRODUCT.METHOD_NOT_ALLOWED':
       return RESP_METHOD_NOT_ALLOWED
     // FORGED_CONTEXT / FORGED_PRINCIPAL / CROSS_TENANT_WRITE / anything else: an internal invariant
@@ -291,6 +339,50 @@ function handleUpdate(
   return { status: 200, body: { wedding: saved } }
 }
 
+// ---------------------------------------------------------------------------------------------------
+// Admin dispatch — operator-gated (auth already passed in the pipeline). Tenant-less: these never mint or
+// touch a TenantContext; they drive the OnboardingService. The operator is platform-wide (no per-operator
+// scoping), so the gate IS the authorization and the handlers need only the narrow { onboarding } bag.
+// ---------------------------------------------------------------------------------------------------
+
+function dispatchAdmin(req: ApiRequest, segments: readonly string[], deps: AdminHandlerDeps): ApiResponse {
+  // /admin/tenants — provision a new tenant.
+  if (segments.length === 2 && segments[1] === 'tenants') {
+    if (req.method !== 'POST') throw methodNotAllowed()
+    return handleProvision(req, deps)
+  }
+  // /admin/tenants/:id/<action>
+  if (segments.length === 4 && segments[1] === 'tenants') {
+    const tenantId = segments[2]
+    const action = segments[3]
+    if (tenantId === undefined || action === undefined) throw routeNotFound()
+    if (action === 'billing') {
+      if (req.method !== 'GET') throw methodNotAllowed()
+      return { status: 200, body: deps.onboarding.billingView(tenantId) }
+    }
+    if (action === 'activate' || action === 'suspend' || action === 'reactivate') {
+      if (req.method !== 'POST') throw methodNotAllowed()
+      const tenant = deps.onboarding[action](tenantId)
+      return { status: 200, body: { tenant } }
+    }
+    throw routeNotFound()
+  }
+  throw routeNotFound()
+}
+
+function handleProvision(req: ApiRequest, deps: AdminHandlerDeps): ApiResponse {
+  const body = parseObjectBody(req.rawBody)
+  // slug/display_name/plan_tier are read by name; the theme object is passed through and the tenant
+  // schema (asserted inside tenants.create) validates its full shape — a malformed theme/tier -> 400.
+  const tenant = deps.onboarding.provision({
+    slug: requireString(body, 'slug'),
+    display_name: requireString(body, 'display_name'),
+    plan_tier: requireString(body, 'plan_tier') as PlanTier,
+    theme: requireObject(body, 'theme') as Tenant['theme'],
+  })
+  return { status: 201, body: { tenant } }
+}
+
 // ---------------------------------- request/response helpers ----------------------------------
 
 /** Extract the token from an `Authorization: Bearer <token>` header (case-insensitive scheme). */
@@ -334,6 +426,15 @@ function requireString(body: Record<string, unknown>, key: string): string {
     throw new ProductError('PRODUCT.BAD_REQUEST', `Field '${key}' must be a non-empty string.`, {})
   }
   return value
+}
+
+/** Read a required plain-object field, or 400 (the deep shape is validated downstream by the contract). */
+function requireObject(body: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = body[key]
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new ProductError('PRODUCT.BAD_REQUEST', `Field '${key}' must be a JSON object.`, {})
+  }
+  return value as Record<string, unknown>
 }
 
 /** Read an optional string field (absent -> undefined; present-but-not-a-string -> 400). */

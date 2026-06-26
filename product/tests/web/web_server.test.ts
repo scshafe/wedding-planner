@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   createProductWebUiServer,
+  BillingLedger,
+  OnboardingService,
+  OperatorCredentialStore,
   ProductApi,
   ProductWebUi,
   SessionStore,
@@ -35,6 +38,8 @@ function makeUi(): ProductWebUi {
   const api = new ProductApi({
     resolver: new TenantContextResolver(store),
     sessionStore: new SessionStore(new SequentialIdGenerator('seedS')),
+    operators: new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret']),
+    onboarding: new OnboardingService(store, new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB'))),
     weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedW')),
     authorizer: new WeddingAuthorizer(),
   })

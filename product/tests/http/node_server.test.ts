@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   createProductApiServer,
+  BillingLedger,
+  OnboardingService,
+  OperatorCredentialStore,
   ProductApi,
   SessionStore,
   TenantContextResolver,
@@ -36,6 +39,8 @@ function makeApi(): ProductApi {
   return new ProductApi({
     resolver: new TenantContextResolver(store),
     sessionStore: new SessionStore(new SequentialIdGenerator('seedS')),
+    operators: new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret']),
+    onboarding: new OnboardingService(store, new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB'))),
     weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedW')),
     authorizer: new WeddingAuthorizer(),
   })

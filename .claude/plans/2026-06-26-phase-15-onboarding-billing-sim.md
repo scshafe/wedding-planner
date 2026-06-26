@@ -189,7 +189,7 @@ of architect P0-3).
   onboarding, reactivate-an-active, activate-after-suspend); `provision` on a duplicate slug leaves no orphan
   state; a planner can log in via the existing edge ONLY once the tenant is active (provision→onboarding stays
   404 on the login edge). Green.
-- [ ] **Step 4 — The `/admin` HTTP edge.** Fold the operator-auth stage + the admin route table into
+- [x] **Step 4 — The `/admin` HTTP edge.** Fold the operator-auth stage + the admin route table into
   `ProductApi.#route` with `#authenticateOperator` as the **literal first statement** of the `/admin` block;
   narrow `{ onboarding }` handler bag (operator store stays in the pipeline); `errorToResponse` gains
   `ILLEGAL_LIFECYCLE_TRANSITION`/`DUPLICATE_SLUG → 409` and `NO_OPERATOR → 401`; wire `operators` +

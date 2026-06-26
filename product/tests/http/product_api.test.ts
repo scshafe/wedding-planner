@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   type ApiRequest,
   type ApiResponse,
+  BillingLedger,
+  OnboardingService,
+  OperatorCredentialStore,
   ProductApi,
   SessionStore,
   TenantContextResolver,
@@ -45,7 +48,12 @@ function makeWorld(): World {
     new SequentialIdGenerator('seedW'),
   )
   const authorizer = new WeddingAuthorizer()
-  const api = new ProductApi({ resolver, sessionStore: sessions, weddings, authorizer })
+  const operators = new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret'])
+  const onboarding = new OnboardingService(
+    store,
+    new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB')),
+  )
+  const api = new ProductApi({ resolver, sessionStore: sessions, weddings, authorizer, operators, onboarding })
   return { api, sessions, weddings, resolver }
 }
 
@@ -163,6 +171,70 @@ describe('product_api — endpoints', () => {
     })
     it('login requires role planner|couple -> 400 otherwise', () => {
       expect(w.api.handle(req('POST', '/t/alpha/sessions', { body: { role: 'admin' } })).status).toBe(400)
+    })
+  })
+
+  describe('the operator-gated /admin edge', () => {
+    const OP = 'op-secret'
+    const provisionBody = { slug: 'beta', display_name: 'Beta Co', plan_tier: 'studio', theme: THEME }
+
+    it('provisions a tenant in onboarding (201) for a valid operator', () => {
+      const res = w.api.handle(req('POST', '/admin/tenants', { token: OP, body: provisionBody }))
+      expect(res.status).toBe(201)
+      expect((res.body as { tenant: { slug: string; lifecycle_status: string } }).tenant.slug).toBe('beta')
+      expect((res.body as { tenant: { lifecycle_status: string } }).tenant.lifecycle_status).toBe('onboarding')
+    })
+
+    it('drives the lifecycle through /admin actions, and the JSON edge tracks it', () => {
+      const created = w.api.handle(req('POST', '/admin/tenants', { token: OP, body: provisionBody }))
+      const id = (created.body as { tenant: { tenant_id: string } }).tenant.tenant_id
+      // While onboarding, the public edge masks the tenant as a 404 (both list and login).
+      expect(w.api.handle(req('GET', '/t/beta/weddings')).status).toBe(404)
+      expect(w.api.handle(req('POST', '/t/beta/sessions', { body: { role: 'planner' } })).status).toBe(404)
+      // Activate -> the edge now discloses active-existence (401 unauth list; 201 login).
+      expect(w.api.handle(req('POST', `/admin/tenants/${id}/activate`, { token: OP })).status).toBe(200)
+      expect(w.api.handle(req('GET', '/t/beta/weddings')).status).toBe(401)
+      expect(w.api.handle(req('POST', '/t/beta/sessions', { body: { role: 'planner' } })).status).toBe(201)
+      // Suspend -> masked again; reactivate -> usable again.
+      expect(w.api.handle(req('POST', `/admin/tenants/${id}/suspend`, { token: OP })).status).toBe(200)
+      expect(w.api.handle(req('GET', '/t/beta/weddings')).status).toBe(404)
+      expect(w.api.handle(req('POST', `/admin/tenants/${id}/reactivate`, { token: OP })).status).toBe(200)
+      expect(w.api.handle(req('GET', '/t/beta/weddings')).status).toBe(401)
+    })
+
+    it('serves the billing ledger view to the operator', () => {
+      const created = w.api.handle(req('POST', '/admin/tenants', { token: OP, body: provisionBody }))
+      const id = (created.body as { tenant: { tenant_id: string } }).tenant.tenant_id
+      w.api.handle(req('POST', `/admin/tenants/${id}/activate`, { token: OP }))
+      const view = w.api.handle(req('GET', `/admin/tenants/${id}/billing`, { token: OP }))
+      expect(view.status).toBe(200)
+      const body = view.body as { events: { kind: string }[]; balance_cents: number }
+      expect(body.events.map((e) => e.kind)).toEqual(['provisioned', 'charge', 'payment'])
+      expect(body.balance_cents).toBe(0)
+    })
+
+    it('a duplicate slug is an honest 409 to the trusted operator', () => {
+      w.api.handle(req('POST', '/admin/tenants', { token: OP, body: provisionBody }))
+      expect(w.api.handle(req('POST', '/admin/tenants', { token: OP, body: provisionBody })).status).toBe(409)
+    })
+
+    it('an illegal lifecycle transition is a 409 (double-activate)', () => {
+      const created = w.api.handle(req('POST', '/admin/tenants', { token: OP, body: provisionBody }))
+      const id = (created.body as { tenant: { tenant_id: string } }).tenant.tenant_id
+      w.api.handle(req('POST', `/admin/tenants/${id}/activate`, { token: OP }))
+      expect(w.api.handle(req('POST', `/admin/tenants/${id}/activate`, { token: OP })).status).toBe(409)
+    })
+
+    it('a malformed provision body (missing theme / bad tier) -> 400', () => {
+      expect(w.api.handle(req('POST', '/admin/tenants', { token: OP, body: { slug: 'g', display_name: 'G', plan_tier: 'studio' } })).status).toBe(400)
+      expect(
+        w.api.handle(req('POST', '/admin/tenants', { token: OP, body: { ...provisionBody, slug: 'h', plan_tier: 'enterprise' } })).status,
+      ).toBe(400)
+    })
+
+    it('after auth, an unknown /admin sub-route -> 404 and a bad method -> 405', () => {
+      expect(w.api.handle(req('GET', '/admin/nope', { token: OP })).status).toBe(404)
+      expect(w.api.handle(req('GET', '/admin/tenants', { token: OP })).status).toBe(405)
     })
   })
 })

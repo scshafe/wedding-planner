@@ -71,6 +71,7 @@ export {
   ProductApi,
   type ProductApiDeps,
   type WeddingHandlerDeps,
+  type AdminHandlerDeps,
 } from './http/product_api'
 export { createProductApiServer, MAX_BODY_BYTES } from './http/node_server'
 
