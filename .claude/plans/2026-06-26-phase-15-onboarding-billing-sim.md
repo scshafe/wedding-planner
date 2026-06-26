@@ -195,7 +195,7 @@ of architect P0-3).
   `ILLEGAL_LIFECYCLE_TRANSITION`/`DUPLICATE_SLUG → 409` and `NO_OPERATOR → 401`; wire `operators` +
   `onboarding` into `ProductApiDeps` + the node adapter. Behavior-preserving for `/t/:slug` + `/healthz`
   (existing `product_api`/keystone tests untouched). Green.
-- [ ] **Step 5 — THE ONBOARDING KEYSTONE.** `product/tests/onboarding/onboarding_keystone.test.ts`:
+- [x] **Step 5 — THE ONBOARDING KEYSTONE.** `product/tests/onboarding/onboarding_keystone.test.ts`:
   (1) operator boundary — anonymous + a *tenant-session* token → `/admin/*` byte-identical `401` across
   **GET/POST/PUT/DELETE** and across a `:id`-shaped garbage path (`/admin/tenants/x/activate`), proving
   method-mismatch + unknown-sub-route are unreachable pre-auth; an unknown top-level path (`/nonsense`) stays
