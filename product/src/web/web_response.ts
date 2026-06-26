@@ -46,12 +46,18 @@ export function htmlResult(status: number, body: string, extraHeaders?: Record<s
 
 /**
  * A redirect. The `location` (and any `set-cookie`) MUST be built by the caller from a validated slug —
- * never from a raw inbound segment — so no CRLF/attribute injection reaches the header.
+ * never from a raw inbound segment — so no CRLF/attribute injection reaches the header. Carries `nosniff`
+ * + an explicit html content-type for the empty body (the header floor every response gets — doddy P2-1).
  */
 export function redirect(status: number, location: string, extraHeaders?: Record<string, string>): HttpResult {
   return {
     status,
-    headers: { location, ...extraHeaders },
+    headers: {
+      location,
+      'content-type': 'text/html; charset=utf-8',
+      'x-content-type-options': 'nosniff',
+      ...extraHeaders,
+    },
     body: '',
   }
 }
@@ -60,7 +66,7 @@ export function redirect(status: number, location: string, extraHeaders?: Record
 export function jsonResultFrom(response: ApiResponse): HttpResult {
   return {
     status: response.status,
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'x-content-type-options': 'nosniff' },
     body: JSON.stringify(response.body),
   }
 }

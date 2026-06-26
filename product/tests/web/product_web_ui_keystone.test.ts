@@ -226,3 +226,25 @@ describe('(f) safeColor is wired into the render path', () => {
     expect(res.body).toContain('--accent:#445566')
   })
 })
+
+describe('(g) the security-header floor on every response (no silent regression)', () => {
+  it('a themed HTML page carries nosniff + a script-less CSP', () => {
+    const { ui } = makeWorld()
+    const res = get(ui, '/t/alpha')
+    expect(res.headers['x-content-type-options']).toBe('nosniff')
+    expect(res.headers['content-security-policy']).toContain("script-src 'none'")
+  })
+
+  it('the masked 404 and the login redirect both carry nosniff', () => {
+    const { ui } = makeWorld()
+    expect(get(ui, '/t/ghost').headers['x-content-type-options']).toBe('nosniff')
+    const redirect = ui.handle({ method: 'POST', path: '/t/alpha/login', headers: {}, rawBody: 'role=planner' })
+    expect(redirect.status).toBe(303)
+    expect(redirect.headers['x-content-type-options']).toBe('nosniff')
+  })
+
+  it('a delegated JSON response also carries nosniff', () => {
+    const { ui } = makeWorld()
+    expect(get(ui, '/healthz').headers['x-content-type-options']).toBe('nosniff')
+  })
+})

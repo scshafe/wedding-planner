@@ -23,14 +23,23 @@
  */
 
 /**
- * A fragment of already-escaped, safe-to-emit HTML. The brand is a private field, so a SafeHtml can be
- * produced ONLY by {@link html} below (no public constructor, no `unsafeHtml(str)`). This is what makes
- * "no raw bypass" structural: composing pages can only pass SafeHtml fragments they built via `html`.
+ * The module-private mint key. A SafeHtml can be constructed ONLY by code that holds this symbol, and it
+ * is never exported — so `new SafeHtml(userString)` from any other module throws. This makes "no raw
+ * bypass" STRUCTURAL (runtime-enforced), not a convention: the only holder of the key is {@link html}.
+ */
+const SAFE_HTML_MINT: unique symbol = Symbol('safe-html-mint')
+
+/**
+ * A fragment of already-escaped, safe-to-emit HTML. Produced ONLY by {@link html} (which holds the mint
+ * key); a forged `new SafeHtml(...)` elsewhere throws. Composing pages can only pass SafeHtml fragments
+ * they built via `html`, so a user string can never reach the output unescaped.
  */
 export class SafeHtml {
-  /** @internal The escaped HTML string. Constructed only by `html`. */
   readonly #value: string
-  constructor(value: string) {
+  constructor(value: string, key: typeof SAFE_HTML_MINT) {
+    if (key !== SAFE_HTML_MINT) {
+      throw new Error('SafeHtml is minted only by html(); do not construct it directly.')
+    }
     this.#value = value
   }
   /** The raw escaped HTML. Used only by `html` (nesting) and `render` (final output). */
@@ -71,7 +80,7 @@ export function html(strings: TemplateStringsArray, ...values: unknown[]): SafeH
   for (let i = 0; i < values.length; i++) {
     out += renderValue(values[i]) + (strings[i + 1] ?? '')
   }
-  return new SafeHtml(out)
+  return new SafeHtml(out, SAFE_HTML_MINT)
 }
 
 /** Produce the final HTML string for a response body from a built {@link SafeHtml} document. */

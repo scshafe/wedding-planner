@@ -1,6 +1,7 @@
 import type { Wedding } from '@wedding-planner/shared'
 
 import type { ApiRequest } from '../http/api_message'
+import { splitPath } from '../http/path'
 import type { ProductApi } from '../http/product_api'
 import { normalizeSlugForRoute } from './html'
 import {
@@ -191,13 +192,6 @@ export class ProductWebUi {
 }
 
 // ---------------------------------- request helpers (pure) ----------------------------------
-
-/** Split a path into non-empty segments, dropping the query string. `/t/a?x=1` -> ['t','a']. */
-function splitPath(path: string): string[] {
-  const q = path.indexOf('?')
-  const clean = q === -1 ? path : path.slice(0, q)
-  return clean.split('/').filter((s) => s.length > 0)
-}
 
 /** Build a `GET` ApiRequest carrying the session token as a Bearer header (omitted when absent). */
 function bearerGet(path: string, token: string | undefined): ApiRequest {

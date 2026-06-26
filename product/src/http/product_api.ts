@@ -7,6 +7,7 @@ import { ProductError } from '../product_error'
 import type { TenantContext, TenantContextResolver } from '../tenant/tenant_context'
 import type { CreateWeddingInput, WeddingRepository } from '../wedding/wedding_repository'
 import type { ApiRequest, ApiResponse } from './api_message'
+import { splitPath } from './path'
 
 /**
  * @canonical product_api -- the pure HTTP handler: the 5-stage request pipeline + the route table.
@@ -291,13 +292,6 @@ function handleUpdate(
 }
 
 // ---------------------------------- request/response helpers ----------------------------------
-
-/** Split a path into non-empty segments: `/t/alpha/weddings/` -> ['t','alpha','weddings']. */
-function splitPath(path: string): string[] {
-  const query = path.indexOf('?')
-  const clean = query === -1 ? path : path.slice(0, query)
-  return clean.split('/').filter((s) => s.length > 0)
-}
 
 /** Extract the token from an `Authorization: Bearer <token>` header (case-insensitive scheme). */
 function bearerToken(header: string | undefined): string | undefined {
