@@ -93,4 +93,14 @@ describe('buildBootLog — the disclosure allow-list', () => {
     const config = resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG, WP_SEED_DEMO: 'false' }, constGen('g'))
     expect(buildBootLog(config, undefined)).not.toContain('demo tenant')
   })
+
+  it('logs a bare strategy provenance token — never the champion genome internals', () => {
+    const config = resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG }, constGen('g'))
+    const line = buildBootLog(config, demo)
+    expect(line).toContain('strategy: published')
+    // No genome id, content hash, or knob names ever reach the boot log.
+    expect(line).not.toContain('published_champion_v1')
+    expect(line).not.toContain('genome:')
+    expect(line).not.toMatch(/rsvp_reminder_cadence|reminder_spacing|reminder_batching/)
+  })
 })

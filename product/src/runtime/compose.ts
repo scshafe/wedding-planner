@@ -1,4 +1,4 @@
-import type { Clock, IdGenerator, Tenant } from '@wedding-planner/shared'
+import type { Clock, IdGenerator, StrategyGenome, Tenant } from '@wedding-planner/shared'
 
 import { OperatorCredentialStore } from '../auth/operator_credential'
 import { SessionStore } from '../auth/session_store'
@@ -54,6 +54,13 @@ export interface ComposeProductSurfaceConfig {
   readonly seedDemo?: boolean
   /** The demo tenant's slug (the public routing key). Default 'demo'. */
   readonly demoSlug?: string
+  /**
+   * Phase 17: the loop's champion strategy genome, surfaced read-only to planners (the engine↔surface seam).
+   * Injected as a `@wedding-planner/shared` VALUE — compose imports no loop/eval code, so the acyclic-workspace
+   * and determinism rails hold. Forwarded verbatim to `ProductApi`, which projects + validates it (an invalid
+   * champion throws here, aborting boot). Absent ⇒ the `/t/:slug/strategy` route 404s.
+   */
+  readonly championStrategy?: StrategyGenome
 }
 
 /** A handle to the seeded demo tenant — present only when `seedDemo` was true. */
@@ -98,7 +105,15 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const weddings = new WeddingRepository(tenants, clock, ids)
   const authorizer = new WeddingAuthorizer()
 
-  const api = new ProductApi({ resolver, sessionStore, weddings, authorizer, operators, onboarding })
+  const api = new ProductApi({
+    resolver,
+    sessionStore,
+    weddings,
+    authorizer,
+    operators,
+    onboarding,
+    ...(config.championStrategy === undefined ? {} : { championStrategy: config.championStrategy }),
+  })
   const themes = new ThemeResolver(tenants)
   const ui = new ProductWebUi({ api, themes })
 

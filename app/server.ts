@@ -7,6 +7,7 @@ import { composeProductSurface, createProductWebUiServer } from '@wedding-planne
 // source enter the system (the determinism rail holds everywhere else by reachability).
 import { RandomIdGenerator } from '../product/src/runtime/random_id_generator'
 import { SystemClock } from '../product/src/runtime/system_clock'
+import { assertTier1Champion, publishedChampion } from './published_champion'
 import { buildBootLog, resolveServerConfig } from './server_config'
 
 /**
@@ -32,12 +33,25 @@ function main(): void {
     process.exit(1)
   }
 
+  // The engine↔surface seam: inject the loop's published champion as a VALUE (the surface imports no loop
+  // code). assertTier1Champion re-derives the tier and fail-closes on a non-tier-1 / invalid genome, so a
+  // strategy that would need human approval can never be auto-presented as the active default — the throw
+  // aborts boot here, before any socket opens (identical discipline to the operator-token policy above).
+  let champion
+  try {
+    champion = assertTier1Champion(publishedChampion)
+  } catch (error) {
+    console.error(`[wedding-planner] refusing to boot: ${(error as Error).message}`)
+    process.exit(1)
+  }
+
   const surface = composeProductSurface({
     clock: new SystemClock(),
     ids: new RandomIdGenerator(),
     operatorToken: config.operatorToken,
     seedDemo: config.seedDemo,
     demoSlug: config.demoSlug,
+    championStrategy: champion,
   })
 
   const server = createProductWebUiServer(surface.ui)

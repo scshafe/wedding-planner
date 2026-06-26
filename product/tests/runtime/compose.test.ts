@@ -100,3 +100,26 @@ describe('composeProductSurface — boundaries inherited unchanged', () => {
     expect(ui.handle(req('GET', '/t/demo')).status).toBe(404)
   })
 })
+
+describe('composeProductSurface — the engine↔surface strategy seam (Phase 17)', () => {
+  const CHAMPION = { genome_id: 'g_pub', parameters: { rsvp_reminder_cadence: 3, reminder_spacing: 1, reminder_batching: 1 } }
+
+  it('forwards an injected champion so /t/demo/strategy serves guidance to a logged-in planner', () => {
+    const { api } = composeProductSurface(baseConfig({ demoSlug: 'demo', championStrategy: CHAMPION }))
+    const token = (api.handle(req('POST', '/t/demo/sessions', { body: { role: 'planner' } })).body as { token: string }).token
+    const res = api.handle(req('GET', '/t/demo/strategy', { token }))
+    expect(res.status).toBe(200)
+    expect((res.body as { strategy: { autonomy: { tier: number } } }).strategy.autonomy.tier).toBe(1)
+  })
+
+  it('404s the strategy route when no champion is injected', () => {
+    const { api } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+    const token = (api.handle(req('POST', '/t/demo/sessions', { body: { role: 'planner' } })).body as { token: string }).token
+    expect(api.handle(req('GET', '/t/demo/strategy', { token })).status).toBe(404)
+  })
+
+  it('FAILS CLOSED at compose on a malformed champion (no surface, no socket)', () => {
+    const malformed = { genome_id: 'g', parameters: { rsvp_reminder_cadence: 9, reminder_spacing: 1, reminder_batching: 1 } }
+    expect(() => composeProductSurface(baseConfig({ championStrategy: malformed as never }))).toThrow()
+  })
+})

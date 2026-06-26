@@ -133,7 +133,7 @@ status, constant `GENERIC_404` fallthrough — no strategy-specific 404 page).
     champion is published.
   - Tests: 200 authed; 401 unauthed; 404 unknown/suspended tenant; cross-tenant session → 401; non-GET → 405;
     404 when champion absent. Verify green.
-- [ ] **Step 3 — The themed web page + honest nav links.**
+- [x] **Step 3 — The themed web page + honest nav links.** (613 tests green)
   - `pages.ts`: `renderStrategy(theme, slug, guidance)` (themed shell; knob guidance + derived-tier explanation;
     explicit platform-default / offline-demo copy). All values via the `html` template.
   - `product_web_ui.ts`: own `GET /t/:slug/strategy` (3-seg, like login/logout) → one `api.handle()`, themed by

@@ -70,9 +70,10 @@ export function resolveServerConfig(env: Env, generateToken: () => string): Serv
 }
 
 /**
- * Build the single structured boot-log line. Allow-list ONLY: host, port, demo slug + URL, and the operator
- * token provenance — printing the token value ONLY when this process generated it. Never echoes an
- * env-provided token, and never logs an internal tenant_id / operator_id / billing balance.
+ * Build the single structured boot-log line. Allow-list ONLY: host, port, demo slug + URL, the operator token
+ * provenance — printing the token value ONLY when this process generated it — and a bare `strategy: published`
+ * provenance token (Phase 17). Never echoes an env-provided token, never logs an internal tenant_id /
+ * operator_id / billing balance, and NEVER logs the champion genome internals (id, hash, or knob values).
  */
 export function buildBootLog(config: ServerConfig, demo: DemoSeed | undefined): string {
   const parts = [`wedding-planner product surface listening on http://${config.host}:${config.port}`]
@@ -82,6 +83,7 @@ export function buildBootLog(config: ServerConfig, demo: DemoSeed | undefined): 
   } else {
     parts.push('operator token: env-provided')
   }
+  parts.push('strategy: published')
   return parts.join(' | ')
 }
 
