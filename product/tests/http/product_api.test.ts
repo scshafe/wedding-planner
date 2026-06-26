@@ -236,5 +236,9 @@ describe('product_api — endpoints', () => {
       expect(w.api.handle(req('GET', '/admin/nope', { token: OP })).status).toBe(404)
       expect(w.api.handle(req('GET', '/admin/tenants', { token: OP })).status).toBe(405)
     })
+
+    it('billing on an unknown tenant id -> 404 (consistent with the other actions, no empty-200)', () => {
+      expect(w.api.handle(req('GET', '/admin/tenants/tnt_missing/billing', { token: OP })).status).toBe(404)
+    })
   })
 })

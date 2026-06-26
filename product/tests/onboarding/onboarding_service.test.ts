@@ -120,6 +120,11 @@ describe('OnboardingService — the transition guard (no spurious events on an i
     const w = makeWorld()
     expect(codeOfThrow(() => w.onboarding.activate('tnt_missing'))).toBe('PRODUCT.UNKNOWN_TENANT')
   })
+
+  it('billingView on an unknown tenant throws UNKNOWN_TENANT (no fabricated empty 200)', () => {
+    const w = makeWorld()
+    expect(codeOfThrow(() => w.onboarding.billingView('tnt_missing'))).toBe('PRODUCT.UNKNOWN_TENANT')
+  })
 })
 
 describe('OnboardingService — provision atomicity + the login edge', () => {

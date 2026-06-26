@@ -83,10 +83,13 @@ export class OnboardingService {
     return this.tenants.setLifecycleStatus(tenant_id, 'active')
   }
 
-  /** The tenant's billing ledger view: its events (record order) + the owed balance (positive = owed). */
+  /**
+   * The tenant's billing ledger view: its events (record order) + the owed balance (positive = owed).
+   * Guards existence FIRST (`#requireTenant`), so an unknown tenant_id throws PRODUCT.UNKNOWN_TENANT
+   * (→ masked 404 at the edge) — consistent with activate/suspend/reactivate, never a fabricated empty 200.
+   */
   billingView(tenant_id: string): { events: ReturnType<BillingLedger['eventsFor']>; balance_cents: number } {
-    // An unknown tenant has no events and a zero balance — but the /admin handler 404-guards on existence
-    // first (a missing tenant is the masked not-found), so this is only reached for a real tenant.
+    this.#requireTenant(tenant_id)
     return {
       events: this.billing.eventsFor(tenant_id),
       balance_cents: this.billing.balanceCents(tenant_id),

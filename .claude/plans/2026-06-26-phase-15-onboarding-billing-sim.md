@@ -207,7 +207,7 @@ of architect P0-3).
   cross-namespace — operator token rejected (constant `401`) on `/t/:slug/weddings`, session token rejected
   (constant `401`) on `/admin`; (5) billing fold correctness across the lifecycle + operator querying tenant
   A's billing never returns tenant B's events; (6) `DUPLICATE_SLUG → 409` to the operator. Green.
-- [ ] **Step 6 — Built-code re-review (architect + doddy personas), fold.** Re-vet the *built* edge for an
+- [x] **Step 6 — Built-code re-review (architect + doddy personas), fold.** Re-vet the *built* edge for an
   exploitable oracle/forge (operator-auth precedence, token-namespace bleed, the masked-404 set incl. the
   login edge, the transition guard, the ledger's no-leak). Apply findings; re-run green.
 - [ ] **Step 7 — ADR 0015 + memory + barrel + READMEs + handoff.** ADR `docs/adr/0015-onboarding-billing-
