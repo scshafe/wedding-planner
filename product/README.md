@@ -52,16 +52,40 @@ rejected, never re-scoped) → authorize + dispatch — plus a thin Node `http` 
 - **Login is a labeled simulation, oracle-free.** It requires only a usable tenant; it does not verify
   a real credential and does not confirm the couple's `wedding_id` (that would be an oracle).
 
+## The web UI (Phase 14) — the themed white-label surface
+
+`ProductWebUi` is a server-rendered HTML front door over the SAME `api.handle()` pipeline (offline-first,
+zero new deps, **no client JavaScript**; combined Node adapter `createProductWebUiServer`). It is
+**repo-blind** — it holds only `{ api, themes }`, so its only data path is `api.handle()` and it inherits
+both boundaries by construction. Read-oriented: log in (the credential-free simulation) and view your
+weddings, themed per tenant; HTML create/update forms are deferred.
+
+- **Disclosure equivalence (theme-iff-active).** The UI makes no independent existence decision: each page
+  issues one `api.handle()` call and renders by the returned status (`200`→themed data, `401`→themed
+  login, `403`→forbidden, else→a constant generic `404`). Branding is shown **iff the tenant is active**;
+  unknown / suspended / onboarding / malformed-slug all render **one byte-identical generic `404`** — so
+  theming never becomes an absent-vs-suspended oracle. `ThemeResolver`'s predicate is the *identical*
+  `isUsableLifecycle` the context resolver uses, so theme-presence can't diverge from the API.
+- **Four injection contexts, four encoders.** All HTML via the `html` tagged template (every interpolation
+  escaped; `SafeHtml` minted only via a module-private symbol — no raw bypass); colors via render-time
+  `safeColor` into a `style` custom-property attribute (never `<style>` text); `logo_ref` as escaped text
+  (never `src`/`href`); the inbound `:slug` validated at the edge before any HTML/header use (a non-match
+  → the same masked `404`, never a `400`).
+- **The cookie carries the opaque Bearer token verbatim** (`wp_session`; `HttpOnly; SameSite=Strict;
+  Path=/t/:slug`); the cross-tenant bind veto remains the real guard. Every response gets a header floor
+  (`charset`, `nosniff`, a strict CSP with `script-src 'none'`). Proven by a web keystone.
+
 ## Status
 
 **Phase 12 — the multi-tenant domain core:** the `tenant` + `wedding` aggregates, the white-label
 `theme`, and the tenant-isolation boundary above. **Phase 13 — the HTTP request edge + simulated
 auth/session:** the 5-stage pipeline, the `Principal`/`SessionStore`/`WeddingAuthorizer` intra-tenant
-boundary, and the Node `http` adapter, proven by an HTTP keystone. Pure in-memory + injected clock/ids,
-offline; login/session simulated.
+boundary, and the Node `http` adapter, proven by an HTTP keystone. **Phase 14 — the server-rendered web
+UI:** the themed white-label HTML console over that pipeline (`ProductWebUi` + `createProductWebUiServer`),
+proven by a web keystone. Pure in-memory + injected clock/ids, offline; login/session simulated.
 
-**Later phases (the arc):** Phase 14 — the web UI (planner console + couple view, themed per tenant);
-Phase 15 — onboarding + billing simulation; Phase 16 — Docker packaging → the launch-ready image.
+**Later phases (the arc):** Phase 15 — onboarding + billing simulation; Phase 16 — Docker packaging → the
+launch-ready image.
 
 **Deferred (recorded, not faked):** field-level couple write policy (a couple may not `cancel`); real
 credential verification, cryptographic tokens, and persistence beyond in-memory are hardening for when

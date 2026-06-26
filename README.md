@@ -28,7 +28,7 @@ operates itself). The fifth — `product/` — is the **outward-facing** custome
 | [`telemetry/`](telemetry/README.md) | how it's measured | the canonical event schema + metric catalog; every gate/metric is a function over a **trusted** event stream |
 | [`loop-orchestrator/`](loop-orchestrator/README.md) | how it improves itself | propose → score offline → guardrail-gate → shadow/canary/ramp → promote; the recursive product-improvement loop |
 | [`agent-operations/`](agent-operations/README.md) | how the whole stack is run | the team of agents (CI/CD, support, SRE, security, the loop itself) and the four human-reserved exceptions |
-| [`product/`](product/README.md) | the customer-facing surface | the white-label, multi-tenant web app planners + couples use; built offline-first toward a launch-ready Docker image. Phase 12 lays the multi-tenant domain core + the tenant-isolation boundary; Phase 13 adds the HTTP request edge + the intra-tenant auth boundary (planner vs couple) |
+| [`product/`](product/README.md) | the customer-facing surface | the white-label, multi-tenant web app planners + couples use; built offline-first toward a launch-ready Docker image. Phase 12 lays the multi-tenant domain core + the tenant-isolation boundary; Phase 13 adds the HTTP request edge + the intra-tenant auth boundary (planner vs couple); Phase 14 adds the server-rendered, themed web UI over that pipeline |
 
 ## How they fit together
 
@@ -84,9 +84,16 @@ alone; no existence oracle; liveness re-asserted at use). **Phase 13 added the r
 HTTP handler + a thin Node `http` adapter over a 5-stage pipeline, and the **simulated auth/session**
 layer that stacks the **intra-tenant** boundary (planner vs couple) on top: a couple may act only on
 their own wedding, and a couple addressing any other wedding gets a `404` byte-identical to a missing
-one (no intra-tenant existence oracle). The arc continues: web UI (14), onboarding/billing simulation
-(15), Docker packaging (16). See [`docs/adr/0012`](docs/adr/0012-product-surface-multitenant-core.md),
-[`docs/adr/0013`](docs/adr/0013-http-api-and-intra-tenant-auth.md), and the boundary in [`CLAUDE.md`](CLAUDE.md).
+one (no intra-tenant existence oracle). **Phase 14 added the web UI** — a server-rendered, themed,
+white-label HTML console over that same JSON pipeline (offline-first, zero new deps, no client
+JavaScript): planners and couples log in and view their weddings, themed per tenant. It is repo-blind
+(its only data path is `api.handle()`, so it inherits both boundaries) and discloses **exactly** what the
+API already does — branding shown only for *active* tenants, while unknown / suspended / onboarding all
+render one byte-identical generic `404` (theming never becomes an absent-vs-suspended oracle). The arc
+continues: onboarding/billing simulation (15), Docker packaging (16). See
+[`docs/adr/0012`](docs/adr/0012-product-surface-multitenant-core.md),
+[`docs/adr/0013`](docs/adr/0013-http-api-and-intra-tenant-auth.md),
+[`docs/adr/0014`](docs/adr/0014-server-rendered-web-ui.md), and the boundary in [`CLAUDE.md`](CLAUDE.md).
 
 **Also open / earlier threads:**
 - The **action→surface/scope map** — trusted config mapping an operational action to its blast-radius

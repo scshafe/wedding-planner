@@ -138,11 +138,11 @@ UI, render-by-status, reuse the bind veto) is sound. Every P0/P1 is folded into 
 
 ## Steps
 
-- [ ] **Step 0 — Design reviews (architect + doddy lenses).** DONE in this run: both APPROVE-WITH-CHANGES;
+- [x] **Step 0 — Design reviews (architect + doddy lenses).** DONE in this run: both APPROVE-WITH-CHANGES;
       all P0/P1 folded above and into the steps below. (Personas routed through `general-purpose` agents —
       the named sub-agents aren't provisioned here.)
 
-- [ ] **Step 1 — `web/html.ts`: the escaping primitives (the whole-ballgame for injection).**
+- [x] **Step 1 — `web/html.ts`: the escaping primitives (the whole-ballgame for injection).**
       `escapeHtml(s)` (`& < > " '`); the `html` tagged template that escapes **every** interpolation, with
       **no raw bypass**; `safeColor(s)` (render-time re-validate `^#[0-9a-f]{6}$` case-folded → neutral
       constant fallback); `normalizeSlugForRoute(s)` / `isValidSlug(s)` (lowercase + the schema pattern).
@@ -150,7 +150,7 @@ UI, render-by-status, reuse the bind veto) is sound. Every P0/P1 is folded into 
       unquoted-attribute breakout, `%0d%0a…`), `safeColor` rejects CSS metachars, slug validator rejects
       CRLF/`..%2f`/non-pattern. **Verify green; commit.**
 
-- [ ] **Step 2 — `web/web_response.ts` + `web/theme_resolver.ts`.** `HttpResult { status, headers, body }`
+- [x] **Step 2 — `web/web_response.ts` + `web/theme_resolver.ts`.** `HttpResult { status, headers, body }`
       + helpers: `htmlResult(status, body)` (stamps the security headers + CSP), `redirect(status,
       location)` (location built only from a validated slug), `jsonResultFrom(ApiResponse)` (wraps the
       JSON API response — `JSON.stringify` + `application/json`), and the **constant** `GENERIC_404` /
@@ -159,7 +159,7 @@ UI, render-by-status, reuse the bind veto) is sound. Every P0/P1 is folded into 
       `resolveActiveTheme` returns undefined for unknown/onboarding/suspended, the theme for active.
       **Verify green; commit.**
 
-- [ ] **Step 3 — `web/pages.ts`: the pure render functions.** `renderLanding()`, `renderLogin(theme,
+- [x] **Step 3 — `web/pages.ts`: the pure render functions.** `renderLanding()`, `renderLogin(theme,
       slug)`, `renderConsole(theme, slug, weddings)`, `renderDetail(theme, slug, wedding)`,
       `renderForbidden(theme)`, and the constants behind `GENERIC_404`/`ERROR_500`. All built via the
       `html` template; colors via `safeColor` into the `style` custom-property attribute; `logo_ref` +
@@ -168,7 +168,7 @@ UI, render-by-status, reuse the bind veto) is sound. Every P0/P1 is folded into 
       asserts **no live markup** in the bytes; the generic 404 is tenant-independent. **Verify green;
       commit.**
 
-- [ ] **Step 4 — `web/product_web_ui.ts`: the front door.** The ordered exact-segment router; slug
+- [x] **Step 4 — `web/product_web_ui.ts`: the front door.** The ordered exact-segment router; slug
       validation at the edge (→ generic 404 on miss); cookie parse (`wp_session`) → Bearer forward;
       per-page `api.handle()` call; status-driven rendering (the table above); login/logout (urlencoded
       form parse → JSON for `api.handle`; `Set-Cookie`/`303` from the validated slug); delegation of all
@@ -176,14 +176,14 @@ UI, render-by-status, reuse the bind veto) is sound. Every P0/P1 is folded into 
       `handle()` (no sockets): each route + status branch, cookie round-trip, the delegation passthrough.
       **Verify green; commit.**
 
-- [ ] **Step 5 — `web/web_server.ts`: the combined Node adapter.** `createProductWebUiServer(webUi)` —
+- [x] **Step 5 — `web/web_server.ts`: the combined Node adapter.** `createProductWebUiServer(webUi)` —
       sockets → `ApiRequest` (lowercased headers, raw body, the `MAX_BODY_BYTES` cap reused) →
       `webUi.handle` → write `HttpResult` (status + headers + string body). Leaves `node_server.ts`
       (the JSON-only adapter + its integration test) untouched. Ephemeral-port integration test: `GET /`,
       a full themed login → console round-trip, an unknown-slug generic 404, and a JSON-path passthrough
       (`/healthz`, `/t/:slug/weddings` 401). **Verify green; commit.**
 
-- [ ] **Step 6 — THE WEB KEYSTONE (`product/tests/web/product_web_ui_keystone.test.ts`).** Against the
+- [x] **Step 6 — THE WEB KEYSTONE (`product/tests/web/product_web_ui_keystone.test.ts`).** Against the
       pure `ProductWebUi.handle()`. Pins, non-regressably:
       (1) **pre-auth equivalence** — unauthenticated `GET /t/:slug` to {active≠}, {suspended}, {onboarding},
           {unknown}, {malformed-slug}: suspended ≡ onboarding ≡ unknown ≡ malformed are **byte-identical**
@@ -198,11 +198,11 @@ UI, render-by-status, reuse the bind veto) is sound. Every P0/P1 is folded into 
       (6) **`safeColor` render-time** — a stored non-`#hex6` color → neutral fallback, no CSS metachar survives.
       **Verify green; commit.**
 
-- [ ] **Step 7 — Built-code re-review (architect + doddy lenses); fold findings.** Re-run both persona
+- [x] **Step 7 — Built-code re-review (architect + doddy lenses); fold findings.** Re-run both persona
       lenses on the built UI (escaping completeness, the oracle equivalence, header construction, the cookie
       flow). Apply anything material; re-verify green; commit.
 
-- [ ] **Step 8 — ADR 0014 + memory + README + handoff.** ADR `docs/adr/0014` (the web edge: theme-iff-active
+- [x] **Step 8 — ADR 0014 + memory + README + handoff.** ADR `docs/adr/0014` (the web edge: theme-iff-active
       disclosure equivalence, the four-context encoders, the cookie-as-Bearer transport); memory
       `[[web-ui-themed-edge]]` + index it in `MEMORY.md`; update root + `product/README.md`; update
       `.claude/handoff.local.md` (Phase 14 built; next = Phase 15 onboarding/billing sim). Commit.
