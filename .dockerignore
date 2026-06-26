@@ -1,0 +1,44 @@
+# Keep the build context minimal AND keep internal/operational state out of every image layer (doddy D0-1).
+# The runtime stage COPYs only specific dirs, but this is the first belt: these never enter the context.
+
+# Dependencies — always reinstalled fresh via `npm ci` in the builder stage.
+node_modules
+**/node_modules
+
+# Git history (every prior commit / author email / anything ever committed).
+.git
+.gitignore
+
+# The autonomous-agent operational surface — internal state, never product runtime.
+.claude
+ops
+docs
+agent-operations/src
+agent-operations/tests
+loop-orchestrator/src
+loop-orchestrator/tests
+eval-harness/src
+eval-harness/tests
+eval-harness/personas
+eval-harness/scenarios
+telemetry/src
+telemetry/tests
+scripts
+
+# Tests + build/coverage artifacts — not part of the running image.
+**/tests
+**/*.test.ts
+coverage
+dist
+
+# Local-only continuation state, logs, and any environment/secret files.
+*.local.md
+**/*.local.md
+*.log
+.env
+.env.*
+
+# Editor / OS cruft.
+.DS_Store
+.vscode
+.idea
