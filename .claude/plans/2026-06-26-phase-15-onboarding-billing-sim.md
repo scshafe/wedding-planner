@@ -172,7 +172,7 @@ of architect P0-3).
   `record/eventsFor/balanceCents` — balance = Σcharge−Σpayment over *financial* kinds, positive=owed). Unit
   tests: price-book totality, ordering, the fold, the per-kind amount rule, no-enumeration-leak, strict
   per-tenant `eventsFor`. `npm run build && npm test && npm run lint`.
-- [ ] **Step 2 — The operator trust tier.** `auth/operator_credential.ts` (under `auth/`, peer of
+- [x] **Step 2 — The operator trust tier.** `auth/operator_credential.ts` (under `auth/`, peer of
   `principal.ts` — architect P1-5): `Operator` (phantom brand + module-private `WeakSet` + `Object.freeze`),
   `OperatorCredentialStore` (sole mint, `#`-private token map, `resolve(token)` = **bare `Map.get`, no shape
   gate**), constructor-injected operator token (offline simulation, documented). Brand + mint NOT exported

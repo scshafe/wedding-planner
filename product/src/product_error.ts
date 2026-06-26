@@ -18,6 +18,10 @@ import { WeddingPlannerError } from '@wedding-planner/shared'
  *   - PRODUCT.BAD_REQUEST            a malformed request (unparseable body, missing required field)
  *   - PRODUCT.ROUTE_NOT_FOUND        no route matches the request path
  *   - PRODUCT.METHOD_NOT_ALLOWED     the path is known but the method is not
+ *   - PRODUCT.NO_OPERATOR            an /admin request carried no / an unknown operator token (Phase 15)
+ *   - PRODUCT.FORGED_OPERATOR        an Operator reached a check without the OperatorCredentialStore's brand
+ *   - PRODUCT.DUPLICATE_OPERATOR_TOKEN two seeded operator credential tokens collided
+ *   - PRODUCT.ILLEGAL_LIFECYCLE_TRANSITION an onboarding op asked for an illegal lifecycle edge (Phase 15)
  *
  * The read path deliberately raises NOTHING for a not-found / cross-tenant id — it returns a
  * value-level `undefined` so a foreign id is indistinguishable from a missing one (no existence

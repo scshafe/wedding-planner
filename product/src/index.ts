@@ -57,6 +57,10 @@ export {
   type ListScope,
 } from './auth/wedding_authorizer'
 
+// The platform trust tier (Phase 15): the Operator subject + its sole credential store. The brand symbol
+// and the internal mintOperator are deliberately NOT exported — the store is the sole mint.
+export { type Operator, OperatorCredentialStore, assertMintedOperator } from './auth/operator_credential'
+
 // The HTTP request edge (transport-agnostic). The Node socket adapter lands in Step 4.
 export type { ApiRequest, ApiResponse } from './http/api_message'
 export {
