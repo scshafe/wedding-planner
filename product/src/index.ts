@@ -81,3 +81,14 @@ export type { HttpResult } from './web/web_response'
 export { ThemeResolver } from './web/theme_resolver'
 export { ProductWebUi, type ProductWebUiDeps } from './web/product_web_ui'
 export { createProductWebUiServer } from './web/web_server'
+
+// The composition root (Phase 16): wires every dependency into one running web front door from INJECTED
+// primitives (clock/ids/operator token), so the deployable entrypoint stays a thin impure shell. The
+// edge-only SystemClock / RandomIdGenerator are deliberately exported from NEITHER barrel — app/server.ts
+// imports them by relative path, keeping a wall clock unreachable from the deterministic core by autocomplete.
+export {
+  composeProductSurface,
+  type ComposeProductSurfaceConfig,
+  type ComposedSurface,
+  type DemoSeed,
+} from './runtime/compose'
