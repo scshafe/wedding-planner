@@ -11,9 +11,9 @@ import { ProductError } from '../product_error'
  * (`balanceCents` below). Events are immutable once recorded (append-only); the backing map is
  * `#`-private, so it does not enumerate and a ledger never leaks via `JSON.stringify` / spread.
  *
- * Money is INTEGER CENTS, never a float. Financial kinds (`charge`, `payment`) carry `amount_cents`;
- * marker kinds (`provisioned`, `suspended`, `reactivated`) carry none — the contract enforces this
- * per-kind, and `record` constructs the event to match, so the fold can never sum a non-financial marker.
+ * Money is INTEGER CENTS, never a float. Financial kinds (`charge`, `usage_charge`, `payment`) carry
+ * `amount_cents`; marker kinds (`provisioned`, `suspended`, `reactivated`) carry none — the contract enforces
+ * this per-kind, and `record` constructs the event to match, so the fold can never sum a non-financial marker.
  * `event_id`/`occurred_at` are injected (no ambient id/time). `eventsFor` filters STRICTLY by tenant_id
  * (an operator querying tenant A never sees tenant B's events — doddy P2-1).
  *
@@ -23,8 +23,17 @@ import { ProductError } from '../product_error'
 /** The billing event kinds (the contract's closed enum). */
 export type BillingEventKind = BillingEvent['kind']
 
-/** The kinds that carry money (and therefore participate in the balance fold). */
-const FINANCIAL_KINDS: ReadonlySet<BillingEventKind> = new Set<BillingEventKind>(['charge', 'payment'])
+/**
+ * The kinds that carry money (and therefore participate in the balance fold). MUST stay in lockstep with the
+ * `balanceCents` fold below (which hard-codes the debit/credit direction per kind) AND the schema's per-kind
+ * `allOf` — adding a financial kind to one but not all three is a silent money bug. Pinned by the round-trip
+ * test in billing_ledger.test.ts.
+ */
+const FINANCIAL_KINDS: ReadonlySet<BillingEventKind> = new Set<BillingEventKind>([
+  'charge',
+  'usage_charge',
+  'payment',
+])
 
 /** What a caller supplies to record an event. event_id + occurred_at are owned by the ledger. */
 export interface RecordBillingEventInput {
@@ -86,15 +95,17 @@ export class BillingLedger {
   }
 
   /**
-   * The tenant's account balance in integer cents: Σ(charge) − Σ(payment) over the FINANCIAL events
-   * only. **Positive = money OWED** (a debit balance); zero = settled. Marker events never contribute.
+   * The tenant's account balance in integer cents: Σ(charge + usage_charge) − Σ(payment) over the FINANCIAL
+   * events only. **Positive = money OWED** (a debit balance); zero = settled. Marker events never contribute.
+   * `usage_charge` is a debit like `charge` (it accrues owed metered-messaging fees) but, unlike the monthly
+   * `charge`, is not auto-paired with a settling `payment` — so accrued usage shows as an owed balance.
    */
   balanceCents(tenant_id: string): number {
     const events = this.#byTenant.get(tenant_id)
     if (events === undefined) return 0
     let balance = 0
     for (const event of events) {
-      if (event.kind === 'charge') balance += event.amount_cents ?? 0
+      if (event.kind === 'charge' || event.kind === 'usage_charge') balance += event.amount_cents ?? 0
       else if (event.kind === 'payment') balance -= event.amount_cents ?? 0
     }
     return balance

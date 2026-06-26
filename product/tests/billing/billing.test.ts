@@ -1,7 +1,19 @@
 import { ManualClock, SequentialIdGenerator } from '@wedding-planner/shared'
 import { describe, expect, it } from 'vitest'
 
-import { BillingLedger, MONTHLY_PRICE_CENTS, monthlyPriceCents, type PlanTier } from '@wedding-planner/product'
+import { CHANNELS, type Channel } from '@wedding-planner/shared'
+
+import {
+  BillingLedger,
+  MESSAGE_PRICE_CENTS,
+  MONTHLY_PRICE_CENTS,
+  messagePriceCents,
+  monthlyPriceCents,
+  SIMULATED_PROVIDER_COST_CENTS,
+  type PlanTier,
+} from '@wedding-planner/product'
+
+const TIERS: readonly PlanTier[] = ['solo', 'studio', 'agency']
 
 function newLedger(): BillingLedger {
   return new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB'))
@@ -25,6 +37,37 @@ describe('price_book', () => {
 
   it('rejects a tier outside the enum (defensive guard against a stale cast)', () => {
     expect(() => monthlyPriceCents('enterprise' as PlanTier)).toThrow(/Unknown plan_tier/)
+  })
+
+  it('messagePriceCents is an integer-cents price total over Channel × PlanTier', () => {
+    for (const channel of CHANNELS) {
+      for (const tier of TIERS) {
+        const price = messagePriceCents(channel, tier)
+        expect(Number.isInteger(price)).toBe(true)
+        expect(price).toBeGreaterThan(0)
+        expect(price).toBe(MESSAGE_PRICE_CENTS[channel][tier])
+      }
+    }
+  })
+
+  it('every tenant message price strictly exceeds the simulated provider COGS (the margin clears the happy path)', () => {
+    for (const channel of CHANNELS) {
+      for (const tier of TIERS) {
+        expect(messagePriceCents(channel, tier)).toBeGreaterThan(SIMULATED_PROVIDER_COST_CENTS[channel])
+      }
+    }
+  })
+
+  it('higher tiers pay less per message (a volume discount → plan_tier genuinely moves the price)', () => {
+    for (const channel of CHANNELS) {
+      expect(messagePriceCents(channel, 'agency')).toBeLessThanOrEqual(messagePriceCents(channel, 'studio'))
+      expect(messagePriceCents(channel, 'studio')).toBeLessThanOrEqual(messagePriceCents(channel, 'solo'))
+    }
+  })
+
+  it('rejects an unknown channel/tier (defensive guard against a stale cast)', () => {
+    expect(() => messagePriceCents('carrier_pigeon' as Channel, 'solo')).toThrow(/No message price/)
+    expect(() => messagePriceCents('sms', 'enterprise' as PlanTier)).toThrow(/No message price/)
   })
 })
 
@@ -64,6 +107,23 @@ describe('BillingLedger', () => {
     expect(ledger.balanceCents('tnt_1')).toBe(0) // settled
     ledger.record({ tenant_id: 'tnt_1', kind: 'suspended' }) // marker — never moves the balance
     expect(ledger.balanceCents('tnt_1')).toBe(0)
+  })
+
+  it('usage_charge round-trips as a financial kind AND moves the owed balance (FINANCIAL_KINDS/fold in sync)', () => {
+    const ledger = newLedger()
+    const usage = ledger.record({ tenant_id: 'tnt_1', kind: 'usage_charge', amount_cents: 5 })
+    // Persisted with amount_cents (passes the per-kind contract allOf, which now includes usage_charge).
+    expect(usage.kind).toBe('usage_charge')
+    expect(usage.amount_cents).toBe(5)
+    // Folds as a debit, exactly like charge — the balance moves by the billed amount.
+    expect(ledger.balanceCents('tnt_1')).toBe(5)
+    ledger.record({ tenant_id: 'tnt_1', kind: 'usage_charge', amount_cents: 6 })
+    expect(ledger.balanceCents('tnt_1')).toBe(11) // accrues; not auto-settled
+  })
+
+  it('rejects a usage_charge without amount_cents (reverse guard — the financial rule holds for the new kind)', () => {
+    const ledger = newLedger()
+    expect(() => ledger.record({ tenant_id: 'tnt_1', kind: 'usage_charge' })).toThrow(/requires amount_cents/)
   })
 
   it('partitions strictly by tenant — one tenant never sees another tenant\'s events or balance', () => {

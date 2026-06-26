@@ -40,7 +40,13 @@ export { WeddingRepository, type CreateWeddingInput } from './wedding/wedding_re
 // The simulated billing ledger (Phase 15): the offline model that drives the tenant lifecycle. No real
 // money — amount_cents are modeled, integer cents. The 'account balance' is a fold over events.
 export type { BillingEvent } from '@wedding-planner/shared'
-export { MONTHLY_PRICE_CENTS, monthlyPriceCents, type PlanTier } from './billing/price_book'
+export {
+  MONTHLY_PRICE_CENTS,
+  monthlyPriceCents,
+  MESSAGE_PRICE_CENTS,
+  messagePriceCents,
+  type PlanTier,
+} from './billing/price_book'
 export {
   BillingLedger,
   type BillingEventKind,

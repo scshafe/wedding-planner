@@ -185,7 +185,7 @@ opaque untrusted data, no real-world read, no path to meter/ledger, documented u
     concepts**. Pure types/interface, no impl. Export from the product barrel.
   - Tests: a structural test pinning the port shape + that `OutboundMessage.channel` is the canonical
     `Channel` (carrier-concept regression guard).
-- [ ] **Step 2 — The offline simulated adapter.**
+- [x] **Step 2 — The offline simulated adapter.** (628 tests green)
   - `product/src/messaging/simulated_messaging_adapter.ts`: a deterministic `MessagingPort` (injected
     clock/ids; fabricates nothing, no network/real-world read). `send` returns a receipt with an opaque
     injected-id `provider_message_ref` (NOT a real-world ref); `deliveryStatus` returns a deterministic status
