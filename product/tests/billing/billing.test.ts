@@ -1,0 +1,94 @@
+import { ManualClock, SequentialIdGenerator } from '@wedding-planner/shared'
+import { describe, expect, it } from 'vitest'
+
+import { BillingLedger, MONTHLY_PRICE_CENTS, monthlyPriceCents, type PlanTier } from '@wedding-planner/product'
+
+function newLedger(): BillingLedger {
+  return new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB'))
+}
+
+describe('price_book', () => {
+  it('maps every plan tier to an integer-cents price (total over the enum)', () => {
+    const tiers: readonly PlanTier[] = ['solo', 'studio', 'agency']
+    for (const tier of tiers) {
+      const price = monthlyPriceCents(tier)
+      expect(Number.isInteger(price)).toBe(true)
+      expect(price).toBeGreaterThan(0)
+      expect(price).toBe(MONTHLY_PRICE_CENTS[tier])
+    }
+  })
+
+  it('prices are strictly increasing solo < studio < agency', () => {
+    expect(monthlyPriceCents('solo')).toBeLessThan(monthlyPriceCents('studio'))
+    expect(monthlyPriceCents('studio')).toBeLessThan(monthlyPriceCents('agency'))
+  })
+
+  it('rejects a tier outside the enum (defensive guard against a stale cast)', () => {
+    expect(() => monthlyPriceCents('enterprise' as PlanTier)).toThrow(/Unknown plan_tier/)
+  })
+})
+
+describe('BillingLedger', () => {
+  it('records events in order with injected id + occurred_at', () => {
+    const ledger = newLedger()
+    ledger.record({ tenant_id: 'tnt_1', kind: 'provisioned' })
+    ledger.record({ tenant_id: 'tnt_1', kind: 'charge', amount_cents: 9900 })
+    const events = ledger.eventsFor('tnt_1')
+    expect(events.map((e) => e.kind)).toEqual(['provisioned', 'charge'])
+    expect(events[0]?.occurred_at).toBe('2027-03-01T00:00:00.000Z')
+    expect(events[0]?.event_id).not.toBe(events[1]?.event_id)
+  })
+
+  it('attaches amount_cents only to financial kinds; marker kinds carry no money key', () => {
+    const ledger = newLedger()
+    const marker = ledger.record({ tenant_id: 'tnt_1', kind: 'provisioned' })
+    const charge = ledger.record({ tenant_id: 'tnt_1', kind: 'charge', amount_cents: 2900 })
+    expect('amount_cents' in marker).toBe(false)
+    expect(charge.amount_cents).toBe(2900)
+  })
+
+  it('rejects a financial kind without an amount, and a marker kind with one', () => {
+    const ledger = newLedger()
+    expect(() => ledger.record({ tenant_id: 'tnt_1', kind: 'payment' })).toThrow(/requires amount_cents/)
+    expect(() => ledger.record({ tenant_id: 'tnt_1', kind: 'suspended', amount_cents: 1 })).toThrow(
+      /must not carry amount_cents/,
+    )
+  })
+
+  it('folds the balance as Σcharge − Σpayment over financial kinds only (positive = owed)', () => {
+    const ledger = newLedger()
+    ledger.record({ tenant_id: 'tnt_1', kind: 'provisioned' })
+    ledger.record({ tenant_id: 'tnt_1', kind: 'charge', amount_cents: 9900 })
+    expect(ledger.balanceCents('tnt_1')).toBe(9900) // owed
+    ledger.record({ tenant_id: 'tnt_1', kind: 'payment', amount_cents: 9900 })
+    expect(ledger.balanceCents('tnt_1')).toBe(0) // settled
+    ledger.record({ tenant_id: 'tnt_1', kind: 'suspended' }) // marker — never moves the balance
+    expect(ledger.balanceCents('tnt_1')).toBe(0)
+  })
+
+  it('partitions strictly by tenant — one tenant never sees another tenant\'s events or balance', () => {
+    const ledger = newLedger()
+    ledger.record({ tenant_id: 'tnt_a', kind: 'charge', amount_cents: 2900 })
+    ledger.record({ tenant_id: 'tnt_b', kind: 'charge', amount_cents: 29900 })
+    expect(ledger.eventsFor('tnt_a').map((e) => e.amount_cents)).toEqual([2900])
+    expect(ledger.eventsFor('tnt_b').map((e) => e.amount_cents)).toEqual([29900])
+    expect(ledger.balanceCents('tnt_a')).toBe(2900)
+    expect(ledger.eventsFor('tnt_unknown')).toEqual([])
+    expect(ledger.balanceCents('tnt_unknown')).toBe(0)
+  })
+
+  it('does not leak its events via JSON.stringify (the backing map is #-private)', () => {
+    const ledger = newLedger()
+    ledger.record({ tenant_id: 'tnt_1', kind: 'charge', amount_cents: 2900 })
+    expect(JSON.stringify(ledger)).not.toContain('tnt_1')
+    expect(JSON.stringify(ledger)).not.toContain('2900')
+  })
+
+  it('returns a defensive copy from eventsFor (mutating it does not corrupt the ledger)', () => {
+    const ledger = newLedger()
+    ledger.record({ tenant_id: 'tnt_1', kind: 'provisioned' })
+    const copy = ledger.eventsFor('tnt_1') as unknown[]
+    copy.push({ forged: true })
+    expect(ledger.eventsFor('tnt_1')).toHaveLength(1)
+  })
+})

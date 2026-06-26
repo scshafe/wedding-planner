@@ -164,7 +164,7 @@ of architect P0-3).
   `OperatorCredentialStore.resolve` = **bare `Map.get`** (no shape gate); billing `amount_cents` **per-kind
   schema-enforced** + fold filters financial kinds + balance-sign convention documented; price-book a **total**
   map validated after `tenants.create`; operator token **constructor-injected**, never echoed. Steps 1+2 merged.
-- [ ] **Step 1 — Billing contract + price book + `BillingLedger`** (merged per architect P2-10). Add
+- [x] **Step 1 — Billing contract + price book + `BillingLedger`** (merged per architect P2-10). Add
   `product/schemas/billing_event_schema.json` (the `if/then/else` per-kind `amount_cents` rule); register it
   in `contract_manifest.ts` (+ `ContractKey`, `CONTRACT_COUNT` follows); regen/extend generated types; the
   drift-guard + manifest tests stay green. Add `billing/price_book.ts` (total `Record<PlanTier, amount_cents>`)

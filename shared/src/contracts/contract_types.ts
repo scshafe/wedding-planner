@@ -42,6 +42,7 @@ export type { EscalationRecord } from './generated/escalation_record'
 export type { OversightRecord } from './generated/oversight_record'
 export type { TrustedFeed } from './generated/trusted_feed'
 
-// Product contracts (the customer-facing surface: the multi-tenant aggregates).
+// Product contracts (the customer-facing surface: the multi-tenant aggregates + the billing ledger).
 export type { Tenant } from './generated/tenant'
 export type { Wedding } from './generated/wedding'
+export type { BillingEvent } from './generated/billing_event'

@@ -37,6 +37,16 @@ export { TenantScopedRepository, type TenantOwned } from './tenant/tenant_scoped
 // The wedding aggregate, tenant-scoped.
 export { WeddingRepository, type CreateWeddingInput } from './wedding/wedding_repository'
 
+// The simulated billing ledger (Phase 15): the offline model that drives the tenant lifecycle. No real
+// money — amount_cents are modeled, integer cents. The 'account balance' is a fold over events.
+export type { BillingEvent } from '@wedding-planner/shared'
+export { MONTHLY_PRICE_CENTS, monthlyPriceCents, type PlanTier } from './billing/price_book'
+export {
+  BillingLedger,
+  type BillingEventKind,
+  type RecordBillingEventInput,
+} from './billing/billing_ledger'
+
 // Intra-tenant authorization: the Principal (planner vs couple) and the session mint. The brand symbol
 // and the internal mintPrincipal are deliberately NOT exported — the SessionStore is the sole mint.
 export { type Principal, type PrincipalRole, assertMintedPrincipal } from './auth/principal'

@@ -85,4 +85,5 @@ export type {
   TrustedFeed,
   Tenant,
   Wedding,
+  BillingEvent,
 } from './contracts/contract_types'
