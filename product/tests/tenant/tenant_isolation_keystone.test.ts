@@ -125,6 +125,27 @@ describe('tenant isolation keystone', () => {
     ).toBe('PRODUCT.FORGED_CONTEXT')
   })
 
+  it('(d)(iv) the brand cannot be lifted off a real context and re-stamped onto a forged one', () => {
+    const w = makeWorld()
+    w.weddings.create(w.ctxB, { couple_display_name: 'B couple', event_date: '2028-02-02' })
+
+    // The attack the WeakSet token defends: copy every reflectable own symbol/prop from a legitimate
+    // context onto a hand-built object scoped to ANOTHER tenant, then use it. A real context carries
+    // NO own symbols (the brand is type-only + a WeakSet membership), so there is nothing to lift.
+    const restamped: Record<string | symbol, unknown> = {
+      tenant_id: w.tenantB.tenant_id,
+      slug: 'beta',
+    }
+    for (const sym of Object.getOwnPropertySymbols(w.ctxA)) {
+      restamped[sym] = (w.ctxA as unknown as Record<symbol, unknown>)[sym]
+    }
+    // No own symbols exist to copy — witness that the brand is unreflectable.
+    expect(Object.getOwnPropertySymbols(w.ctxA)).toHaveLength(0)
+    expect(codeOfThrow(() => w.weddings.list(restamped as unknown as TenantContext))).toBe(
+      'PRODUCT.FORGED_CONTEXT',
+    )
+  })
+
   it('(d)(ii) a minted context is frozen — its tenant_id cannot be mutated', () => {
     const w = makeWorld()
     expect(Object.isFrozen(w.ctxA)).toBe(true)
@@ -194,5 +215,13 @@ describe('tenant isolation keystone', () => {
       expect(dump).not.toContain('SECRET_COUPLE_NAME')
       expect(dump).not.toContain(w.tenantA.tenant_id)
     }
+
+    // Witness #-privateness directly (a Map serializes to {} even as a plain `private` field, so the
+    // string checks above would pass even after a downgrade). The backing partition map must NOT be a
+    // reflectable own property of the scoped repository — if someone downgraded `#partitions` to TS
+    // `private partitions`, it would appear here and this assertion would fail.
+    const scoped = (w.weddings as unknown as { repository: object }).repository
+    expect(Object.getOwnPropertyNames(scoped)).not.toContain('partitions')
+    expect(Object.getOwnPropertyNames(w.store)).not.toContain('byId')
   })
 })
