@@ -82,6 +82,16 @@ export { ThemeResolver } from './web/theme_resolver'
 export { ProductWebUi, type ProductWebUiDeps } from './web/product_web_ui'
 export { createProductWebUiServer } from './web/web_server'
 
+// The engine↔surface seam (Phase 17): the pure projection of the loop's champion StrategyGenome into
+// read-only, planner-facing guidance. A deterministic function of the genome alone (no context/principal/
+// repo), it re-derives the risk tier (never trusts a declared one) and carries only human copy.
+export {
+  describeStrategy,
+  type StrategyGuidance,
+  type StrategyKnobGuidance,
+  type StrategyAutonomyGuidance,
+} from './strategy/strategy_guidance'
+
 // The composition root (Phase 16): wires every dependency into one running web front door from INJECTED
 // primitives (clock/ids/operator token), so the deployable entrypoint stays a thin impure shell. The
 // edge-only SystemClock / RandomIdGenerator are deliberately exported from NEITHER barrel — app/server.ts
