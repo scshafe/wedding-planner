@@ -1,5 +1,6 @@
 import type { Tenant, Wedding } from '@wedding-planner/shared'
 
+import type { StrategyGuidance } from '../strategy/strategy_guidance'
 import { html, render, type SafeHtml, safeColor } from './html'
 import { htmlResult, type HttpResult } from './web_response'
 
@@ -133,6 +134,7 @@ export function renderConsole(theme: Tenant['theme'], slug: string, weddings: re
     <h2>Weddings</h2>
     <form class="inline" method="post" action="/t/${slug}/logout"><button type="submit">Sign out</button></form>
   </div>
+  <p><a href="/t/${slug}/strategy">View the planning strategy →</a></p>
   ${body}`,
   )
 }
@@ -149,7 +151,35 @@ export function renderDetail(theme: Tenant['theme'], slug: string, wedding: Wedd
     <p>Date: <strong>${wedding.event_date}</strong></p>
     <p>Status: <span class="status">${wedding.status}</span></p>
     <p class="note">Wedding id: <code>${wedding.wedding_id}</code> · created ${wedding.created_at}</p>
+    <p class="note">Active strategy: <a href="/t/${slug}/strategy">the platform’s data-optimized planning defaults</a> (applied to every wedding in this workspace).</p>
   </div>`,
+  )
+}
+
+/**
+ * The themed "Planning strategy" page (Phase 17) — the loop's champion strategy as planner-facing guidance.
+ * Every dynamic value is the pure `StrategyGuidance` projection (human copy + the derived autonomy posture);
+ * it carries no engine lineage/surface internals, and all values flow through the `html` template (escaped).
+ */
+export function renderStrategy(theme: Tenant['theme'], slug: string, guidance: StrategyGuidance): string {
+  const knobs = guidance.knobs.map(
+    (k) => html`<div class="card">
+    <div><strong>${k.label}</strong> <span class="status">${`${k.level} of ${k.maxLevel}`}</span></div>
+    <p class="note">${k.summary}</p>
+  </div>`,
+  )
+  return themedShell(
+    theme,
+    slug,
+    'Planning strategy',
+    html`<p><a href="/t/${slug}">← All weddings</a></p>
+  <div class="card">
+    <h2>${guidance.headline}</h2>
+    <p>${guidance.autonomy.label} <span class="status">${guidance.autonomy.appliedAutomatically ? 'automatic' : 'needs approval'}</span></p>
+    <p class="note">${guidance.autonomy.explanation}</p>
+  </div>
+  ${knobs}
+  <p class="note">${guidance.disclaimer}</p>`,
   )
 }
 

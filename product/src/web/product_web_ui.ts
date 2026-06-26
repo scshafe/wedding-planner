@@ -3,6 +3,7 @@ import type { Wedding } from '@wedding-planner/shared'
 import type { ApiRequest } from '../http/api_message'
 import { splitPath } from '../http/path'
 import type { ProductApi } from '../http/product_api'
+import type { StrategyGuidance } from '../strategy/strategy_guidance'
 import { normalizeSlugForRoute } from './html'
 import {
   ERROR_500,
@@ -12,6 +13,7 @@ import {
   renderForbidden,
   renderLanding,
   renderLogin,
+  renderStrategy,
 } from './pages'
 import type { ThemeResolver } from './theme_resolver'
 import { htmlResult, type HttpResult, jsonResultFrom, redirect } from './web_response'
@@ -91,10 +93,14 @@ export class ProductWebUi {
         return slug === undefined ? GENERIC_404 : this.#console(req, slug)
       }
 
-      // /t/:slug/login and /t/:slug/logout are the only other UI routes.
+      // /t/:slug/login, /t/:slug/logout, and the read-only /t/:slug/strategy (GET) are the UI routes.
       if (segments.length === 3) {
         if (segments[2] === 'login') return slug === undefined ? GENERIC_404 : this.#login(req, slug)
         if (segments[2] === 'logout') return slug === undefined ? GENERIC_404 : this.#logout(req, slug)
+        // GET only — a non-GET /t/:slug/strategy falls through to the JSON pipeline (401/405).
+        if (segments[2] === 'strategy' && req.method === 'GET') {
+          return slug === undefined ? GENERIC_404 : this.#strategy(req, slug)
+        }
       }
     }
 
@@ -125,6 +131,23 @@ export class ProductWebUi {
       const weddings = readWeddings(apiRes.body)
       if (theme === undefined) return GENERIC_404
       return htmlResult(200, renderConsole(theme, slug, weddings))
+    }
+    return this.#renderNonData(slug, apiRes.status)
+  }
+
+  /**
+   * GET /t/:slug/strategy — the themed planning-strategy page (Phase 17). Mirrors `#console` exactly: ONE
+   * `api.handle()` and themed strictly by the returned status, so the page makes no independent existence
+   * decision (200 → page; 401 → themed login; else the constant masked 404).
+   */
+  #strategy(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const apiRes = this.#api.handle(bearerGet(`/t/${slug}/strategy`, token))
+    if (apiRes.status === 200) {
+      const theme = this.#themes.resolveActiveTheme(slug)
+      const guidance = readStrategy(apiRes.body)
+      if (theme === undefined || guidance === undefined) return GENERIC_404
+      return htmlResult(200, renderStrategy(theme, slug, guidance))
     }
     return this.#renderNonData(slug, apiRes.status)
   }
@@ -248,4 +271,11 @@ function readWedding(body: unknown): Wedding | undefined {
   if (typeof body !== 'object' || body === null) return undefined
   const wedding = (body as { wedding?: unknown }).wedding
   return typeof wedding === 'object' && wedding !== null ? (wedding as Wedding) : undefined
+}
+
+/** Read the strategy guidance from a strategy (200) JSON body, or undefined (tolerant — never throws). */
+function readStrategy(body: unknown): StrategyGuidance | undefined {
+  if (typeof body !== 'object' || body === null) return undefined
+  const strategy = (body as { strategy?: unknown }).strategy
+  return typeof strategy === 'object' && strategy !== null ? (strategy as StrategyGuidance) : undefined
 }

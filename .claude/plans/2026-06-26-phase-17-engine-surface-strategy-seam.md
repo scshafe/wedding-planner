@@ -125,7 +125,7 @@ status, constant `GENERIC_404` fallthrough — no strategy-specific 404 page).
     fails CI, not just boot).
   - Tests: `product/tests/strategy/strategy_guidance.test.ts` (per-knob mapping; tier-1 canonical; tier-2 when
     `autonomy_threshold` present; throws on invalid genome). Verify green.
-- [ ] **Step 2 — The read-only JSON endpoint through the 5-stage pipeline.**
+- [x] **Step 2 — The read-only JSON endpoint through the 5-stage pipeline.** (606 tests green)
   - `ProductApiDeps.championStrategy?: StrategyGenome`; `ProductApi` precomputes `#strategyGuidance` in the
     constructor (eager, immutable; an invalid champion throws at compose → boot fails closed).
   - Route `GET /t/:slug/strategy` under the `/t/:slug` branch: `authenticate` (stages 3–4) BEFORE the method
