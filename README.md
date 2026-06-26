@@ -28,7 +28,7 @@ operates itself). The fifth — `product/` — is the **outward-facing** custome
 | [`telemetry/`](telemetry/README.md) | how it's measured | the canonical event schema + metric catalog; every gate/metric is a function over a **trusted** event stream |
 | [`loop-orchestrator/`](loop-orchestrator/README.md) | how it improves itself | propose → score offline → guardrail-gate → shadow/canary/ramp → promote; the recursive product-improvement loop |
 | [`agent-operations/`](agent-operations/README.md) | how the whole stack is run | the team of agents (CI/CD, support, SRE, security, the loop itself) and the four human-reserved exceptions |
-| [`product/`](product/README.md) | the customer-facing surface | the white-label, multi-tenant web app planners + couples use; built offline-first toward a launch-ready Docker image. Phase 12 lays the multi-tenant domain core + the tenant-isolation boundary |
+| [`product/`](product/README.md) | the customer-facing surface | the white-label, multi-tenant web app planners + couples use; built offline-first toward a launch-ready Docker image. Phase 12 lays the multi-tenant domain core + the tenant-isolation boundary; Phase 13 adds the HTTP request edge + the intra-tenant auth boundary (planner vs couple) |
 
 ## How they fit together
 
@@ -77,12 +77,16 @@ be, it needs the **product** — a **white-label, multi-tenant** web app that re
 their couples sign up for, theme, and use. This is a first-class goal, built **offline-first as a
 deployable Docker container** (locally runnable, demoable, launch-*ready*; onboarding/billing/comms
 simulated offline); **actually going live stays human-reserved** (real hosting, tenants, money, comms).
-**Phase 12 has begun it:** the fifth domain [`product/`](product/README.md) — the `tenant` + `wedding`
+**Phase 12 began it:** the fifth domain [`product/`](product/README.md) — the `tenant` + `wedding`
 aggregates and the tenant-isolation boundary (the multi-tenancy analogue of the trusted-evidence
 firewall: an unforgeable, WeakSet-branded `TenantContext`; the partition key derives from the context
-alone; no existence oracle; liveness re-asserted at use). The arc continues: HTTP/auth (13), web UI
-(14), onboarding/billing simulation (15), Docker packaging (16). See [`docs/adr/0012`](docs/adr/0012-product-surface-multitenant-core.md)
-and the boundary in [`CLAUDE.md`](CLAUDE.md).
+alone; no existence oracle; liveness re-asserted at use). **Phase 13 added the request edge** — a pure
+HTTP handler + a thin Node `http` adapter over a 5-stage pipeline, and the **simulated auth/session**
+layer that stacks the **intra-tenant** boundary (planner vs couple) on top: a couple may act only on
+their own wedding, and a couple addressing any other wedding gets a `404` byte-identical to a missing
+one (no intra-tenant existence oracle). The arc continues: web UI (14), onboarding/billing simulation
+(15), Docker packaging (16). See [`docs/adr/0012`](docs/adr/0012-product-surface-multitenant-core.md),
+[`docs/adr/0013`](docs/adr/0013-http-api-and-intra-tenant-auth.md), and the boundary in [`CLAUDE.md`](CLAUDE.md).
 
 **Also open / earlier threads:**
 - The **action→surface/scope map** — trusted config mapping an operational action to its blast-radius

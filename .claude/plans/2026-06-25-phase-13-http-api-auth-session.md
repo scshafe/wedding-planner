@@ -313,7 +313,7 @@ layer. New `PRODUCT.*` codes are documented in `product_error.ts`.
   phantom wedding; `errorToResponse` never leaks which `PRODUCT.*` code fired in a way that
   distinguishes masked cases. Apply findings before ticking.
 
-- [ ] **Step 7 — ADR 0013 + memory + README + handoff.**
+- [x] **Step 7 — ADR 0013 + memory + README + handoff.**
   `docs/adr/0013-http-api-and-intra-tenant-auth.md` (the request edge; the two stacked boundaries; the
   intra-tenant no-oracle mask; the simulated-login boundary; deferred field policy). Memory
   `http-edge-and-intra-tenant-auth.md` (+ MEMORY.md index): the 5-stage pipeline / sole-per-request

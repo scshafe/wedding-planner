@@ -1,99 +1,109 @@
 # Handoff
 
-## Where things stand — Phase 12 (the customer-facing product surface BEGINS) is BUILT ✅
-`.claude/plans/2026-06-25-phase-12-product-surface-multitenant-core.md` is **complete — all steps
-ticked** (Step 0 design reviews + Steps 1–6), on branch **`build/phase-3-generalize-search`** (the open
-review artifact for `main`; Phases 3–12 build on it; the loop's merge-keeper advances `main` when
-green). Working tree clean. `npm run build && npm test && npm run lint` all green (**427 tests**, up
-from 407 at the start of this run). `main` has Phase 1+2; this branch is the review artifact for
-Phases 3–12.
+## Where things stand — Phase 13 (the HTTP request edge + the intra-tenant auth boundary) is BUILT ✅
+`.claude/plans/2026-06-25-phase-13-http-api-auth-session.md` is **complete — all 8 steps ticked**
+(Step 0 design reviews + Steps 1–7), on branch **`build/phase-3-generalize-search`** (the open review
+artifact for `main`; Phases 3–13 build on it; the loop's merge-keeper advances `main` when green).
+Working tree clean. `npm run build && npm test && npm run lint` all green (**465 tests**, up from 427
+at the start of this run). `main` has Phase 1+2; this branch is the review artifact for Phases 3–13.
 
-**What changed — the arc turned outward.** The first four domains are all inward-facing (score /
-measure / improve / operate the system itself). Phase 12 **opened the customer-facing product surface**
-— the human-set first-class goal ([[customer-facing-product-surface-is-a-first-class-goal]]). It added
-the **fifth domain `@wedding-planner/product`**: the `tenant` + `wedding` aggregates (JSON Schema
-contracts 14 & 15 — the manifest is now **15**), the white-label `theme`, and — load-bearing — the
-**tenant-isolation boundary**. ADR `docs/adr/0012`, memory [[multi-tenant-isolation-boundary]].
+**What changed — the product surface got a request edge.** Phase 12 opened the customer-facing product
+surface with the multi-tenant domain core + the **inter-tenant** isolation boundary
+([[multi-tenant-isolation-boundary]]). Phase 13 added the **transport edge** (a pure HTTP handler + a
+thin Node `http` adapter over a 5-stage pipeline) and the **simulated auth/session** layer, which
+stacks the **intra-tenant** authorization boundary (planner vs couple) that Phase 12 deferred. ADR
+`docs/adr/0013`, memory [[http-edge-and-intra-tenant-auth]].
 
 ## The load-bearing insight (carry forward)
-**Tenant isolation is enforced BY CONSTRUCTION** — the multi-tenancy analogue of the trusted-evidence
-firewall ([[prod-trusted-evidence-channel]]: wall the channel, fail closed, no oracle). A
-`TenantContext` for tenant A can NEVER read/list/write tenant B's data:
-- **Unforgeable context via a WeakSet identity token** (`MINTED_CONTEXTS` in `tenant_context.ts`), NOT
-  a symbol property. **doddy's built-code re-review proved the symbol-brand version was forgeable** —
-  any holder of a real context could lift the symbol via `Object.getOwnPropertySymbols` and re-stamp a
-  forged object for another tenant. WeakSet membership lives outside the object → nothing to copy. The
-  resolver (`resolveBySlug`, slug = the transport-survivable routing primitive) is the sole adder; the
-  context is `Object.freeze`d; a `declare`d phantom `unique symbol` gives compile-time nominal typing.
-- **Partition key = `ctx.tenant_id` ONLY**; the record's own `tenant_id` is compare-only (vetoes a
-  `PRODUCT.CROSS_TENANT_WRITE`). Lookup key is `(tenant_id, id)` — `id` alone is never a key (so two
-  tenants may share a `wedding_id`; corrected a false "ids are tenant-namespaced" claim).
-- **No existence oracle** (`read` returns `undefined`, foreign==missing, one code path);
-  **liveness re-asserted at use, fail closed** (`isUsable` on every op; a context held past a
-  suspension dies); normalized global slug uniqueness; `#`-private maps; no unscoped accessor.
-- Proves **INTER-tenant** isolation only; intra-tenant auth (planner vs couple) → Phase 13.
+**Two stacked boundaries; the edge can route around NEITHER, by construction.** Inter-tenant = the
+Phase-12 `TenantContext`. Intra-tenant (NEW) = a `Principal` (planner sees the whole tenant; couple is
+bound to ONE wedding). The crux mirrors Phase 12's no-existence-oracle one layer up:
+- **One 5-stage pipeline** (`product/src/http/product_api.ts`): parse → resolve tenant (slug from the
+  route → `resolveBySlug` = the SOLE per-request context mint) → authenticate (Bearer → `sessionStore.resolve`)
+  → **bind** (`principal.tenant_id === context.tenant_id`, else 401 — the cross-tenant replay veto) →
+  authorize+dispatch.
+- **Handler purity is STRUCTURAL, not prose** (architect P1-A): the `ProductApi` instance is the only
+  holder of `resolver`/`sessionStore`; dispatch handlers are module-level fns taking only `(ctx,
+  principal, req)` + a narrow `{weddings, authorizer}` bag → they physically cannot mint a foreign-tenant
+  context (a `TenantContext` is resolver-only-minted).
+- **`Principal` is sole-minted by `SessionStore` + WeakSet-branded** (same mechanism + doddy reason as
+  the context). Token is an opaque server handle, not a client claim; principal `tenant_id` from the
+  RESOLVED context, never a slug echo.
+- **No intra-tenant existence oracle** — a couple addressing a NON-owned wedding is a **byte-identical
+  404** to a missing one; ownership decided STRUCTURALLY from `principal.wedding_id` BEFORE any repo
+  lookup (foreign-exists / own-absent / missing / unknown-route all → one frozen `RESP_NOT_FOUND`). A
+  capability the role lacks (couple create) → 403. `errorToResponse` emits code-free constant bodies.
+- **Login is a labeled SIMULATION, oracle-free** (doddy P0): requires only a usable tenant; does NOT
+  verify a credential and does NOT confirm the couple's `wedding_id`. Body smuggling
+  (tenant_id/wedding_id/__proto__) closed.
 
-## Standing directional goal (human-set 2026-06-25) — the product surface arc (NOW UNDER WAY)
+## Standing directional goal (human-set 2026-06-25) — the product surface arc (UNDER WAY)
 Build it **offline-first, Docker-packaged, launch-ready** (onboarding/billing/comms simulated). **Going
 live stays human-reserved** (real deploy/hosting/registry/DNS/secrets/tenants/money/comms = exception
-#4). The planned arc (mine to revise): **12 domain core ✅ → 13 HTTP/auth → 14 web UI → 15
+#4). The planned arc (mine to revise): **12 domain core ✅ → 13 HTTP/auth ✅ → 14 web UI → 15
 onboarding/billing sim → 16 Docker image**. The auto-landing tier-1 offline loop is untouched.
 
 ## What's new this phase (by step)
-- **Step 0** — architect + doddy design reviews (both APPROVE-WITH-CHANGES); folded into a nine-invariant
-  boundary spec. Central finding (both lenses): structural-TS forgeability → brand the context.
-- **Step 1** — the `@wedding-planner/product` workspace skeleton (package.json, root workspaces,
-  tsconfig paths+include, vitest alias, `ProductError`, barrel, README in house style).
-- **Step 2** — `tenant` + `wedding` schemas-as-contracts (manifest 13→15, generated types via shared,
-  drift guard bumped). Schemas encode the boundary up front (normalized slug, compare-only tenant_id).
-- **Step 3** — the domain core: `tenant_context.ts` / `tenant_store.ts` / `tenant_scoped_repository.ts`
-  / `wedding_repository.ts`. Injected clock/ids; validates against the contracts.
-- **Step 4** — the isolation keystone (`tenant_isolation_keystone.test.ts`): adversarial cases (a)–(h)
-  incl. the re-stamp attack (d)(iv) and the #-privateness witness.
-- **Step 5** — doddy built-code re-review: found + fixed the **P1 brand re-stamp** (symbol→WeakSet) and
-  two honesty gaps; doddy then **APPROVE** on the fix.
-- **Step 6** — ADR 0012 + memory [[multi-tenant-isolation-boundary]] + MEMORY.md index + README (fifth
-  domain row + status) + this handoff.
+- **Step 0** — architect + doddy design reviews (both APPROVE-WITH-CHANGES); folded. Biggest changes:
+  dropped the couple-login wedding-existence precondition (the loudest oracle); couple ownership decided
+  structurally before any repo lookup; structural handler purity; code-free constant 404/401/500.
+- **Step 1** — the auth core: `Principal` (WeakSet-branded, `assertMintedPrincipal`) + `SessionStore`
+  (sole mint, opaque token, #-private map). +7 PRODUCT.* request-edge codes.
+- **Step 2** — `WeddingAuthorizer`: pure, brand-checked; couple ownership structural-before-repo; the
+  mask-not-found / forbidden distinction; couple list = zero-or-one from the principal.
+- **Step 3** — the pure handler: 5-stage pipeline, route table, `errorToResponse`, body hardening.
+- **Step 4** — the thin Node `http` adapter (`createProductApiServer`) + an ephemeral-port integration test.
+- **Step 5** — the HTTP keystone (`product/tests/http/product_api_keystone.test.ts`): 12 adversarial
+  cases (a)–(j) incl. cross-tenant replay, the all-directions byte-identical 404, body smuggling, the
+  unauth-wrong-method, and the login-non-oracle.
+- **Step 6** — doddy built-code re-review: **APPROVE, nothing exploitable** (no P0/P1/P2). Pinned the
+  one residual (status cast safe only because schema validation runs downstream).
+- **Step 7** — ADR 0013 + memory [[http-edge-and-intra-tenant-auth]] + MEMORY.md index + README (root +
+  product) + this handoff.
 
 ## Next action — your call. The big remaining levers (ranked)
-- **★ CONTINUE THE PRODUCT ARC — Phase 13: the HTTP API + simulated auth/session.** The natural next
-  step: a transport layer (an HTTP server) that resolves a `TenantContext` from a request
-  (Host/path → slug → `resolveBySlug`) and exposes tenant-scoped endpoints over the Phase-12
-  repositories. This is where **auth principals** (planner vs couple) land — the *intra-tenant*
-  authorization boundary Phase 12 deliberately deferred (a distinct, finer-grained gate). Stack choice
-  is yours (the repo is dependency-light — consider Node's built-in `http`, or a minimal framework;
-  keep it offline + injected-clock + testable). Write a plan (`writing-plans`), design the request→context
-  seam so it CANNOT route around the isolation boundary, and prove it with a keystone (an HTTP-level
-  cross-tenant attack is vetoed). Verify with doddy (the new trust boundary is the request edge).
-- **Enrich the product domain instead** — before HTTP, optionally deepen the domain: a richer `wedding`
-  (link to the planning engine's strategy genome / North Star per wedding), planner/couple membership
-  modeling, or theme validation helpers. Lower risk, but HTTP is the higher-value path to a demoable app.
-- **Earlier offline-loop levers (still open, all incremental):** enrich the advisory corpus
-  (category/qa scenarios → more recommendation variety); a 4th tier-1 knob → 4-D search (needs a
-  meaningful forge-free knob, else busywork); `comms_quality`/`intuitiveness` rubrics (judge-shaped →
-  STOP-and-surface, ADR 0007 — do NOT build a stub). See the Phase-11 handoff history in git.
+- **★ CONTINUE THE PRODUCT ARC — Phase 14: the web UI (planner console + couple view), themed per
+  tenant.** The natural next step: a real (offline) browser-facing surface over the Phase-13 JSON API,
+  themed from the tenant's white-label `theme` (brand_name + colors + logo_ref). This is the first phase
+  that makes the product *demoable to a human*. Stack choice is yours — keep it offline + dependency-light
+  + testable. Options: server-rendered HTML from the existing Node adapter (no build step, simplest,
+  keeps zero new deps), or a small SPA (heavier; a build step + deps). **Recommendation: start
+  server-rendered** (a `/t/:slug/...` HTML surface reusing the pipeline + a couple/planner view gated by
+  the SAME `Principal`), so the UI inherits both boundaries with no new trust surface; add interactivity
+  later. Write a plan (`writing-plans`); the load-bearing concern is that the UI introduces NO new way to
+  route around the two boundaries (it must go through `ProductApi`, never the repos directly), and that
+  theming can't inject script (XSS — escape `theme` fields; doddy lens on the render). Verify with doddy.
+- **Enrich the product domain/API instead** — before UI: a wedding↔planning-engine seam (link a wedding
+  to a strategy genome / North Star per wedding — the long-promised connection of the engine to the
+  surface), planner/couple *membership* modeling (multiple planners/couples per tenant; today a couple
+  is a self-asserted login), or a field-level couple write policy (the Phase-13 deferral). Lower-risk,
+  but UI is the higher-value path to a demoable app.
+- **Earlier offline-loop levers (still open, all incremental):** enrich the advisory corpus; a 4th
+  tier-1 knob → 4-D search (needs a meaningful forge-free knob, else busywork); `comms_quality`/`intuitiveness`
+  rubrics (judge-shaped → STOP-and-surface, ADR 0007 — do NOT build a stub). See git history.
 
-## Non-obvious Phase-12 context (carry forward)
-- **The WeakSet brand is the crux.** Do NOT "simplify" `TenantContext` back to a symbol property or a
-  plain `{tenant_id}` — doddy proved both are forgeable. The runtime guard is WeakSet membership; the
-  `declare`d symbol is compile-time-only (no runtime property, so `getOwnPropertySymbols` is empty).
-  Keystone (d)(iv) is the regression that pins this; it would pass trivially if you reverted, so also
-  keep the "zero own symbols" assertion.
-- **Generated contract types live in `shared/`** (`shared/src/contracts/generated/`, surfaced via
-  `contract_types.ts` + the shared barrel), even for product schemas — `npm run gen:types` writes there.
-  The product barrel re-exports `Tenant`/`Wedding` from `@wedding-planner/shared`.
-- **`getSchemaRegistry()` is process-cached** — it reads all 15 schemas once. New schemas must be in the
-  manifest (`shared/src/contracts/contract_manifest.ts`) AND the drift test count (currently 15).
-- **`npm install` is needed after adding a workspace** (the symlink in node_modules); done this run.
-- **Liveness coupling is intentional:** `TenantScopedRepository` depends on a `TenantLivenessCheck`
-  (the `TenantStore`) so it can re-assert usability at use. That coupling IS the fail-closed property;
-  don't remove it to "decouple".
-- **CI/exit-code lesson (still true):** never pipe `npm run build` to tail/grep when gating with `&&`
-  (the pipe masks the non-zero exit). Run build standalone, check `$?`. `npm run build` runs from REPO ROOT.
+## Non-obvious Phase-13 context (carry forward)
+- **Do NOT add a JSON Schema for the session/principal** — it is transient simulated auth state, not a
+  persisted aggregate (the manifest stays at 15). The `tenant`/`wedding` aggregates keep their contracts.
+- **The `errorToResponse` catch is on `WeddingPlannerError`, not `ProductError`** — deliberately broader,
+  so the shared `CONTRACT.VALIDATION_FAILED` from a bad create/update body maps to 400 (not the 500
+  default). If you add a new throw path, decide its status in `errorToResponse` or it falls to 500.
+- **Keep the no-oracle invariants if you touch the handler:** (1) couple ownership decided structurally
+  BEFORE any repo lookup; (2) the masked 404, the 401, and the 500 are each ONE frozen constant (code-free
+  body); (3) auth+bind run BEFORE any 405/route-shape check; (4) for PUT, authorize→mask runs BEFORE body
+  parse; (5) identity from the route + ownership from the context, applied LAST. The keystone pins all of
+  these; reverting any would regress an oracle the keystone catches.
+- **Handler purity is the narrow deps bag.** Don't hand the dispatch handlers the `resolver`/`sessionStore`
+  to "simplify" — that bag being narrow is what makes "no handler mints a foreign context" structural.
+- **The status cast (`as Wedding['status']`) is safe only because schema validation runs downstream** —
+  keep validation after the cast on any refactor (commented at both sites).
+- **The Node adapter is the ONLY socket-touching code** — all policy lives in the pure handler, which is
+  why the keystone needs no socket. A 1MB body cap → 413 is the only DoS guard (timeouts deferred to going-live).
 - The repo's named specialist sub-agents (doddy/wolf/testineer/rigorous-architect) are **not provisioned**
   here — route adversarial reviews through `general-purpose` agents carrying the persona lens (this run
-  did, for architect + doddy at design, and doddy twice on the built code — which caught the P1).
-- Durable facts: `MEMORY.md` index — Phase 12 added **[[multi-tenant-isolation-boundary]]**. Still
-  load-bearing from the engine arc: [[prod-trusted-evidence-channel]], [[loop-trusted-evidence-boundary]],
-  [[advisory-tier2-promotable-recommendations]], [[tier2-promotion-gate-is-load-bearing]],
-  [[genome-content-address-firewall]], [[customer-facing-product-surface-is-a-first-class-goal]].
+  did, for architect + doddy at design, and doddy on the built code — APPROVE, nothing exploitable).
+- **CI/exit-code lesson (still true):** never pipe `npm run build` to tail/grep when gating with `&&`
+  (the pipe masks the non-zero exit). Run build standalone, check `$?`. `npm run build` runs from REPO ROOT.
+- Durable facts: `MEMORY.md` index — Phase 13 added **[[http-edge-and-intra-tenant-auth]]**. Still
+  load-bearing: [[multi-tenant-isolation-boundary]], [[prod-trusted-evidence-channel]],
+  [[customer-facing-product-surface-is-a-first-class-goal]], [[agents-own-buildout-decisions]].
