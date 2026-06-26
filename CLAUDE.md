@@ -28,6 +28,19 @@ co-equal with the self-improvement loop. Everything so far is the engine; this i
   in-flight threads or pivot when you judge it the higher-value move); own the stack/structure/design
   as always. See `.claude/memory/customer-facing-product-surface-is-a-first-class-goal.md`.
 
+**A named capability on this roadmap (human-set 2026-06-26) — a guest-facing messaging channel.** Wedding
+guests text the AI (SMS / WhatsApp / …) to get info, updates, and answers (RSVP, logistics, Q&A). The
+guest↔AI Q&A loop is already modeled and scored inward (`qa_accuracy`); what's missing is the product
+channel (guests aren't a product persona yet) + the provider boundary. **Two human-set design
+constraints, non-negotiable:** **(1) pricing is a first-class factor** — messaging is metered, so meter
+per-message usage and price it with margin (extends the flat-monthly `price_book` + the Phase-15 ledger),
+*and* make per-message cost a North-Star denominator term so the comms strategy (cadence/spacing/batching)
+trades real money; **(2) avoid vendor lock-in** — the provider sits behind a provider-agnostic port
+(send/inbound/delivery-status/cost-report) with swappable, offline-**simulated** adapters and no
+carrier-specific concepts in the domain. Build it offline and demoable; a real provider sending real texts
+is the human-reserved crossing (guest comms is tier-2). See
+`.claude/memory/guest-messaging-channel-is-a-roadmap-goal.md`.
+
 ## On every session, do this
 
 1. **Orient.** Read `.claude/handoff.local.md` (the committed continuation state — where the last run

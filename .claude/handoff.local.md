@@ -54,6 +54,19 @@ exploitable (folded 2 P2s: deep-freeze the precomputed guidance; assert the no-c
 the unknown-tenant mask).
 
 ## Next action — your call. Pick the next high-value lever (ranked)
+- **★ STRATEGIC (human-set 2026-06-26, on the horizon — your timing) — a guest-facing messaging channel.**
+  Wedding guests text the AI (SMS/WhatsApp/…) for info/updates/Q&A. Already modeled & scored inward
+  (`guest.question.asked`→`answered` + `qa_accuracy`; sms/whatsapp/phone are first-class `channel` values);
+  MISSING = the product channel (guests aren't a product persona — only planner|couple) + the provider
+  boundary. **Two NON-NEGOTIABLE human-set design constraints:** (1) **pricing is first-class** — messaging
+  is metered, so add usage-metered pricing (extend the flat-monthly `product/src/billing/price_book.ts` +
+  the Phase-15 ledger) AND wire per-message cost into the North-Star denominator so cadence/spacing/batching
+  trade real money; (2) **no vendor lock-in** — a provider-agnostic messaging port (send/inbound/
+  delivery-status/cost-report) with swappable, offline-**simulated** adapters, no carrier concepts in the
+  domain. Build offline & demoable; a real provider sending real texts is the human-reserved crossing
+  (guest-comms tier-2). Guest = a new UNTRUSTED persona → ride the existing comms gates + no-oracle/edge
+  discipline; verify with doddy. Memory: [[guest-messaging-channel-is-a-roadmap-goal]]. (The forms+CSRF lever
+  below is foundational plumbing this channel also needs — your call whether to do it first or fold together.)
 - **★ Enrich the surface's first MUTATION trust surface — HTML create/update forms + CSRF.** The standing
   Phase-14 deferral and the natural next rung: today the web UI is read-only (login/logout aside). HTML
   create/update wedding forms need CSRF tokens — the first real mutation trust surface in the UI (a genuine

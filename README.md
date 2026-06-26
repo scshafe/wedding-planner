@@ -111,6 +111,13 @@ verify; **it is never pushed — going live stays human-reserved**. See
 [`docs/RUNNING_THE_IMAGE.md`](docs/RUNNING_THE_IMAGE.md)), and the boundary in [`CLAUDE.md`](CLAUDE.md).
 
 **Also open / earlier threads:**
+- **A guest-facing messaging channel** *(roadmap goal)* — wedding guests text the AI (SMS/WhatsApp/…) for
+  info, updates, and Q&A. The guest↔AI Q&A loop is already modeled and scored inward (`qa_accuracy`); the
+  missing piece is the product channel + a **provider-agnostic** messaging port (swappable, offline-simulated
+  adapters — no vendor lock-in) with **usage-metered pricing** (messaging is metered, so it extends the
+  flat-monthly price book and feeds the North-Star cost term). Built offline-first; a real provider sending
+  real texts stays human-reserved (guest comms is tier-2). See
+  [`CLAUDE.md`](CLAUDE.md) and `.claude/memory/guest-messaging-channel-is-a-roadmap-goal.md`.
 - The **action→surface/scope map** — trusted config mapping an operational action to its blast-radius
   surface and each role to a machine-checkable scope; the ops analogue of
   [`loop-orchestrator/risk_tier_derivation.md`](loop-orchestrator/risk_tier_derivation.md), required
