@@ -5,6 +5,8 @@ import { SessionStore } from '../auth/session_store'
 import { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import { BillingLedger } from '../billing/billing_ledger'
 import { ProductApi } from '../http/product_api'
+import { MessagingService } from '../messaging/messaging_service'
+import { SimulatedMessagingAdapter } from '../messaging/simulated_messaging_adapter'
 import { OnboardingService } from '../onboarding/onboarding_service'
 import { TenantContextResolver } from '../tenant/tenant_context'
 import { TenantStore } from '../tenant/tenant_store'
@@ -79,6 +81,13 @@ export interface ComposedSurface {
   readonly operatorToken: string
   /** The demo tenant handle, or undefined when `seedDemo` was false (no fabricated handle). */
   readonly demo?: DemoSeed
+  /**
+   * Phase 18: the metered, margin-priced guest-messaging service, wired over the offline simulated provider
+   * adapter (which takes the SAME injected clock/ids, so the determinism rail holds). Exposed for
+   * tests/inspection — it has no HTTP route yet (the guest-channel request edge is the next rung), so this is
+   * how a compose-level test exercises `send` through the wired graph.
+   */
+  readonly messaging: MessagingService
 }
 
 /** The demo theme — an obvious offline placeholder (no real brand). Colors are lowercase 6-hex per contract. */
@@ -104,6 +113,13 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const onboarding = new OnboardingService(tenants, billing)
   const weddings = new WeddingRepository(tenants, clock, ids)
   const authorizer = new WeddingAuthorizer()
+
+  // The guest-messaging provider boundary (Phase 18): the offline simulated adapter is a deterministic
+  // double (injected clock/ids — no real provider, no network), so it wires here like any dep without
+  // breaching the determinism rail. The service meters accepted sends and bills usage_charge into the SAME
+  // ledger. No HTTP route yet (the guest-channel edge is the next rung); exposed on the surface for tests.
+  const messagingAdapter = new SimulatedMessagingAdapter(clock, ids)
+  const messaging = new MessagingService(messagingAdapter, tenants, billing, ids)
 
   const api = new ProductApi({
     resolver,
@@ -137,5 +153,5 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     demo = { slug: demoSlug, tenantId: tenant.tenant_id, weddingId: wedding.wedding_id }
   }
 
-  return { ui, api, themes, operatorToken, demo }
+  return { ui, api, themes, operatorToken, demo, messaging }
 }

@@ -207,7 +207,7 @@ opaque untrusted data, no real-world read, no path to meter/ledger, documented u
   - Tests: schema/`record` round-trip (`usage_charge` WITH `amount_cents` persists AND moves `balanceCents` by
     exactly that amount) + reverse (`usage_charge` sans `amount_cents` → `PRODUCT.BAD_REQUEST`); existing
     billing tests stay green.
-- [ ] **Step 4 — The MessagingService (meter + margin + bill), with the firewall pinned.**
+- [x] **Step 4 — The MessagingService (meter + margin + bill), with the firewall pinned.** (649 tests green)
   - `product/src/messaging/messaging_service.ts`: tenant-scoped `send(tenant_id, outbound)` that, in order:
     (1) validates `outbound.idempotency_key` is a non-empty string and looks it up in the **per-tenant**
     `(tenant_id,key)` index nested in the `#`-private partition — a hit returns the prior receipt, no

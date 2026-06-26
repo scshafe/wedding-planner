@@ -101,6 +101,40 @@ describe('composeProductSurface — boundaries inherited unchanged', () => {
   })
 })
 
+describe('composeProductSurface — the guest-messaging meter (Phase 18)', () => {
+  it('wires the messaging service over the simulated adapter; a send meters + bills through the SAME ledger', () => {
+    const { messaging, api, demo } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+    const tenantId = demo?.tenantId ?? ''
+
+    const result = messaging.send(tenantId, {
+      channel: 'sms',
+      recipient_ref: 'guest-1',
+      body: 'Your RSVP reminder',
+      idempotency_key: 'k1',
+    })
+    expect(result.deduped).toBe(false)
+    expect(result.usage.billed_cents).toBeGreaterThan(result.usage.provider_cost_cents) // margin held
+
+    // The usage_charge folded into the SAME ledger the operator's /admin billing view reads.
+    const view = messaging.usageView(tenantId)
+    expect(view.message_count).toBe(1)
+    const billing = api.handle(req('GET', `/admin/tenants/${tenantId}/billing`, { token: OP }))
+    expect(billing.status).toBe(200)
+    const kinds = (billing.body as { events: { kind: string }[] }).events.map((e) => e.kind)
+    expect(kinds).toContain('usage_charge')
+  })
+
+  it('the wired send is deterministic — same injected primitives replay an identical receipt', () => {
+    const a = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+    const b = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+    const msg = { channel: 'sms' as const, recipient_ref: 'g', body: 'hi', idempotency_key: 'k1' }
+    const ra = a.messaging.send(a.demo?.tenantId ?? '', msg)
+    const rb = b.messaging.send(b.demo?.tenantId ?? '', msg)
+    expect(ra.receipt).toEqual(rb.receipt)
+    expect(ra.usage).toEqual(rb.usage)
+  })
+})
+
 describe('composeProductSurface — the engine↔surface strategy seam (Phase 17)', () => {
   const CHAMPION = { genome_id: 'g_pub', parameters: { rsvp_reminder_cadence: 3, reminder_spacing: 1, reminder_batching: 1 } }
 
