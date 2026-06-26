@@ -15,3 +15,24 @@ export { ProductError } from './product_error'
 
 // The product aggregates (generated from product/schemas/*, surfaced via shared's clean-named types).
 export type { Tenant, Wedding } from '@wedding-planner/shared'
+
+// Tenant isolation boundary. The brand symbol and the internal mint are deliberately NOT exported —
+// the resolver is the sole mint of a TenantContext.
+export {
+  type TenantContext,
+  TenantContextResolver,
+  assertMintedContext,
+  isUsableLifecycle,
+  USABLE_LIFECYCLE_STATUSES,
+} from './tenant/tenant_context'
+export {
+  TenantStore,
+  type TenantLivenessCheck,
+  type TenantRouting,
+  type CreateTenantInput,
+  normalizeSlug,
+} from './tenant/tenant_store'
+export { TenantScopedRepository, type TenantOwned } from './tenant/tenant_scoped_repository'
+
+// The wedding aggregate, tenant-scoped.
+export { WeddingRepository, type CreateWeddingInput } from './wedding/wedding_repository'
