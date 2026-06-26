@@ -39,7 +39,7 @@ const FINANCIAL_KINDS: ReadonlySet<BillingEventKind> = new Set<BillingEventKind>
 export interface RecordBillingEventInput {
   readonly tenant_id: string
   readonly kind: BillingEventKind
-  /** Required iff kind is financial (`charge`/`payment`); must be absent otherwise. Integer cents. */
+  /** Required iff kind is financial (`charge`/`usage_charge`/`payment`); must be absent otherwise. Integer cents. */
   readonly amount_cents?: number
 }
 

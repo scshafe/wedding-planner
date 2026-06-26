@@ -1,6 +1,6 @@
 # Phase 18 — The guest-messaging provider boundary + the meter (the channel's foundation)
 
-**Status:** IN PROGRESS — Step 0 complete (both lenses APPROVE-WITH-CHANGES; folded). Steps 1–5 pending.
+**Status:** COMPLETE — all 6 steps ticked (651 tests green; architect + doddy APPROVE design AND built code; compose-level send verified through the wired graph).
 **Branch:** `build/phase-3-generalize-search` (the open review artifact for `main`; Phases 3–17 build on it; this continues it)
 **Predecessor:** Phase 17 (the engine↔surface strategy seam) — complete, 617 tests green.
 
@@ -229,7 +229,7 @@ opaque untrusted data, no real-world read, no path to meter/ledger, documented u
     Σ(`usage_charge` amount_cents); `usage_charge` moves the owed balance; `deliveryStatus`/`inbound` mutate
     no billing/meter state; lifecycle: accrue → `reactivate` → balance still reflects unsettled usage
     **(architect P1-3)**.
-- [ ] **Step 5 — Compose wiring + built-code re-review + ADR 0018 + memory + handoff.**
+- [x] **Step 5 — Compose wiring + built-code re-review + ADR 0018 + memory + handoff.** (651 tests green; both lenses APPROVE the built code, no P0/P1, folded the one shared P2 doc fix)
   - `compose.ts` (+ `app/server.ts`): construct the `SimulatedMessagingAdapter` + `MessagingService`, inject
     them (adapter takes the injected clock/ids — determinism rail), and **expose the service on
     `ComposedSurface`** so a compose-level test exercises `send` through the wired graph **(architect P2-5)**.
