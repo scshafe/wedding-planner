@@ -95,12 +95,20 @@ added onboarding + billing simulation** — a third trust tier (a platform **`Op
 through a modeled billing ledger, over an operator-gated `/admin` surface folded into the same pipeline.
 It is **operator-gated precisely so it adds no new anonymous oracle**: anonymous self-serve signup would
 leak slug-occupancy for every lifecycle state, so it stays a recorded deferral; the absent≡suspended≡
-onboarding mask is preserved by construction, and re-proven by an onboarding keystone. The arc continues:
-Docker packaging (16). See
+onboarding mask is preserved by construction, and re-proven by an onboarding keystone. **Phase 16
+completed the arc — the deployable Docker image.** A composition root (`composeProductSurface`) wires the
+whole surface from *injected* primitives and an entrypoint (`app/server.ts`) serves it; `docker run` boots a
+themed demo tenant at `/t/demo`. The entrypoint is the one **imperative shell** where ambient reality enters
+— so the determinism rail holds everywhere else *by reachability* (the wall clock + uuid id source live in
+`product/` where the eval/loop core can't import them), and the operator credential is **injected, never
+baked** (no `ARG`/`ENV` for it; a `≥16`-char floor or fail-closed). The image was built and run locally to
+verify; **it is never pushed — going live stays human-reserved**. See
 [`docs/adr/0012`](docs/adr/0012-product-surface-multitenant-core.md),
 [`docs/adr/0013`](docs/adr/0013-http-api-and-intra-tenant-auth.md),
 [`docs/adr/0014`](docs/adr/0014-server-rendered-web-ui.md),
-[`docs/adr/0015`](docs/adr/0015-onboarding-billing-simulation.md), and the boundary in [`CLAUDE.md`](CLAUDE.md).
+[`docs/adr/0015`](docs/adr/0015-onboarding-billing-simulation.md),
+[`docs/adr/0016`](docs/adr/0016-deployable-docker-image.md) (run recipe:
+[`docs/RUNNING_THE_IMAGE.md`](docs/RUNNING_THE_IMAGE.md)), and the boundary in [`CLAUDE.md`](CLAUDE.md).
 
 **Also open / earlier threads:**
 - The **action→surface/scope map** — trusted config mapping an operational action to its blast-radius

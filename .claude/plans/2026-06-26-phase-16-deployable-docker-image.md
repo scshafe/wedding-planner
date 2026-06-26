@@ -1,6 +1,6 @@
 # Phase 16 — The deployable Docker image (the launch-ready offline product surface)
 
-**Status:** in progress
+**Status:** complete — all steps ticked (585 tests green; image built + verified on the running container)
 **Branch:** `build/phase-3-generalize-search` (the open review artifact for `main`; Phases 3–15 build on it)
 **Predecessor:** Phase 15 (onboarding/billing sim) — complete, 559 tests green.
 
@@ -93,7 +93,7 @@ scope; ship the four schema dirs and document it.
 
 - [x] **Step 0 — Design reviews (architect + doddy personas); folds recorded above.** ✅
 
-- [ ] **Step 1 — Edge-only runtime primitives.** `product/src/runtime/system_clock.ts` (`SystemClock implements
+- [x] **Step 1 — Edge-only runtime primitives.** `product/src/runtime/system_clock.ts` (`SystemClock implements
   Clock`, `now()` = `new Date().toISOString()`) + `product/src/runtime/random_id_generator.ts`
   (`RandomIdGenerator implements IdGenerator`, `next(prefix)` = `${prefix}_${crypto.randomUUID()}`). Both
   documented edge-only with the determinism rationale. Tests: `SystemClock.now()` is a valid ISO 8601 UTC
@@ -101,7 +101,7 @@ scope; ship the four schema dirs and document it.
   many calls. **(A4)** exported from NEITHER `shared`'s nor `product`'s public barrel — `app/server.ts` imports
   them by relative path, so no test/core file can grab a wall clock by autocomplete.
 
-- [ ] **Step 2 — The composition root.** `product/src/runtime/compose.ts`:
+- [x] **Step 2 — The composition root.** `product/src/runtime/compose.ts`:
   `composeProductSurface(config: ComposeProductSurfaceConfig): ComposedSurface`. **(A3)** declare + export both
   named types: `ComposeProductSurfaceConfig { clock: Clock; ids: IdGenerator; operatorToken: string;
   seedDemo?: boolean; demoSlug?: string }` and `ComposedSurface { ui; api; themes; operatorToken; demo?: {
@@ -115,7 +115,7 @@ scope; ship the four schema dirs and document it.
   logs the operator token — it receives it via `config.operatorToken`. Exported from the product barrel.
   Unit-test with `ManualClock`/`SequentialIdGenerator`.
 
-- [ ] **Step 3 — The entrypoint.** `app/server.ts` (new top-level `app/`; add `app` to tsconfig `include`).
+- [x] **Step 3 — The entrypoint.** `app/server.ts` (new top-level `app/`; add `app` to tsconfig `include`).
   Reads env: `PORT` (default 8080), `HOST` (default `0.0.0.0`), `WP_SEED_DEMO` (default true), `WP_DEMO_SLUG`
   (default `demo`), `WP_OPERATOR_TOKEN`. **Token policy (D1-1/D1-2/A2):** if `WP_OPERATOR_TOKEN` is set, enforce
   a **≥16-char floor** (fail closed, non-zero exit, below it); if unset AND `seedDemo` ⇒ generate
@@ -127,7 +127,7 @@ scope; ship the four schema dirs and document it.
   never log a `tenant_id`/`operator_id`/balance. **(D0-2)** add `npm run serve` = `tsx app/server.ts`; move
   `tsx` to `dependencies`.
 
-- [ ] **Step 4 — Wiring + boot tests.** (a) `compose` unit test (Step 2) proves the wiring + the mask (active
+- [x] **Step 4 — Wiring + boot tests.** (a) `compose` unit test (Step 2) proves the wiring + the mask (active
   demo discloses 401/themed-200; unprovisioned slug → byte-identical generic 404). (b) Integration test over
   `ui.handle()`: `/healthz` → 200; `GET /t/demo` → 200 themed (brand name in HTML); unprovisioned slug →
   generic 404; `POST /admin/tenants` without operator token → 401, with it → 201. (c) Bind
@@ -136,7 +136,7 @@ scope; ship the four schema dirs and document it.
   the token value; given none + seedDemo, the generated token appears exactly once; token <16 chars ⇒ the
   validator throws/exits. Keep all tests deterministic (`ManualClock`).
 
-- [ ] **Step 5 — The image.** **Multi-stage `Dockerfile`:** builder (`node:22-slim`, `COPY` package manifests
+- [x] **Step 5 — The image.** **Multi-stage `Dockerfile`:** builder (`node:22-slim`, `COPY` package manifests
   first then `npm ci --omit=dev` with `tsx` now a dependency — ships NO vitest/eslint/typescript) → runtime
   (`node:22-slim`, non-root `USER`, copy from builder only: `node_modules`, root `package*.json`,
   `tsconfig*.json`, `shared/`, `product/`, `app/`, and the four extra `*/schemas/` dirs per **(S1)**; `ENV
@@ -151,9 +151,9 @@ scope; ship the four schema dirs and document it.
   entrypoint boots via `tsx` (healthz + demo) outside Docker, and record "build the image on a Docker host" as
   the human-runnable handoff step — do NOT fake a build.
 
-- [ ] **Step 6 — Built-code re-review (architect + doddy on the actual code); fold findings.**
+- [x] **Step 6 — Built-code re-review (architect + doddy on the actual code); fold findings.**
 
-- [ ] **Step 7 — ADR 0016 + memory `[[deployable-image-composition-root]]` + MEMORY.md index + READMEs (root +
+- [x] **Step 7 — ADR 0016 + memory `[[deployable-image-composition-root]]` + MEMORY.md index + READMEs (root +
   product) + handoff update.** Record: the imperative-shell boundary, the edge-only clock/ids and why they're
   out of `shared`, the injected-not-baked operator token, the `tsx` runtime choice + the tsc-emit deferral,
   and the human-reserved "build/deploy for real" crossing.

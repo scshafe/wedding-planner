@@ -105,6 +105,34 @@ surface folded into the SAME `api.handle()` pipeline. Offline-first; no real mon
   honest `409` to the trusted operator (NOT masked — the mask protects anonymous probers, not the operator).
   Proven by an onboarding keystone.
 
+## The deployable image (Phase 16) — the imperative shell over the offline surface
+
+The surface now **runs as a deliverable**: a composition root + an entrypoint, packaged as a locally-runnable,
+launch-ready Docker image. Building and running it locally is in-scope; pushing/deploying for real is the
+human-reserved crossing — **the image is never pushed.**
+
+- **The composition root is the imperative shell.** `composeProductSurface(config)`
+  (`src/runtime/compose.ts`) wires every collaborator from **injected** `{ clock, ids, operatorToken, … }` —
+  it reads no env, generates no token, logs nothing. The entrypoint `app/server.ts` is the one impure place
+  ambient reality enters (env, the wall clock, the token, the socket, signals). So the same wiring unit-tests
+  with the deterministic doubles, and only `main` touches the real world.
+- **The determinism rail holds by reachability.** The edge-only `SystemClock` + `RandomIdGenerator` live under
+  `src/runtime/` and are exported from **neither** barrel; the eval/loop core imports `@wedding-planner/shared`
+  and never `product`, so a wall clock here is physically unreachable from the replay core. `app/server.ts`
+  imports them by relative path.
+- **The operator credential is injected, never baked.** No `ARG`/`ENV WP_OPERATOR_TOKEN` in the Dockerfile.
+  The pure `app/server_config.ts` policy: an env token is enforced to a `≥16`-char floor (else **fail
+  closed**); unset + the demo default ⇒ a fresh `crypto.randomUUID()` token logged **once**; unset + a
+  non-demo build ⇒ **fail closed** (never silently auto-mint an admin credential). The boot log never echoes a
+  provided token or an internal id.
+- **The demo seed uses the real lifecycle driver.** `compose` provisions **and activates** the demo tenant
+  through the Phase-15 `OnboardingService`, so it is edge-indistinguishable from any active tenant (the mask
+  holds); the demo wedding is seeded on a context resolved *after* activation, and **no session is minted**.
+- **Slim, offline runtime.** `tsx` runs the workspace TS directly (the repo emits no JS); it is a runtime
+  dependency so `npm ci --omit=dev` ships no test/lint toolchain. Non-root; `HEALTHCHECK` hits `/healthz`
+  only. The image ships every workspace's `schemas/` because the `SchemaRegistry` eagerly loads all 16
+  contracts at the first validation (the demo seed). Run recipe: [`../docs/RUNNING_THE_IMAGE.md`](../docs/RUNNING_THE_IMAGE.md).
+
 ## Status
 
 **Phase 12 — the multi-tenant domain core:** the `tenant` + `wedding` aggregates, the white-label
@@ -114,10 +142,13 @@ boundary, and the Node `http` adapter, proven by an HTTP keystone. **Phase 14 �
 UI:** the themed white-label HTML console over that pipeline (`ProductWebUi` + `createProductWebUiServer`),
 proven by a web keystone. **Phase 15 — onboarding + billing simulation:** the operator trust tier
 (`OperatorCredentialStore`), the `/admin` surface, the `BillingLedger`/`price_book`, and the
-`OnboardingService` lifecycle driver, proven by an onboarding keystone. Pure in-memory + injected
-clock/ids, offline; provisioning/billing/login all simulated.
+`OnboardingService` lifecycle driver, proven by an onboarding keystone. **Phase 16 — the deployable Docker
+image:** the composition root (`composeProductSurface`) + the `app/server.ts` entrypoint, packaged as a
+multi-stage, non-root, `tsx`-run image that boots a themed demo tenant, verified on the running container.
+Pure in-memory + injected clock/ids, offline; provisioning/billing/login all simulated.
 
-**Later phases (the arc):** Phase 16 — Docker packaging → the launch-ready image.
+**The product arc is complete (12 → 16).** Producing the image is in-scope; running it for real
+(registry/hosting/DNS/secrets/real tenants/money/comms) stays human-reserved.
 
 **Deferred (recorded, not faked):** anonymous public self-serve signup (slug-occupancy disclosure +
 abuse-control = going-live hardening); the operator web console (HTML — the first mutation UI); recurring
