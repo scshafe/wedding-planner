@@ -25,6 +25,10 @@ export { sha256Hex, hmacSha256Hex, timingSafeEqualHex } from './crypto/hashing'
 // Immutability
 export { deepFreeze } from './deep_freeze'
 
+// Domain values shared across workspaces. `Channel` is the single comms-channel enum (derived from the
+// schema contracts, drift-guarded) — the messaging boundary and message pricing both reference it.
+export { CHANNELS, type Channel } from './domain/channel'
+
 // Contracts (the 12 JSON Schema contracts as runtime validators)
 export {
   CONTRACT_DEFINITIONS,

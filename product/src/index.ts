@@ -92,6 +92,21 @@ export {
   type StrategyAutonomyGuidance,
 } from './strategy/strategy_guidance'
 
+// The guest-messaging provider boundary (Phase 18): the provider-agnostic MessagingPort (the no-vendor-
+// lock-in seam) + its domain types. No carrier concepts cross it; a real provider is the human-reserved
+// crossing. The offline simulated adapter + the metered/billed MessagingService are exported below.
+export type {
+  MessagingPort,
+  OutboundMessage,
+  SendReceipt,
+  DeliveryStatus,
+  DeliveryState,
+  RawInboundPayload,
+  InboundMessage,
+  ProviderCostReport,
+  RecipientRef,
+} from './messaging/messaging_port'
+
 // The composition root (Phase 16): wires every dependency into one running web front door from INJECTED
 // primitives (clock/ids/operator token), so the deployable entrypoint stays a thin impure shell. The
 // edge-only SystemClock / RandomIdGenerator are deliberately exported from NEITHER barrel — app/server.ts
