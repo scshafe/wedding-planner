@@ -108,7 +108,7 @@ export class ProductApi {
     this.#handlerDeps = { weddings: deps.weddings, authorizer: deps.authorizer }
     this.#adminDeps = { onboarding: deps.onboarding }
     this.#strategyGuidance =
-      deps.championStrategy === undefined ? undefined : describeStrategy(deps.championStrategy)
+      deps.championStrategy === undefined ? undefined : deepFreeze(describeStrategy(deps.championStrategy))
   }
 
   /** Run a request through the pipeline. Never throws — every failure maps to a code-free response. */

@@ -107,10 +107,14 @@ describe('GET /t/:slug/strategy — the champion-strategy endpoint', () => {
     expect(api.handle(req('GET', '/t/alpha/strategy', betaTok)).status).toBe(401)
   })
 
-  it('masked 404 when NO champion is published — same as any unknown resource (still authed)', () => {
+  it('masked 404 when NO champion is published — BYTE-IDENTICAL to the unknown-tenant mask (no oracle)', () => {
     const api = makeApi() // no champion injected
     const res = api.handle(req('GET', '/t/alpha/strategy', loginToken(api, 'alpha')))
     expect(res.status).toBe(404)
+    // The champion-absent 404 is the SAME frozen masked body as an unknown tenant/resource — not a distinct
+    // strategy-specific 404 that could be turned into a champion-presence signal.
+    const unknownTenant404 = api.handle(req('GET', '/t/ghost/strategy'))
+    expect(res.body).toEqual(unknownTenant404.body)
     // And champion-absence is NOT observable pre-auth: an unauthed probe is still 401, not 404.
     expect(api.handle(req('GET', '/t/alpha/strategy')).status).toBe(401)
   })

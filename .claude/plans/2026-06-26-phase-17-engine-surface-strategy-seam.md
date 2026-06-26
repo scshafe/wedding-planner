@@ -1,6 +1,6 @@
 # Phase 17 — The engine↔surface seam (the champion strategy reaches the customer)
 
-**Status:** in progress
+**Status:** COMPLETE — all 6 steps ticked (617 tests green; architect + doddy APPROVE design AND built code; live boot verified)
 **Branch:** `build/phase-3-generalize-search` (the open review artifact for `main`; Phases 3–16 build on it)
 **Predecessor:** Phase 16 (deployable Docker image) — complete, 585 tests green. The product arc (12→16) is done.
 
@@ -140,7 +140,7 @@ status, constant `GENERIC_404` fallthrough — no strategy-specific 404 page).
     status (200 → page; 401 → login; else masked 404) — mirrors `#console`. Add a "Planning strategy" link on
     the console and a one-line honest "Active strategy" note (linking to the page) on the wedding detail.
   - Tests: 200 themed for authed; login for unauthed; masked 404 for unknown tenant; links present. Verify green.
-- [ ] **Step 4 — Wire the entrypoint + compose.**
+- [x] **Step 4 — Wire the entrypoint + compose.** (617 tests green; live boot verified: themed /t/demo/strategy renders, boot log shows `strategy: published`)
   - `compose.ts`: `ComposeProductSurfaceConfig.championStrategy?` forwarded to `ProductApiDeps`. `app/server.ts`:
     inject `publishedChampion` (asserted tier-1 before inject, fail-closed like the operator-token policy); add
     one allow-listed boot-log field (e.g. `strategy=published` — NEVER the genome internals beyond the safe
@@ -148,7 +148,7 @@ status, constant `GENERIC_404` fallthrough — no strategy-specific 404 page).
   - Tests: compose wiring (champion injected → strategy reachable; absent → 404); boot policy (published champion
     is tier-1). Verify green. Run the full build+test+lint; optionally rebuild the image locally to confirm the
     demo serves `/t/demo/strategy`.
-- [ ] **Step 5 — Built-code re-review + ADR 0017 + memory + handoff.**
+- [x] **Step 5 — Built-code re-review + ADR 0017 + memory + handoff.** (both lenses APPROVE; folded 2 P2s: deepFreeze the precomputed guidance + assert the no-champion 404 byte-identical to the unknown-tenant mask)
   - Re-run both lenses on the BUILT code (architect + doddy); fold any P2s.
   - `docs/adr/0017-*.md`; `.claude/memory/engine-surface-strategy-seam.md` + MEMORY.md index; update
     `.claude/handoff.local.md`. Commit per verified step throughout.
