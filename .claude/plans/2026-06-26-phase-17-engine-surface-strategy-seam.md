@@ -111,7 +111,7 @@ status, constant `GENERIC_404` fallthrough — no strategy-specific 404 page).
 ## Steps
 
 - [x] **Step 0 — Design reviews (architect + doddy lenses); folded above.**
-- [ ] **Step 1 — The translation core + the published champion artifact.**
+- [x] **Step 1 — The translation core + the published champion artifact.** (599 tests green)
   - `product/src/strategy/strategy_guidance.ts`: `StrategyGuidance` interface + pure `describeStrategy(genome)`
     (`assertValidGenome` → `deriveRiskTier` → per-knob human copy + tier/autonomy explanation). Reason-agnostic,
     deterministic, no I/O. Handles the optional `autonomy_threshold` honestly (tier-2 ⇒ "requires human

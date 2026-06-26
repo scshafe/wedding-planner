@@ -1,4 +1,4 @@
-import { deepFreeze, type Tenant, type Wedding, WeddingPlannerError } from '@wedding-planner/shared'
+import { deepFreeze, type StrategyGenome, type Tenant, type Wedding, WeddingPlannerError } from '@wedding-planner/shared'
 
 import type { OperatorCredentialStore } from '../auth/operator_credential'
 import type { Principal } from '../auth/principal'
@@ -7,6 +7,7 @@ import type { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import type { PlanTier } from '../billing/price_book'
 import type { OnboardingService } from '../onboarding/onboarding_service'
 import { ProductError } from '../product_error'
+import { describeStrategy, type StrategyGuidance } from '../strategy/strategy_guidance'
 import type { TenantContext, TenantContextResolver } from '../tenant/tenant_context'
 import type { CreateWeddingInput, WeddingRepository } from '../wedding/wedding_repository'
 import type { ApiRequest, ApiResponse } from './api_message'
@@ -75,6 +76,11 @@ export interface ProductApiDeps {
   /** Phase 15: the platform-operator credential store (the /admin auth tier) + the onboarding driver. */
   readonly operators: OperatorCredentialStore
   readonly onboarding: OnboardingService
+  /**
+   * Phase 17: the loop's champion strategy genome (injected — a `@wedding-planner/shared` value; the surface
+   * never imports the loop). Projected ONCE to guidance in the constructor; absent ⇒ the strategy route 404s.
+   */
+  readonly championStrategy?: StrategyGenome
 }
 
 export class ProductApi {
@@ -86,6 +92,14 @@ export class ProductApi {
   readonly #handlerDeps: WeddingHandlerDeps
   /** The narrow bag handed to every /admin handler — no operator store. */
   readonly #adminDeps: AdminHandlerDeps
+  /**
+   * The champion strategy projected to planner-facing guidance ONCE at construction (eager + immutable), or
+   * undefined when no champion was injected. Eager-precompute is the fail-closed shape: an invalid champion
+   * throws HERE (constructor → composeProductSurface → app/server.ts main), aborting boot before any socket
+   * opens — never a partial render at request time. The value is a pure function of the injected genome, so
+   * the strategy route's present/absent answer is platform-global (it reads no tenant/principal state).
+   */
+  readonly #strategyGuidance: StrategyGuidance | undefined
 
   constructor(deps: ProductApiDeps) {
     this.#resolver = deps.resolver
@@ -93,6 +107,8 @@ export class ProductApi {
     this.#operators = deps.operators
     this.#handlerDeps = { weddings: deps.weddings, authorizer: deps.authorizer }
     this.#adminDeps = { onboarding: deps.onboarding }
+    this.#strategyGuidance =
+      deps.championStrategy === undefined ? undefined : describeStrategy(deps.championStrategy)
   }
 
   /** Run a request through the pipeline. Never throws — every failure maps to a code-free response. */
@@ -142,6 +158,19 @@ export class ProductApi {
       if (segments.length >= 3 && segments[2] === 'weddings') {
         const principal = this.#authenticate(req, context)
         return dispatchWeddings(context, principal, req, segments, this.#handlerDeps)
+      }
+
+      // /t/:slug/strategy — PROTECTED read-only (Phase 17): the loop's champion strategy as planner guidance.
+      // Stages 3–4 (authenticate + bind) run BEFORE the method check, so route shape is NOT a pre-auth oracle:
+      // an unauthenticated prober gets a byte-identical 401 for ANY method. The present/absent answer is a
+      // PURE function of the injected champion (no read of `context`/`principal`/tenant state), so it is
+      // platform-global — identical for every tenant — and manufactures no existence/lifecycle oracle. A
+      // missing champion returns the SAME frozen masked 404 as any other unknown resource.
+      if (segments.length === 3 && segments[2] === 'strategy') {
+        this.#authenticate(req, context)
+        if (req.method !== 'GET') throw methodNotAllowed()
+        if (this.#strategyGuidance === undefined) return RESP_NOT_FOUND
+        return { status: 200, body: { strategy: this.#strategyGuidance } }
       }
 
       // A valid tenant, but no such sub-resource.
