@@ -143,21 +143,21 @@ on top of it and may not weaken it.
   + named residual (arch P3-A/P3-B, doddy P3); no unscoped accessor + private maps (arch P2-A, doddy H);
   inter-tenant-only scope note (arch P2-E). _(Documentation-only; tick on commit.)_
 
-- [ ] **Step 1 — The `product/` workspace skeleton.** `product/package.json`
+- [x] **Step 1 — The `product/ workspace skeleton.** `product/package.json`
   (`@wedding-planner/product`, `"type":"module"`, `exports: "./src/index.ts"`); register in root
   `package.json` `workspaces`, `tsconfig.json` `paths` + `include`, and `vitest.config.ts` `alias`.
   Add `product/src/index.ts` (barrel), `product/src/product_error.ts` (`class ProductError extends
   WeddingPlannerError`), and `product/README.md` (the domain's spec, in the four-domains house style).
   Verify `npm run build && npm test && npm run lint` green (workspace empty but wired).
 
-- [ ] **Step 2 — Product schemas-as-contracts.** `product/schemas/tenant_schema.json` and
+- [x] **Step 2 — Product schemas-as-contracts.** `product/schemas/tenant_schema.json` and
   `product/schemas/wedding_schema.json` (draft 2020-12, `additionalProperties:false`, `$id` under
   `https://wedding-planner.eval/schemas/`). Register both in `shared/src/contracts/contract_manifest.ts`
   (`ContractKey` + `CONTRACT_DEFINITIONS`, domain `'product'`); bump the drift test
   (`schema_registry.test.ts`: `CONTRACT_COUNT` 13 → 15). `npm run gen:types`; re-export the generated
   `Tenant` / `Wedding` types through the `product` barrel. Green (the drift guard now passes at 15).
 
-- [ ] **Step 3 — The domain core + isolation boundary.**
+- [x] **Step 3 — The domain core + isolation boundary.**
   - `product/src/tenant/tenant_store.ts` (`@canonical tenant_store`) — registers tenants, enforces
     **normalized** global slug-uniqueness (`PRODUCT.DUPLICATE_SLUG`), validates against the tenant
     schema on create, exposes `isUsable(tenant_id)` (the liveness check, inv. 6) and a routing-only
@@ -179,7 +179,7 @@ on top of it and may not weaken it.
     over the scoped repository; create stamps the context tenant; validates against the wedding schema.
   - Injected `Clock` + `IdGenerator` throughout (no ambient time/RNG). Happy-path unit tests for each.
 
-- [ ] **Step 4 — The tenant-isolation keystone**
+- [x] **Step 4 — The tenant-isolation keystone**
   (`product/tests/tenant/tenant_isolation_keystone.test.ts`). The load-bearing regression. With two
   tenants A and B each owning a wedding, assert: (a) **read** of B's `wedding_id` under context A →
   `undefined`, *byte-identical* (deep-equal value + same code path, no side effect) to reading a
@@ -198,12 +198,12 @@ on top of it and may not weaken it.
   **no leak via serialization**: `JSON.stringify(repo)` / `{...repo}` / `Object.keys(repo)` reveal no
   tenant data (inv. 9).
 
-- [ ] **Step 5 — doddy boundary re-review of the BUILT code.** Trace the real seams: the resolver is
+- [x] **Step 5 — doddy boundary re-review of the BUILT code.** Trace the real seams: the resolver is
   the sole `TenantContext` mint; no repository method accepts a raw `tenant_id` that bypasses a
   context; the not-found path leaks nothing (no timing/shape/error-code oracle); the slug global index
   holds no tenant-private data. Apply findings before ticking.
 
-- [ ] **Step 6 — ADR 0012 + memory + README + handoff.**
+- [x] **Step 6 — ADR 0012 + memory + README + handoff.**
   `docs/adr/0012-product-surface-multitenant-core.md` (the fifth domain; isolation as the firewall
   analogue; the deferred phases). Memory `multi-tenant-isolation-boundary.md` (+ MEMORY.md index):
   the resolver-is-sole-mint invariant, no-existence-oracle, cross-tenant-write veto, global-slug

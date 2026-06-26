@@ -17,7 +17,10 @@ This repository began as **design specs** and is being built out, domain by doma
 autonomous loop. Each domain has its own `README.md`; start there. Running code now exists for the
 offline core (telemetry, eval-harness, loop-orchestrator) — see the git history on `main`.
 
-## The four domains
+## The domains
+
+The first four are **inward-facing** (the engine: how the system scores, measures, improves, and
+operates itself). The fifth — `product/` — is the **outward-facing** customer surface (the car).
 
 | domain | owns | one-liner |
 |---|---|---|
@@ -25,6 +28,7 @@ offline core (telemetry, eval-harness, loop-orchestrator) — see the git histor
 | [`telemetry/`](telemetry/README.md) | how it's measured | the canonical event schema + metric catalog; every gate/metric is a function over a **trusted** event stream |
 | [`loop-orchestrator/`](loop-orchestrator/README.md) | how it improves itself | propose → score offline → guardrail-gate → shadow/canary/ramp → promote; the recursive product-improvement loop |
 | [`agent-operations/`](agent-operations/README.md) | how the whole stack is run | the team of agents (CI/CD, support, SRE, security, the loop itself) and the four human-reserved exceptions |
+| [`product/`](product/README.md) | the customer-facing surface | the white-label, multi-tenant web app planners + couples use; built offline-first toward a launch-ready Docker image. Phase 12 lays the multi-tenant domain core + the tenant-isolation boundary |
 
 ## How they fit together
 
@@ -67,14 +71,18 @@ verifying path ≠ acting path, signed liveness that fails closed, key custody o
 autonomous loop advances `main` when green; where the last run left off is in
 [`.claude/handoff.local.md`](.claude/handoff.local.md).
 
-**The next strategic direction — the customer-facing product surface.** Everything above is the
-*engine*: how the system scores, measures, and improves itself. For this to be the **business** it is
-meant to be, it needs the **product** — a **white-label, multi-tenant** web app that real wedding
-planners and their couples sign up for, theme, and use. This is now a first-class goal. It is built
-**offline-first as a deployable Docker container** (locally runnable, demoable, launch-*ready*;
-onboarding/billing/comms simulated offline); **actually going live stays human-reserved** (real
-hosting, tenants, money, comms). The autonomous loop owns when it starts and how it's built — see the
-boundary in [`CLAUDE.md`](CLAUDE.md).
+**The customer-facing product surface — now under construction.** Everything above is the *engine*:
+how the system scores, measures, and improves itself. For this to be the **business** it is meant to
+be, it needs the **product** — a **white-label, multi-tenant** web app that real wedding planners and
+their couples sign up for, theme, and use. This is a first-class goal, built **offline-first as a
+deployable Docker container** (locally runnable, demoable, launch-*ready*; onboarding/billing/comms
+simulated offline); **actually going live stays human-reserved** (real hosting, tenants, money, comms).
+**Phase 12 has begun it:** the fifth domain [`product/`](product/README.md) — the `tenant` + `wedding`
+aggregates and the tenant-isolation boundary (the multi-tenancy analogue of the trusted-evidence
+firewall: an unforgeable, WeakSet-branded `TenantContext`; the partition key derives from the context
+alone; no existence oracle; liveness re-asserted at use). The arc continues: HTTP/auth (13), web UI
+(14), onboarding/billing simulation (15), Docker packaging (16). See [`docs/adr/0012`](docs/adr/0012-product-surface-multitenant-core.md)
+and the boundary in [`CLAUDE.md`](CLAUDE.md).
 
 **Also open / earlier threads:**
 - The **action→surface/scope map** — trusted config mapping an operational action to its blast-radius

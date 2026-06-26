@@ -1,108 +1,99 @@
 # Handoff
 
-## Where things stand — Phase 11 (the advisory tier-2 recommendation layer) is BUILT ✅
-`.claude/plans/2026-06-25-phase-11-advisory-tier2-recommendations.md` is **complete — all steps ticked**
-(Step 0 design reviews + Steps 1–6), on branch **`build/phase-3-generalize-search`** (the open review
-artifact for `main`; Phases 3–11 build on it; the loop's merge-keeper advances `main` when green).
-Working tree clean. `npm run build && npm test && npm run lint` all green (**407 tests**, up from 388 at
-the start of this run). `main` has Phase 1+2; this branch is the review artifact for Phases 3–11.
+## Where things stand — Phase 12 (the customer-facing product surface BEGINS) is BUILT ✅
+`.claude/plans/2026-06-25-phase-12-product-surface-multitenant-core.md` is **complete — all steps
+ticked** (Step 0 design reviews + Steps 1–6), on branch **`build/phase-3-generalize-search`** (the open
+review artifact for `main`; Phases 3–12 build on it; the loop's merge-keeper advances `main` when
+green). Working tree clean. `npm run build && npm test && npm run lint` all green (**427 tests**, up
+from 407 at the start of this run). `main` has Phase 1+2; this branch is the review artifact for
+Phases 3–12.
 
-**What changed:** the dormant plan-side value (the 8 trusted effect kinds from Phases 7–10 — quality
-0.40, completeness, qa, vision — that NEVER reached any output because the autonomous search only ranges
-the tier-1 reminder box and never emits a tier-2 genome) is now **connected to the loop's output**. The
-new **advisory pass** EXPLORES tier-2 candidates and SURFACES the firewall-clean, accept-rule-passing
-ones as ranked **"promotable, pending human approval" recommendations** — never auto-landing them (the
-safety rail: `MAX_AUTONOMOUS_PROMOTION_TIER = 1`). This is the deferred **§4**. See `docs/adr/0011`,
-memory [[advisory-tier2-promotable-recommendations]].
-
-## Standing directional goal (human-set 2026-06-25) — build the customer-facing PRODUCT surface
-The human owner course-corrected the roadmap. The four domains so far are all **inward-facing**
-(score / measure / improve / operate the system). For this to be the **business** it is meant to be, it
-needs a **customer-facing product surface** — a **white-label, multi-tenant** web app planners + their
-couples actually use. This is now a **first-class goal**, co-equal with the self-improvement loop, and
-it is **on the horizon: you own the timing** (finish in-flight threads or pivot when you judge best).
-**Boundary (keeps the offline-first model intact):** build it **offline-first, as a deployable Docker
-container** — locally runnable, demoable, launch-*ready*; onboarding/billing/comms are offline
-simulations. **Going live is human-reserved** (real deploy/hosting/registry/DNS/secrets/tenants/money/
-comms = the human crossing, exception #4). Producing the image is in-scope; running it for real is not.
-Now anchored in `CLAUDE.md` ("The product direction"), the README roadmap, and memory
-[[customer-facing-product-surface-is-a-first-class-goal]] (+ the now-ratified
-[[white-label-growth-and-agent-strategy-autonomy]]). The auto-landing tier-1 offline loop is untouched.
+**What changed — the arc turned outward.** The first four domains are all inward-facing (score /
+measure / improve / operate the system itself). Phase 12 **opened the customer-facing product surface**
+— the human-set first-class goal ([[customer-facing-product-surface-is-a-first-class-goal]]). It added
+the **fifth domain `@wedding-planner/product`**: the `tenant` + `wedding` aggregates (JSON Schema
+contracts 14 & 15 — the manifest is now **15**), the white-label `theme`, and — load-bearing — the
+**tenant-isolation boundary**. ADR `docs/adr/0012`, memory [[multi-tenant-isolation-boundary]].
 
 ## The load-bearing insight (carry forward)
-The advisory pass is **reuse, not fork**: `runAdvisoryLoop` wraps the SAME `runOfflineLoop` (same scorer
-+ veto gates + integrity reconciliation + promotion gate) with a SEPARATE `AdvisoryProposer` (tier-2
-only), the vision-sensitive advisory corpus, an **EMPTY ApprovalStore** (hardcoded; `AdvisoryLoopConfig`
-has no `approvals` field), and **isolated** champion/registry/ledger → every accepted tier-2 candidate
-**PARKS**, and the parked set IS the recommendation set (`PromotableRecommendation` ranked by the accept
-rule's own `aggregate_north_star_delta`).
+**Tenant isolation is enforced BY CONSTRUCTION** — the multi-tenancy analogue of the trusted-evidence
+firewall ([[prod-trusted-evidence-channel]]: wall the channel, fail closed, no oracle). A
+`TenantContext` for tenant A can NEVER read/list/write tenant B's data:
+- **Unforgeable context via a WeakSet identity token** (`MINTED_CONTEXTS` in `tenant_context.ts`), NOT
+  a symbol property. **doddy's built-code re-review proved the symbol-brand version was forgeable** —
+  any holder of a real context could lift the symbol via `Object.getOwnPropertySymbols` and re-stamp a
+  forged object for another tenant. WeakSet membership lives outside the object → nothing to copy. The
+  resolver (`resolveBySlug`, slug = the transport-survivable routing primitive) is the sole adder; the
+  context is `Object.freeze`d; a `declare`d phantom `unique symbol` gives compile-time nominal typing.
+- **Partition key = `ctx.tenant_id` ONLY**; the record's own `tenant_id` is compare-only (vetoes a
+  `PRODUCT.CROSS_TENANT_WRITE`). Lookup key is `(tenant_id, id)` — `id` alone is never a key (so two
+  tenants may share a `wedding_id`; corrected a false "ids are tenant-namespaced" claim).
+- **No existence oracle** (`read` returns `undefined`, foreign==missing, one code path);
+  **liveness re-asserted at use, fail closed** (`isUsable` on every op; a context held past a
+  suspension dies); normalized global slug uniqueness; `#`-private maps; no unscoped accessor.
+- Proves **INTER-tenant** isolation only; intra-tenant auth (planner vs couple) → Phase 13.
 
-**Three independent barriers make it provably incapable of auto-landing tier-2** (doddy APPROVE on the
-built code): tier-2-only proposer; promotion gate re-derives tier from the content-addressed genome and
-parks tier≥2 without an approval; empty ApprovalStore with no caller path. **It never surfaces a
-firewall-failing rec**: the same unconditional integrity gate vetoes a forged candidate (e.g. a
-suppressed `vision_consult` cost) → fails accept → never parks → excluded. The optional `planner`
-override is NOT a bypass (it authors only Stage A claims; the trusted record is derived independently
-from the genome/scenario, so a lying planner self-incriminates).
+## Standing directional goal (human-set 2026-06-25) — the product surface arc (NOW UNDER WAY)
+Build it **offline-first, Docker-packaged, launch-ready** (onboarding/billing/comms simulated). **Going
+live stays human-reserved** (real deploy/hosting/registry/DNS/secrets/tenants/money/comms = exception
+#4). The planned arc (mine to revise): **12 domain core ✅ → 13 HTTP/auth → 14 web UI → 15
+onboarding/billing sim → 16 Docker image**. The auto-landing tier-1 offline loop is untouched.
 
 ## What's new this phase (by step)
-- **Step 0** — architect + doddy design reviews (both APPROVE-WITH-CHANGES); all findings folded into the plan.
-- **Step 1** — `AdvisoryProposer` (`src/proposer/advisory_proposer.ts`): tier-2-only, honestly derived;
-  paired guard test pins SearchProposer→tier-1, AdvisoryProposer→tier-2 (neither can become the other).
-- **Steps 2–3** — advisory corpus (`tests/fixtures/advisory_corpus.ts`, vision-sensitive, + the positive
-  guard rule) + `runAdvisoryLoop` (`src/loop/advisory_loop.ts`): isolated stores, empty approvals,
-  `maxDryIterations = boxSize + 1`, ranked `PromotableRecommendation`, `frontierFullyExplored` certificate.
-- **Step 4** — the keystone (`tests/loop/advisory_recommendation_keystone.test.ts`): parks-never-promotes,
-  isolation, forge-excluded (vision_consult cost-suppress → empty rec set), guard-rule load-bearing
-  (guarding couple_active_minutes_total → zero recs), honest-surfaced (positive delta).
-- **Step 5** — doddy re-review of the BUILT code: **APPROVE**; applied the one P2 (defense-in-depth):
-  the PARK ledger transition self-identifies advisory provenance via `parkProvenanceNote`.
-- **Step 6** — `docs/adr/0011` + memory [[advisory-tier2-promotable-recommendations]] + MEMORY.md index + this handoff.
+- **Step 0** — architect + doddy design reviews (both APPROVE-WITH-CHANGES); folded into a nine-invariant
+  boundary spec. Central finding (both lenses): structural-TS forgeability → brand the context.
+- **Step 1** — the `@wedding-planner/product` workspace skeleton (package.json, root workspaces,
+  tsconfig paths+include, vitest alias, `ProductError`, barrel, README in house style).
+- **Step 2** — `tenant` + `wedding` schemas-as-contracts (manifest 13→15, generated types via shared,
+  drift guard bumped). Schemas encode the boundary up front (normalized slug, compare-only tenant_id).
+- **Step 3** — the domain core: `tenant_context.ts` / `tenant_store.ts` / `tenant_scoped_repository.ts`
+  / `wedding_repository.ts`. Injected clock/ids; validates against the contracts.
+- **Step 4** — the isolation keystone (`tenant_isolation_keystone.test.ts`): adversarial cases (a)–(h)
+  incl. the re-stamp attack (d)(iv) and the #-privateness witness.
+- **Step 5** — doddy built-code re-review: found + fixed the **P1 brand re-stamp** (symbol→WeakSet) and
+  two honesty gaps; doddy then **APPROVE** on the fix.
+- **Step 6** — ADR 0012 + memory [[multi-tenant-isolation-boundary]] + MEMORY.md index + README (fifth
+  domain row + status) + this handoff.
 
 ## Next action — your call. The big remaining levers (ranked)
-- **★ STRATEGIC (new, human-set) — start the customer-facing product surface.** The biggest gap in the
-  roadmap (see "Standing directional goal" above): the white-label, multi-tenant web app, built
-  offline-first + Docker-packaged + launch-ready (going live human-reserved). This is **on the horizon,
-  your timing** — it is a larger arc than the offline-loop levers below, so you may finish a clean
-  in-flight thread first or pivot to it now; your call. When you start, write a plan (`writing-plans`)
-  and design the product/ domain from scratch (stack/structure yours to choose).
-- **Enrich the advisory corpus / report** — add category & qa scenarios to the advisory corpus so the
-  recommendations span more plan-side value (more variety, mixed-axis tier-2 tradeoffs). Clean follow-on,
-  low risk, directly increases the advisory pass's reach. The mechanism is built; this is corpus-authoring
-  + maybe a richer recommendation report (group by axis, show which metric each rec moves).
-- **A 4th tier-1 knob → 4-D search** — pure tier-1 search generalization, forge-free, lowest risk; the
-  cleanest "more search" move but lower marginal value (the tier-1 box is already well-explored). Needs a
-  genuinely meaningful forge-free non-judge 4th reminder knob, else it's busywork.
-- **`comms_quality` / `intuitiveness` rubrics** — the last two `quality` rubrics, genuinely judge-shaped
-  (free-text tone, UX). Honest offline backing needs a real Claude judge → **STOP-and-surface**
-  (offline-first, ADR 0007). Do NOT build a stub.
-- **Per-category heterogeneous vision difficulty** — a graded alignment model that would make
-  denominator-spread forges load-bearing at the keystone level. Scenario-authoring refinement, low value.
+- **★ CONTINUE THE PRODUCT ARC — Phase 13: the HTTP API + simulated auth/session.** The natural next
+  step: a transport layer (an HTTP server) that resolves a `TenantContext` from a request
+  (Host/path → slug → `resolveBySlug`) and exposes tenant-scoped endpoints over the Phase-12
+  repositories. This is where **auth principals** (planner vs couple) land — the *intra-tenant*
+  authorization boundary Phase 12 deliberately deferred (a distinct, finer-grained gate). Stack choice
+  is yours (the repo is dependency-light — consider Node's built-in `http`, or a minimal framework;
+  keep it offline + injected-clock + testable). Write a plan (`writing-plans`), design the request→context
+  seam so it CANNOT route around the isolation boundary, and prove it with a keystone (an HTTP-level
+  cross-tenant attack is vetoed). Verify with doddy (the new trust boundary is the request edge).
+- **Enrich the product domain instead** — before HTTP, optionally deepen the domain: a richer `wedding`
+  (link to the planning engine's strategy genome / North Star per wedding), planner/couple membership
+  modeling, or theme validation helpers. Lower risk, but HTTP is the higher-value path to a demoable app.
+- **Earlier offline-loop levers (still open, all incremental):** enrich the advisory corpus
+  (category/qa scenarios → more recommendation variety); a 4th tier-1 knob → 4-D search (needs a
+  meaningful forge-free knob, else busywork); `comms_quality`/`intuitiveness` rubrics (judge-shaped →
+  STOP-and-surface, ADR 0007 — do NOT build a stub). See the Phase-11 handoff history in git.
 
-## Non-obvious Phase-11 context (carry forward)
-- **The advisory guard set is a POSITIVE rule:** value metrics MINUS `couple_active_minutes_total`. The
-  consult cost is ALREADY priced into the North-Star denominator (`effort_cost`); guarding it
-  DOUBLE-COUNTS → every tier-2 candidate "regresses" couple minutes vs the tier-1 base → zero recs
-  (empirically pinned in the keystone). Same shape as why vision_match_rate/category_completeness_rate are
-  kept OUT of the active search guard set while keystone-only (ADR 0008/0010).
-- **`maxDryIterations = boxSize + 1`** is load-bearing: parked accepts increment `consecutiveDry` and
-  never reset, so a smaller cap truncates the frontier before the `converged` certificate. The advisory
-  certificate lives in the WRAPPER (`frontierFullyExplored`), NOT in the generic `converged` enum.
-- **`park` is a SAFETY outcome reused as the advisory OUTPUT** — kept distinguishable by isolated stores +
-  the `parkProvenanceNote` on the park ledger transition (doddy P2).
-- **The honest-tier-2-beats-tier-1 premise is empirical and strong** (0.80 → 0.992, +0.19 on a vision
-  scenario): the consult value outweighs the +10 couple-minute cost. That's why the advisory pass is
-  non-vacuous. If a future change weakens it, the advisory pass would surface nothing — re-verify.
+## Non-obvious Phase-12 context (carry forward)
+- **The WeakSet brand is the crux.** Do NOT "simplify" `TenantContext` back to a symbol property or a
+  plain `{tenant_id}` — doddy proved both are forgeable. The runtime guard is WeakSet membership; the
+  `declare`d symbol is compile-time-only (no runtime property, so `getOwnPropertySymbols` is empty).
+  Keystone (d)(iv) is the regression that pins this; it would pass trivially if you reverted, so also
+  keep the "zero own symbols" assertion.
+- **Generated contract types live in `shared/`** (`shared/src/contracts/generated/`, surfaced via
+  `contract_types.ts` + the shared barrel), even for product schemas — `npm run gen:types` writes there.
+  The product barrel re-exports `Tenant`/`Wedding` from `@wedding-planner/shared`.
+- **`getSchemaRegistry()` is process-cached** — it reads all 15 schemas once. New schemas must be in the
+  manifest (`shared/src/contracts/contract_manifest.ts`) AND the drift test count (currently 15).
+- **`npm install` is needed after adding a workspace** (the symlink in node_modules); done this run.
+- **Liveness coupling is intentional:** `TenantScopedRepository` depends on a `TenantLivenessCheck`
+  (the `TenantStore`) so it can re-assert usability at use. That coupling IS the fail-closed property;
+  don't remove it to "decouple".
 - **CI/exit-code lesson (still true):** never pipe `npm run build` to tail/grep when gating with `&&`
   (the pipe masks the non-zero exit). Run build standalone, check `$?`. `npm run build` runs from REPO ROOT.
 - The repo's named specialist sub-agents (doddy/wolf/testineer/rigorous-architect) are **not provisioned**
-  here — route adversarial reviews through `general-purpose` agents carrying the persona lens (this run did,
-  for architect + doddy at design, and doddy again on the built code).
-- Durable facts: `MEMORY.md` index — Phase 11 added **[[advisory-tier2-promotable-recommendations]]**.
-  Still load-bearing: [[vision-match-trusted-reconciliation]], [[couple-attention-cost-generalization]],
-  [[tier2-promotion-gate-is-load-bearing]], [[second-genome-knob-must-stay-tier1]],
-  [[search-convergence-certificate-semantics]], [[category-completeness-trusted-reconciliation]],
-  [[qa-accuracy-trusted-reconciliation]], [[sentiment-trusted-reconciliation]],
-  [[escalation-forge-detection-load-bearing]], [[genome-content-address-firewall]],
-  [[loop-trusted-evidence-boundary]], [[integrity-gate-completeness-invariants]],
-  [[accept-rule-composition-invariance]], [[third-tier1-knob-batching-3d-search]].
+  here — route adversarial reviews through `general-purpose` agents carrying the persona lens (this run
+  did, for architect + doddy at design, and doddy twice on the built code — which caught the P1).
+- Durable facts: `MEMORY.md` index — Phase 12 added **[[multi-tenant-isolation-boundary]]**. Still
+  load-bearing from the engine arc: [[prod-trusted-evidence-channel]], [[loop-trusted-evidence-boundary]],
+  [[advisory-tier2-promotable-recommendations]], [[tier2-promotion-gate-is-load-bearing]],
+  [[genome-content-address-firewall]], [[customer-facing-product-surface-is-a-first-class-goal]].
