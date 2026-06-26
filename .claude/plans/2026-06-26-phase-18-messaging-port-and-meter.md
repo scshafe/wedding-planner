@@ -172,7 +172,7 @@ opaque untrusted data, no real-world read, no path to meter/ledger, documented u
 ## Steps
 
 - [x] **Step 0 — Design reviews (architect + doddy lenses); folded above into the crux + steps.**
-- [ ] **Step 1 — Canonical `Channel` + the provider-agnostic port + domain types.**
+- [x] **Step 1 — Canonical `Channel` + the provider-agnostic port + domain types.** (624 tests green)
   - `shared/src/domain/channel.ts`: the **single** canonical `Channel` type (+ a `CHANNELS` tuple), exported
     from the shared barrel. Drift-guard test (`shared/tests/domain/channel.test.ts`): a type-level mutual
     assignability check that `Channel` equals the generated `event_payloads`/`guest_persona` channel unions
