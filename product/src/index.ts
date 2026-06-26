@@ -41,3 +41,8 @@ export { WeddingRepository, type CreateWeddingInput } from './wedding/wedding_re
 // and the internal mintPrincipal are deliberately NOT exported — the SessionStore is the sole mint.
 export { type Principal, type PrincipalRole, assertMintedPrincipal } from './auth/principal'
 export { SessionStore, type LoginInput, type Session } from './auth/session_store'
+export {
+  WeddingAuthorizer,
+  type AccessDecision,
+  type ListScope,
+} from './auth/wedding_authorizer'
