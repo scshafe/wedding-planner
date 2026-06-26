@@ -210,7 +210,7 @@ of architect P0-3).
 - [x] **Step 6 — Built-code re-review (architect + doddy personas), fold.** Re-vet the *built* edge for an
   exploitable oracle/forge (operator-auth precedence, token-namespace bleed, the masked-404 set incl. the
   login edge, the transition guard, the ledger's no-leak). Apply findings; re-run green.
-- [ ] **Step 7 — ADR 0015 + memory + barrel + READMEs + handoff.** ADR `docs/adr/0015-onboarding-billing-
+- [x] **Step 7 — ADR 0015 + memory + barrel + READMEs + handoff.** ADR `docs/adr/0015-onboarding-billing-
   simulation.md` (incl. doddy P2-2: the operator's legitimate cross-tenant visibility is by-design, not a
   leak — the mask protects *anonymous* probers, not the operator); memory
   `.claude/memory/onboarding-billing-operator-tier.md` + index it in `MEMORY.md`; barrel exports for the new

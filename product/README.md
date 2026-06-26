@@ -75,6 +75,36 @@ weddings, themed per tenant; HTML create/update forms are deferred.
   Path=/t/:slug`); the cross-tenant bind veto remains the real guard. Every response gets a header floor
   (`charset`, `nosniff`, a strict CSP with `script-src 'none'`). Proven by a web keystone.
 
+## Onboarding + billing (Phase 15) — the lifecycle driver and the operator tier
+
+A simulated, **operator-gated** provisioning + billing layer gives the tenant lifecycle a **driver** and
+the tenant a **real birth** (replacing direct `TenantStore.create()` fixtures). A third trust tier — a
+platform **`Operator`** (tenant-less, above any single tenant) — provisions tenants and drives
+`onboarding → active → suspended → active` through modeled billing events, over an operator-gated `/admin`
+surface folded into the SAME `api.handle()` pipeline. Offline-first; no real money/provisioning.
+
+- **Operator-gated, so it adds NO new anonymous oracle.** A naive anonymous self-serve signup would break
+  the absent≡suspended≡onboarding mask (a "slug taken/available" reply is a tenant-existence oracle for
+  every lifecycle state). Putting provisioning behind an operator credential preserves the mask **by
+  construction** — anonymous users have no provisioning access. Anonymous public signup is a recorded
+  deferral (its slug-occupancy disclosure is going-live hardening).
+- **A third sole-mint, branded subject, peer of `Principal`.** `OperatorCredentialStore` is the sole mint;
+  the `Operator` is WeakSet-branded + frozen; the token is constructor-injected, the store non-enumerating.
+  It is a **separate token namespace** — a tenant session token is absent there and an operator token is
+  absent in the session store, both failing via the same bare `Map.get` → constant `401` (no cross-namespace
+  oracle). `resolve` has no shape/prefix gate.
+- **`/admin` route shape is not a pre-auth oracle.** Operator-auth is the literal first statement of the
+  `/admin` branch — before any method/sub-route/`:id`/body check — so an unauthenticated `/admin/...` probe
+  is a byte-identical `401` for any method and path. Handlers get a narrow `{ onboarding }` bag (the operator
+  store stays in the pipeline).
+- **Lifecycle + ledger move together, atomically-on-success.** `OnboardingService` reads the current
+  `lifecycle_status` and rejects an illegal edge (`PRODUCT.ILLEGAL_LIFECYCLE_TRANSITION` → `409`) **before
+  recording anything**, so a double-activate can't record a spurious, irreversible event. The `billing_event`
+  ledger is append-only and `#`-private; money is **integer cents**; there is **no account aggregate** — the
+  balance is a fold (`Σcharge − Σpayment` over financial kinds, positive = owed). A `DUPLICATE_SLUG` is an
+  honest `409` to the trusted operator (NOT masked — the mask protects anonymous probers, not the operator).
+  Proven by an onboarding keystone.
+
 ## Status
 
 **Phase 12 — the multi-tenant domain core:** the `tenant` + `wedding` aggregates, the white-label
@@ -82,11 +112,15 @@ weddings, themed per tenant; HTML create/update forms are deferred.
 auth/session:** the 5-stage pipeline, the `Principal`/`SessionStore`/`WeddingAuthorizer` intra-tenant
 boundary, and the Node `http` adapter, proven by an HTTP keystone. **Phase 14 — the server-rendered web
 UI:** the themed white-label HTML console over that pipeline (`ProductWebUi` + `createProductWebUiServer`),
-proven by a web keystone. Pure in-memory + injected clock/ids, offline; login/session simulated.
+proven by a web keystone. **Phase 15 — onboarding + billing simulation:** the operator trust tier
+(`OperatorCredentialStore`), the `/admin` surface, the `BillingLedger`/`price_book`, and the
+`OnboardingService` lifecycle driver, proven by an onboarding keystone. Pure in-memory + injected
+clock/ids, offline; provisioning/billing/login all simulated.
 
-**Later phases (the arc):** Phase 15 — onboarding + billing simulation; Phase 16 — Docker packaging → the
-launch-ready image.
+**Later phases (the arc):** Phase 16 — Docker packaging → the launch-ready image.
 
-**Deferred (recorded, not faked):** field-level couple write policy (a couple may not `cancel`); real
+**Deferred (recorded, not faked):** anonymous public self-serve signup (slug-occupancy disclosure +
+abuse-control = going-live hardening); the operator web console (HTML — the first mutation UI); recurring
+billing/dunning/proration/real currency; field-level couple write policy (a couple may not `cancel`); real
 credential verification, cryptographic tokens, and persistence beyond in-memory are hardening for when
 going-live is on the table (human-reserved).
