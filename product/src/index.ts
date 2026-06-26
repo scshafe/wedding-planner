@@ -46,3 +46,11 @@ export {
   type AccessDecision,
   type ListScope,
 } from './auth/wedding_authorizer'
+
+// The HTTP request edge (transport-agnostic). The Node socket adapter lands in Step 4.
+export type { ApiRequest, ApiResponse } from './http/api_message'
+export {
+  ProductApi,
+  type ProductApiDeps,
+  type WeddingHandlerDeps,
+} from './http/product_api'
