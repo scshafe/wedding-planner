@@ -66,5 +66,7 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 
-# Exec form so tsx is PID 1 and receives SIGTERM/SIGINT directly (the entrypoint shuts down gracefully).
+# Exec form so tsx is PID 1 and receives SIGTERM/SIGINT directly. Graceful shutdown relies on tsx forwarding
+# the signal to the script it runs; `npm ci` installs the lockfile-pinned tsx, so this behavior is
+# reproducible. (Verified: `docker stop` triggers the entrypoint's handler and exits 0.)
 CMD ["node_modules/.bin/tsx", "app/server.ts"]

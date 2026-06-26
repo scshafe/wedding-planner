@@ -31,6 +31,9 @@ scripts
 coverage
 dist
 
+# Documentation prose — benign, but nothing at runtime reads it (keeps the image tree clean).
+**/README.md
+
 # Local-only continuation state, logs, and any environment/secret files.
 *.local.md
 **/*.local.md
