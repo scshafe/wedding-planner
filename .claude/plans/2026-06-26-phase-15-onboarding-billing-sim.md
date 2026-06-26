@@ -93,18 +93,22 @@ seam, never a module constant — fold of architect P2-8 / doddy P1-3), never ec
 
 ### Onboarding service (the orchestrator, with a transition guard)
 
-`OnboardingService` holds `{ tenants: TenantStore, sessions: SessionStore, billing: BillingLedger, prices }`
-and is the canonical lifecycle driver. **It enforces a legal-transition guard** (fold of architect P0-1 /
+`OnboardingService` holds `{ tenants: TenantStore, billing: BillingLedger, prices }` and is the canonical
+lifecycle driver (no `SessionStore` dep — sessions are minted only by the public login edge, on an active
+tenant). **It enforces a legal-transition guard** (fold of architect P0-1 /
 doddy P1-2): each method reads the current `lifecycle_status` (`tenants.findById`) and throws
 `PRODUCT.ILLEGAL_LIFECYCLE_TRANSITION` **before recording anything** if the edge is illegal — so no spurious
 billing event can ever land (`setLifecycleStatus` only validates the *target* enum, not the *transition*; an
 unguarded double-`activate` would corrupt the irreversible fold). The legal edges:
 
-- `provision(input) → { tenant, bootstrap }` — `tenants.create(...)` (lifecycle = **onboarding**; this is the
-  ONLY legitimately-throwing step and runs FIRST, so a `DUPLICATE_SLUG` leaves NO partial state — no orphan
-  session/event, fold of architect P1-4) + mint the **first planner** session (`sessions.login(context,
-  { role:'planner' })` against a freshly-resolved context) + `billing.record(provisioned)`. Returns the
-  tenant's public view + the planner's bootstrap token. **∅ → onboarding.**
+- `provision(input) → { tenant }` — `tenants.create(...)` (lifecycle = **onboarding**; this is the ONLY
+  legitimately-throwing step and runs FIRST, so a `DUPLICATE_SLUG` leaves NO partial state — no orphan
+  event, fold of architect P1-4) + `billing.record(provisioned)`. Returns the tenant's public view.
+  **∅ → onboarding.** **No session is minted here** (refinement discovered in build): the resolver
+  fails closed for an onboarding tenant, so a context cannot be minted for it — and a "bootstrap token"
+  would be useless anyway, since the login edge ALSO resolves the context first and 404s while onboarding.
+  The first planner simply logs in via the existing `/t/:slug/sessions` edge once the tenant is **active**
+  (login stays the sole session mint; it is the credential-free simulation, so no secret is handed back).
 - `activate(tenant_id)` — guard `onboarding → active`; `billing.record(charge)` + `record(payment)` +
   `tenants.setLifecycleStatus(id,'active')`. **onboarding → active.**
 - `suspend(tenant_id)` — guard `active → suspended`; `record(suspended)` + `setLifecycleStatus(id,'suspended')`.
@@ -121,7 +125,7 @@ and ledger move together, atomically-on-success.
 
 Folded into `ProductApi.#route`, OUTSIDE `/t/:slug` (admin never touches a tenant context):
 
-- `POST   /admin/tenants`                  → provision → `201 { tenant, bootstrap_token }`
+- `POST   /admin/tenants`                  → provision → `201 { tenant }` (the public tenant view)
 - `POST   /admin/tenants/:id/activate`     → `200 { tenant }`
 - `POST   /admin/tenants/:id/suspend`      → `200 { tenant }`
 - `POST   /admin/tenants/:id/reactivate`   → `200 { tenant }`
@@ -178,12 +182,13 @@ of architect P0-3).
   gate**), constructor-injected operator token (offline simulation, documented). Brand + mint NOT exported
   from the barrel. Tests: unforgeability (re-stamp attack fails) mirroring `principal`/`tenant_context`,
   no-token-leak via `JSON.stringify`, resolve fails closed for absent/foreign token. Green.
-- [ ] **Step 3 — `OnboardingService`.** provision/activate/suspend/reactivate over TenantStore + SessionStore
-  + BillingLedger, **with the legal-transition guard** (read current `lifecycle_status`; illegal →
+- [x] **Step 3 — `OnboardingService`.** provision/activate/suspend/reactivate over TenantStore + BillingLedger,
+  **with the legal-transition guard** (read current `lifecycle_status`; illegal →
   `PRODUCT.ILLEGAL_LIFECYCLE_TRANSITION` before any record). Unit tests: full happy lifecycle + the ledger
   after each step; **every illegal transition rejected and records NO event** (double-activate, suspend-an-
   onboarding, reactivate-an-active, activate-after-suspend); `provision` on a duplicate slug leaves no orphan
-  state; the bootstrap planner token actually authenticates on `/t/:slug/weddings` once active. Green.
+  state; a planner can log in via the existing edge ONLY once the tenant is active (provision→onboarding stays
+  404 on the login edge). Green.
 - [ ] **Step 4 — The `/admin` HTTP edge.** Fold the operator-auth stage + the admin route table into
   `ProductApi.#route` with `#authenticateOperator` as the **literal first statement** of the `/admin` block;
   narrow `{ onboarding }` handler bag (operator store stays in the pipeline); `errorToResponse` gains
@@ -196,8 +201,8 @@ of architect P0-3).
   method-mismatch + unknown-sub-route are unreachable pre-auth; an unknown top-level path (`/nonsense`) stays
   byte-identical `404` (no perturbation); (2) mask preserved — a provisioned-but-onboarding tenant is
   byte-identical `404` on **both** `GET /t/:slug/weddings` AND `POST /t/:slug/sessions` (the login edge must
-  not become an onboarding oracle now that a real bootstrap session exists behind it — doddy P0-2), identical
-  to absent/suspended; (3) the lifecycle drive end-to-end — provision (edge `404`) → activate (edge now
+  not become an onboarding oracle — login resolves the context first, so it 404s while onboarding — doddy
+  P0-2), identical to absent/suspended; (3) the lifecycle drive end-to-end — provision (edge `404`) → activate (edge now
   `401`/usable) → suspend (`404`) → reactivate (`401`), asserted **through `api.handle()`**; (4)
   cross-namespace — operator token rejected (constant `401`) on `/t/:slug/weddings`, session token rejected
   (constant `401`) on `/admin`; (5) billing fold correctness across the lifecycle + operator querying tenant

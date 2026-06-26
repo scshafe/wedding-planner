@@ -47,6 +47,10 @@ export {
   type RecordBillingEventInput,
 } from './billing/billing_ledger'
 
+// The operator-driven onboarding + lifecycle driver (Phase 15): the only path that moves a tenant through
+// its simulated lifecycle (∅ → onboarding → active → suspended → active), recording billing events.
+export { OnboardingService, type ProvisionTenantInput } from './onboarding/onboarding_service'
+
 // Intra-tenant authorization: the Principal (planner vs couple) and the session mint. The brand symbol
 // and the internal mintPrincipal are deliberately NOT exported — the SessionStore is the sole mint.
 export { type Principal, type PrincipalRole, assertMintedPrincipal } from './auth/principal'
