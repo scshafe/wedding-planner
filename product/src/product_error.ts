@@ -22,6 +22,10 @@ import { WeddingPlannerError } from '@wedding-planner/shared'
  *   - PRODUCT.FORGED_OPERATOR        an Operator reached a check without the OperatorCredentialStore's brand
  *   - PRODUCT.DUPLICATE_OPERATOR_TOKEN two seeded operator credential tokens collided
  *   - PRODUCT.ILLEGAL_LIFECYCLE_TRANSITION an onboarding op asked for an illegal lifecycle edge (Phase 15)
+ *   - PRODUCT.PROVIDER_COST_INVALID   a messaging provider reported a non-integer/negative per-message cost
+ *                                     (untrusted-edge invariant; fail closed before metering — Phase 18)
+ *   - PRODUCT.MARGIN_VIOLATION        a tenant message price did not strictly exceed the provider COGS
+ *                                     (we never knowingly sell messaging at a loss; fail closed — Phase 18)
  *
  * The read path deliberately raises NOTHING for a not-found / cross-tenant id — it returns a
  * value-level `undefined` so a foreign id is indistinguishable from a missing one (no existence

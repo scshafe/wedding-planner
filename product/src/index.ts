@@ -116,6 +116,12 @@ export {
   SimulatedMessagingAdapter,
   SIMULATED_PROVIDER_COST_CENTS,
 } from './messaging/simulated_messaging_adapter'
+export {
+  MessagingService,
+  type MessageUsageRecord,
+  type SendResult,
+  type TenantUsageView,
+} from './messaging/messaging_service'
 
 // The composition root (Phase 16): wires every dependency into one running web front door from INJECTED
 // primitives (clock/ids/operator token), so the deployable entrypoint stays a thin impure shell. The

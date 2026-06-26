@@ -195,7 +195,7 @@ opaque untrusted data, no real-world read, no path to meter/ledger, documented u
     margin) as non-negative integer cents.
   - Tests: `product/tests/messaging/simulated_messaging_adapter.test.ts` (deterministic send/receipt/status;
     per-channel cost report is a non-negative safe integer; `inbound`/`deliveryStatus` mutate nothing).
-- [ ] **Step 3 — The price book extension + metered billing kind (all four edits move together).**
+- [x] **Step 3 — The price book extension + metered billing kind (all four edits move together).** (634 tests green)
   - `price_book.ts`: add the **tenant** per-`Channel` price — `messagePriceCents(channel, plan_tier)` — total
     over the `Channel` enum, fail-closed on an unknown channel, with a documented **margin invariant** vs the
     provider COGS. Integer cents.
