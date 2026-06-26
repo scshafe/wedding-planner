@@ -9,7 +9,8 @@
     "telemetry",
     "eval-harness",
     "loop-orchestrator",
-    "agent-operations"
+    "agent-operations",
+    "product"
   ],
   "scripts": {
     "build": "tsc --noEmit -p tsconfig.json",

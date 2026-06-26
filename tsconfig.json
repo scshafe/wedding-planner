@@ -12,7 +12,9 @@
       "@wedding-planner/loop-orchestrator": ["loop-orchestrator/src/index.ts"],
       "@wedding-planner/loop-orchestrator/*": ["loop-orchestrator/src/*"],
       "@wedding-planner/agent-operations": ["agent-operations/src/index.ts"],
-      "@wedding-planner/agent-operations/*": ["agent-operations/src/*"]
+      "@wedding-planner/agent-operations/*": ["agent-operations/src/*"],
+      "@wedding-planner/product": ["product/src/index.ts"],
+      "@wedding-planner/product/*": ["product/src/*"]
     }
   },
   "include": [
@@ -26,6 +28,8 @@
     "loop-orchestrator/tests",
     "agent-operations/src",
     "agent-operations/tests",
+    "product/src",
+    "product/tests",
     "scripts",
     "vitest.config.ts"
   ]

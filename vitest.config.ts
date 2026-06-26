@@ -22,6 +22,7 @@ export default defineConfig({
       '@wedding-planner/eval-harness': fromRoot('./eval-harness/src/index.ts'),
       '@wedding-planner/loop-orchestrator': fromRoot('./loop-orchestrator/src/index.ts'),
       '@wedding-planner/agent-operations': fromRoot('./agent-operations/src/index.ts'),
+      '@wedding-planner/product': fromRoot('./product/src/index.ts'),
     },
   },
 })

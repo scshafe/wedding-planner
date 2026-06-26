@@ -1,0 +1,10 @@
+{
+  "name": "@wedding-planner/product",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The customer-facing product surface: the white-label, multi-tenant web app real wedding planners and their couples sign up for, theme, and use. Built offline-first, launch-ready (onboarding/billing/comms simulated; going live is human-reserved). Phase 12 lays the multi-tenant domain core and the tenant-isolation boundary; HTTP/UI/onboarding land in later phases. Specs live alongside the code.",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}
