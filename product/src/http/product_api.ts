@@ -284,6 +284,8 @@ function handleUpdate(
     wedding_id: weddingId,
     tenant_id: context.tenant_id,
   }
+  // update re-validates against the wedding contract, so the `status` cast above is closed at runtime
+  // (a non-enum value -> CONTRACT.VALIDATION_FAILED -> 400). Keep validation downstream of the cast.
   const saved = deps.weddings.update(context, updated)
   return { status: 200, body: { wedding: saved } }
 }

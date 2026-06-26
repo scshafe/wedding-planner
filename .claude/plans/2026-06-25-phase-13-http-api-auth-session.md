@@ -238,7 +238,7 @@ layer. New `PRODUCT.*` codes are documented in `product_error.ts`.
   residual (arch P2-B); Principal branded by a **WeakSet membership token** not a symbol property (arch
   P2-A); `/healthz` constant body (arch P3-B). _(Documentation-only; tick on commit.)_
 
-- [ ] **Step 1 — The auth core (principal + session + error codes).**
+- [x] **Step 1 — The auth core (principal + session + error codes).**
   - `product/src/auth/principal.ts` (`@canonical principal`) — the `Principal` type + `PrincipalRole`,
     the module-private `WeakSet` brand, `assertMintedPrincipal` (`PRODUCT.FORGED_PRINCIPAL`), and the
     sole internal `mintPrincipal` (frozen). The brand symbol/mint are NOT exported from the barrel.
@@ -252,7 +252,7 @@ layer. New `PRODUCT.*` codes are documented in `product_error.ts`.
   - Barrel: export `SessionStore`, `type Principal`, `type PrincipalRole`, `assertMintedPrincipal`
     (NOT the brand/mint). Happy-path unit tests. Green.
 
-- [ ] **Step 2 — The `WeddingAuthorizer` (intra-tenant rules + no-oracle masking).**
+- [x] **Step 2 — The `WeddingAuthorizer` (intra-tenant rules + no-oracle masking).**
   `product/src/auth/wedding_authorizer.ts` (`@canonical wedding_authorizer`) — a pure authorizer that,
   given a (branded) `Principal`, decides each op and applies the **resource-scoped→`404`-mask vs
   capability→`403`** distinction. **Couple ownership is decided structurally from `principal.wedding_id`
@@ -263,7 +263,7 @@ layer. New `PRODUCT.*` codes are documented in `product_error.ts`.
   AND own-but-absent)** → the identical masked decision (NOT forbidden); couple create → forbidden;
   couple list → zero-or-one from `wedding_id` only; a forged (unbranded) principal → `PRODUCT.FORGED_PRINCIPAL`. Green.
 
-- [ ] **Step 3 — The pure HTTP handler + endpoints.**
+- [x] **Step 3 — The pure HTTP handler + endpoints.**
   - `product/src/http/api_message.ts` — `ApiRequest` (method, path, headers, parsed body) and
     `ApiResponse` (status, JSON body) value types; transport-agnostic, no Node coupling.
   - `product/src/http/product_api.ts` (`@canonical product_api`) — `ProductApi.handle(req): ApiResponse`
@@ -277,14 +277,14 @@ layer. New `PRODUCT.*` codes are documented in `product_error.ts`.
     extraction, `__proto__`/`constructor` stripped, route `wedding_id` + context `tenant_id` applied
     last. Handler-level tests for each endpoint's happy path + the full status map. Green.
 
-- [ ] **Step 4 — The Node `http` adapter.**
+- [x] **Step 4 — The Node `http` adapter.**
   `product/src/http/node_server.ts` (`@canonical product_api_server`) — `createProductApiServer(deps)`
   returns an `http.Server` that reads the body, builds an `ApiRequest`, calls `ProductApi.handle`, and
   writes the `ApiResponse` (status + JSON). One integration test boots it on an **ephemeral port**
   (`listen(0)`), issues real requests (`fetch`/`http`), asserts `/healthz` + a tenant round-trip, then
   closes. Injected clock/ids throughout. Green.
 
-- [ ] **Step 5 — The HTTP keystone (the load-bearing intra-tenant + edge regression).**
+- [x] **Step 5 — The HTTP keystone (the load-bearing intra-tenant + edge regression).**
   `product/tests/http/product_api_keystone.test.ts` — adversarial, against the pure handler (fast,
   deterministic). With two tenants A/B and planner+couple sessions in each, assert:
   (a) **cross-tenant routing read** — a session for A's planner on `/t/<B>/weddings/<id>` cannot read
@@ -306,7 +306,7 @@ layer. New `PRODUCT.*` codes are documented in `product_error.ts`.
   couple-login with a phantom `wedding_id` succeeds identically to one with a real id (the difference
   surfaces only, masked, at read).
 
-- [ ] **Step 6 — doddy boundary re-review of the BUILT code.** Trace the real request edge: the context
+- [x] **Step 6 — doddy boundary re-review of the BUILT code.** Trace the real request edge: the context
   is minted exactly once (stage 2) and no handler reconstructs one; the principal is bound to the
   context before any authorization; the couple-foreign and missing paths are byte-identical (no
   status/shape/timing oracle); the login simulation cannot mint a principal for a foreign tenant or a
