@@ -17,7 +17,7 @@ wedding_id: string
  */
 tenant_id: string
 /**
- * The couple's display name, e.g. 'Alex & Sam'.
+ * The couple's display name, e.g. 'Alex & Sam'. maxLength caps the one previously-unbounded term interpolated into a metered guest reply (timing/venue answers).
  */
 couple_display_name: string
 /**

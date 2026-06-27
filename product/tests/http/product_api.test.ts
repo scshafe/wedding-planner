@@ -152,7 +152,7 @@ describe('product_api — endpoints', () => {
     expect(weddingOf(updated).wedding_id).toBe(id)
   })
 
-  it('create/update carry the optional guest-visible logistics fields (round-trip + patch + clear-to-absent)', () => {
+  it('create/update carry the optional guest-visible logistics fields (round-trip + patch-preserves + absent-on-create)', () => {
     const token = plannerToken(w)
     // Create with all four logistics fields set.
     const created = w.api.handle(
@@ -199,7 +199,7 @@ describe('product_api — endpoints', () => {
     expect(post({ dress_code: null })).toBe(400) // null is not undefined -> not a string -> 400 (F8)
     expect(post({ dress_code: 42 })).toBe(400) // numeric -> 400 (F8)
     expect(post({ dress_code: 'x'.repeat(201) })).toBe(400) // exceeds maxLength 200 (F7)
-    expect(post({ venue_name: '' })).toBe(400) // minLength 1 -> empty rejected by optionalString/contract
+    expect(post({ venue_name: '' })).toBe(400) // '' passes optionalString, rejected by the contract's minLength 1
   })
 
   it('a couple sees only their own wedding in a list and can read/update it', () => {

@@ -44,8 +44,10 @@ export class WeddingRepository {
 
   /** Create a wedding owned by the context's tenant. */
   create(context: TenantContext, input: CreateWeddingInput): Wedding {
-    // Optional logistics fields are copied through ONLY when present (the spread honors
-    // exactOptionalPropertyTypes — `k: input.k` would type `string | undefined` and reject).
+    // Optional logistics fields are copied through ONLY when present (conditional spread). A direct
+    // `ceremony_time: input.ceremony_time` would write an enumerable `ceremony_time: undefined` key into
+    // the persisted aggregate, which (a) Ajv rejects (the schema's optional `type:string` does not accept
+    // undefined) and (b) breaks the projection allow-list `Object.keys` invariant. So omit-when-absent.
     const wedding: Wedding = {
       wedding_id: this.ids.next('wedding'),
       tenant_id: context.tenant_id,
