@@ -432,10 +432,20 @@ function handleCreate(
 ): ApiResponse {
   if (deps.authorizer.authorizeCreate(principal) === 'forbidden') throw forbidden()
   const body = parseObjectBody(req.rawBody)
+  // Optional logistics fields: read as strings here (present-but-not-a-string -> 400), spread in only when
+  // present (exactOptionalPropertyTypes), and let the wedding contract validate pattern/maxLength downstream.
+  const ceremony_time = optionalString(body, 'ceremony_time')
+  const venue_name = optionalString(body, 'venue_name')
+  const parking_info = optionalString(body, 'parking_info')
+  const dress_code = optionalString(body, 'dress_code')
   const input: CreateWeddingInput = {
     couple_display_name: requireString(body, 'couple_display_name'),
     event_date: requireString(body, 'event_date'),
     ...(body.status === undefined ? {} : { status: requireString(body, 'status') as Wedding['status'] }),
+    ...(ceremony_time === undefined ? {} : { ceremony_time }),
+    ...(venue_name === undefined ? {} : { venue_name }),
+    ...(parking_info === undefined ? {} : { parking_info }),
+    ...(dress_code === undefined ? {} : { dress_code }),
   }
   // create stamps tenant_id from the context and validates against the wedding contract (bad enum/date
   // -> VALIDATION_FAILED -> 400). The body never carries tenant_id/wedding_id.
@@ -470,8 +480,17 @@ function handleUpdate(
   const existing = deps.weddings.get(context, weddingId)
   if (existing === undefined) return RESP_NOT_FOUND // own-but-absent: identical masked 404
   const body = parseObjectBody(req.rawBody)
+  // Each optional logistics field: keep the existing value when the patch omits it, else take the patched
+  // (string-validated) value. Resolves to `string | undefined`, so it is SPREAD in only when defined (the
+  // exactOptionalPropertyTypes rule — a literal `ceremony_time: undefined` would violate the optional prop).
+  const patchOptional = (key: 'ceremony_time' | 'venue_name' | 'parking_info' | 'dress_code'): string | undefined =>
+    body[key] === undefined ? existing[key] : requireString(body, key)
   // Reconstruct from the existing record + the patch; identity (wedding_id) comes from the ROUTE and
   // ownership (tenant_id) from the CONTEXT, both applied LAST so a smuggled body field cannot re-target.
+  const ceremony_time = patchOptional('ceremony_time')
+  const venue_name = patchOptional('venue_name')
+  const parking_info = patchOptional('parking_info')
+  const dress_code = patchOptional('dress_code')
   const updated: Wedding = {
     couple_display_name: body.couple_display_name === undefined
       ? existing.couple_display_name
@@ -481,6 +500,10 @@ function handleUpdate(
     created_at: existing.created_at,
     wedding_id: weddingId,
     tenant_id: context.tenant_id,
+    ...(ceremony_time === undefined ? {} : { ceremony_time }),
+    ...(venue_name === undefined ? {} : { venue_name }),
+    ...(parking_info === undefined ? {} : { parking_info }),
+    ...(dress_code === undefined ? {} : { dress_code }),
   }
   // update re-validates against the wedding contract, so the `status` cast above is closed at runtime
   // (a non-enum value -> CONTRACT.VALIDATION_FAILED -> 400). Keep validation downstream of the cast.

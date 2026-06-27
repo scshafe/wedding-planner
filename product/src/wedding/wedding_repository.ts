@@ -24,6 +24,11 @@ export interface CreateWeddingInput {
   readonly event_date: string
   /** Defaults to 'planning'. */
   readonly status?: Wedding['status']
+  /** Optional guest-visible logistics facts (the guest-messaging responder may answer these). */
+  readonly ceremony_time?: string
+  readonly venue_name?: string
+  readonly parking_info?: string
+  readonly dress_code?: string
 }
 
 export class WeddingRepository {
@@ -39,6 +44,8 @@ export class WeddingRepository {
 
   /** Create a wedding owned by the context's tenant. */
   create(context: TenantContext, input: CreateWeddingInput): Wedding {
+    // Optional logistics fields are copied through ONLY when present (the spread honors
+    // exactOptionalPropertyTypes — `k: input.k` would type `string | undefined` and reject).
     const wedding: Wedding = {
       wedding_id: this.ids.next('wedding'),
       tenant_id: context.tenant_id,
@@ -46,6 +53,10 @@ export class WeddingRepository {
       event_date: input.event_date,
       status: input.status ?? 'planning',
       created_at: this.clock.now(),
+      ...(input.ceremony_time === undefined ? {} : { ceremony_time: input.ceremony_time }),
+      ...(input.venue_name === undefined ? {} : { venue_name: input.venue_name }),
+      ...(input.parking_info === undefined ? {} : { parking_info: input.parking_info }),
+      ...(input.dress_code === undefined ? {} : { dress_code: input.dress_code }),
     }
     getSchemaRegistry().assertValid<Wedding>('wedding', wedding)
     return this.repository.put(context, wedding)

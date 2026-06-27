@@ -152,6 +152,56 @@ describe('product_api — endpoints', () => {
     expect(weddingOf(updated).wedding_id).toBe(id)
   })
 
+  it('create/update carry the optional guest-visible logistics fields (round-trip + patch + clear-to-absent)', () => {
+    const token = plannerToken(w)
+    // Create with all four logistics fields set.
+    const created = w.api.handle(
+      req('POST', '/t/alpha/weddings', {
+        token,
+        body: {
+          couple_display_name: 'Logi & Stics',
+          event_date: '2028-05-05',
+          ceremony_time: '16:30',
+          venue_name: 'The Grand Hall',
+          parking_info: 'Free lot on 5th St',
+          dress_code: 'Black tie',
+        },
+      }),
+    )
+    expect(created.status).toBe(201)
+    const id = weddingOf(created).wedding_id
+    expect(weddingOf(created)).toMatchObject({
+      ceremony_time: '16:30',
+      venue_name: 'The Grand Hall',
+      parking_info: 'Free lot on 5th St',
+      dress_code: 'Black tie',
+    })
+
+    // Patch one field; the others (and identity) are preserved from the existing record.
+    const patched = w.api.handle(req('PUT', `/t/alpha/weddings/${id}`, { token, body: { dress_code: 'Cocktail' } }))
+    expect(patched.status).toBe(200)
+    expect(weddingOf(patched)).toMatchObject({ dress_code: 'Cocktail', venue_name: 'The Grand Hall', ceremony_time: '16:30' })
+
+    // Create WITHOUT logistics -> the optional fields are simply absent (not null/undefined keys).
+    const bare = w.api.handle(
+      req('POST', '/t/alpha/weddings', { token, body: { couple_display_name: 'Bare', event_date: '2028-06-06' } }),
+    )
+    expect(weddingOf(bare)).not.toHaveProperty('dress_code')
+    expect(weddingOf(bare)).not.toHaveProperty('ceremony_time')
+  })
+
+  it('rejects malformed logistics fields -> 400 (bad ceremony_time pattern, null, numeric, too long)', () => {
+    const token = plannerToken(w)
+    const post = (body: Record<string, unknown>) =>
+      w.api.handle(req('POST', '/t/alpha/weddings', { token, body: { couple_display_name: 'x', event_date: '2028-01-01', ...body } })).status
+    expect(post({ ceremony_time: '25:00' })).toBe(400) // out-of-range hour (contract pattern)
+    expect(post({ ceremony_time: '4pm' })).toBe(400) // wrong shape
+    expect(post({ dress_code: null })).toBe(400) // null is not undefined -> not a string -> 400 (F8)
+    expect(post({ dress_code: 42 })).toBe(400) // numeric -> 400 (F8)
+    expect(post({ dress_code: 'x'.repeat(201) })).toBe(400) // exceeds maxLength 200 (F7)
+    expect(post({ venue_name: '' })).toBe(400) // minLength 1 -> empty rejected by optionalString/contract
+  })
+
   it('a couple sees only their own wedding in a list and can read/update it', () => {
     const ptoken = plannerToken(w)
     const created = w.api.handle(
