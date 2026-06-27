@@ -1,6 +1,6 @@
 # Phase 22 — A richer guest-visible wedding-facts model (logistics answers + the first `refused`)
 
-**Status:** IN PROGRESS
+**Status:** COMPLETE — all steps ticked (762 tests green; doddy APPROVE / architect APPROVE-WITH-FIXES on design AND built code, fixes applied). ADR 0022, memory [[richer-guest-visible-facts]].
 **Branch:** `build/phase-3-generalize-search` (the open review artifact for `main`; Phases 3–21 build on it; this continues it)
 **Predecessor:** Phase 21 (planner guest-management CRUD + the first browser-form CSRF) — complete, 749 tests green.
 
@@ -102,26 +102,26 @@ code are **guest-shareable by definition** — leaking "the couple hasn't set a 
     field (confirm `requireString` throws → VALIDATION_FAILED → 400; `body.X === undefined` does NOT swallow `null`).
 
 ### Step 1 — Schema: four optional logistics fields + regenerate the type
-- [ ] `product/schemas/wedding_schema.json`: add (optional, NOT in `required`, `additionalProperties` stays `false`):
+- [x] `product/schemas/wedding_schema.json`: add (optional, NOT in `required`, `additionalProperties` stays `false`):
       `ceremony_time` (string, `pattern ^([01][0-9]|2[0-3]):[0-5][0-9]$` — 24h `HH:MM`), `venue_name` (string,
       `minLength 1`), `parking_info` (string, `minLength 1`), `dress_code` (string, `minLength 1`). Each with a clear
       `description` (guest-visible logistics; no surprise/PII fields here — that is the deny-by-classification boundary).
-- [ ] `npm run gen:types`; confirm `shared/src/contracts/generated/wedding.ts` gains the four optional fields.
-- [ ] Verify the manifest count test (`shared/tests/contracts/schema_registry.test.ts`) still passes unchanged (18 —
+- [x] `npm run gen:types`; confirm `shared/src/contracts/generated/wedding.ts` gains the four optional fields.
+- [x] Verify the manifest count test (`shared/tests/contracts/schema_registry.test.ts`) still passes unchanged (18 —
       no new schema file). Build/test/lint green. Commit.
 
 ### Step 2 — Write surface: repo + JSON create/update carry the optional fields
-- [ ] `product/src/wedding/wedding_repository.ts`: `CreateWeddingInput` gains the four optional fields; `create` copies
+- [x] `product/src/wedding/wedding_repository.ts`: `CreateWeddingInput` gains the four optional fields; `create` copies
       each through **only when present** (the `...(x === undefined ? {} : { x })` spread, honoring
       `exactOptionalPropertyTypes`). `update` already round-trips the whole record — no change beyond the type flowing.
-- [ ] `product/src/http/product_api.ts`: `handleCreate` reads each via `optionalString(body, …)`; `handleUpdate`
+- [x] `product/src/http/product_api.ts`: `handleCreate` reads each via `optionalString(body, …)`; `handleUpdate`
       threads each as `body.X === undefined ? existing.X : requireString(body, 'X')`, applied with identity/ownership
       LAST (the existing smuggle-proof reconstruction). Bad values fail the contract → `VALIDATION_FAILED` → 400.
-- [ ] Tests: repo create/update with/without each field; JSON `POST`/`PUT` round-trip; a malformed `ceremony_time`
+- [x] Tests: repo create/update with/without each field; JSON `POST`/`PUT` round-trip; a malformed `ceremony_time`
       (e.g. `"25:00"`) → 400. Build/test/lint green. Commit.
 
 ### Step 3 — Responder: topic classifier (answer logistics / escalate-absent / refuse surprise)
-- [ ] `product/src/messaging/guest_qa_responder.ts`:
+- [x] `product/src/messaging/guest_qa_responder.ts`:
   - Grow `GuestVisibleFacts` to the **explicit allow-list**: `couple_display_name`, `event_date`, and optional
     `ceremony_time` / `venue_name` / `parking_info` / `dress_code`. `projectGuestVisibleFacts` copies exactly these
     (still NO spread; status/created_at/tenant_id/wedding_id and any future surprise field structurally unreachable).
@@ -133,27 +133,27 @@ code are **guest-shareable by definition** — leaking "the couple hasn't set a 
     answers); `venue|parking|dress_code → answered` when the fact is present, else `escalated`; `unknown → escalated`.
   - Rewrite the file header: replace the "trivial projection, refused never needed" note with the static-topic-refuse
     reasoning from the safety crux above.
-- [ ] Tests (`product/tests/messaging/guest_qa_responder.test.ts`): each topic answered when present; each logistics
+- [x] Tests (`product/tests/messaging/guest_qa_responder.test.ts`): each topic answered when present; each logistics
       topic **escalated** when absent; **surprise/secret probe → `refused`** and the outcome is **identical regardless
       of any wedding data** (the no-oracle property — assert the same `refused` for two weddings differing in every
       field); the projection excludes non-allow-listed fields (assert keys). Build/test/lint green. Commit.
 
 ### Step 4 — End-to-end inbound + detail page
-- [ ] Inbound integration test (`product/tests/http/…` alongside the Phase-19 inbound tests): a guest bound to a wedding
+- [x] Inbound integration test (`product/tests/http/…` alongside the Phase-19 inbound tests): a guest bound to a wedding
       texts "what's the dress code?" with a dress code set → exactly one metered `send` with the fact reply, uniform
       202; the same guest texts "what's the surprise?" → **no send**, uniform 202 (refuse is wire-silent). Confirm the
       inbound handler needed no change (assert via behavior).
-- [ ] `product/src/web/pages.ts` `renderDetail`: surface `ceremony_time` / `venue_name` / `parking_info` / `dress_code`
+- [x] `product/src/web/pages.ts` `renderDetail`: surface `ceremony_time` / `venue_name` / `parking_info` / `dress_code`
       when present (each through the `html` escaping template; omit the row when unset). A render test. Build/test/lint
       green. Commit.
 
 ### Step 5 — Built-code review, ADR, memory, handoff
-- [ ] Route the BUILT code through the doddy + architect lens agents; apply findings.
-- [ ] `docs/adr/0022-richer-guest-visible-facts.md` — the static-topic-refuse decision + the no-surprise-field
+- [x] Route the BUILT code through the doddy + architect lens agents; apply findings.
+- [x] `docs/adr/0022-richer-guest-visible-facts.md` — the static-topic-refuse decision + the no-surprise-field
       consequence + the logistics disclosure rationale.
-- [ ] Memory `.claude/memory/richer-guest-visible-facts.md` (+ index in `MEMORY.md`) — the load-bearing correction
+- [x] Memory `.claude/memory/richer-guest-visible-facts.md` (+ index in `MEMORY.md`) — the load-bearing correction
       (refuse is static-topic policy, NOT a stored-fact oracle; "even confirm" is the gate; no surprise field this rung).
-- [ ] Update `.claude/handoff.local.md`. Final green. Commit.
+- [x] Update `.claude/handoff.local.md`. Final green. Commit.
 
 ## Done when
 All boxes ticked; `npm run build && npm test && npm run lint` green; doddy+architect lenses APPROVE design AND built
