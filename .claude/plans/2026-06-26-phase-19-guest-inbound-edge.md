@@ -134,7 +134,9 @@ must-fixes folded into the steps below:
   - Tests: schema accepts a valid payload / rejects each missing-or-bad field + a non-enum channel; the
     drift-guard; bad body → 400; valid body → 202; the 400 is the code-free constant.
 
-- [ ] **Step 3 — The guest registry + the responder (pure tested units).**
+- [x] **Step 3 — The guest registry + the responder (pure tested units).** (DONE — 681 tests green; the
+  GuestRegistry composes TenantScopedRepository (isolation inherited, not re-implemented); the responder +
+  projection enforce deny-by-fact-classification. Not yet wired into the route — Step 4 integrates.)
   - New `product/src/messaging/guest_registry.ts` — `GuestRegistry`: a `#`-private per-tenant partition
     (`tenant_id → Map<from_ref, {wedding_id, guest_id}>`), `lookup(context, from_ref)` taking the **minted
     `TenantContext`** (partition key = `ctx.tenant_id`), `register(context, {recipient_ref, wedding_id,

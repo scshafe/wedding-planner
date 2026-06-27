@@ -132,6 +132,19 @@ export {
   type TenantUsageView,
 } from './messaging/messaging_service'
 
+// The guest channel (Phase 19): a guest is an UNTRUSTED actor (never a session Principal), bound to ONE
+// wedding by an opaque sender ref via the GuestRegistry (the segmentation gate, inheriting tenant isolation),
+// and answered by a product-side deterministic GuestQaResponder (no loop import; deny-by-fact-classification).
+export { GuestRegistry, type GuestBinding, type RegisterGuestInput } from './messaging/guest_registry'
+export {
+  type GuestQaResponder,
+  type GuestQaOutcome,
+  type GuestQaAction,
+  type GuestVisibleFacts,
+  DeterministicGuestQaResponder,
+  projectGuestVisibleFacts,
+} from './messaging/guest_qa_responder'
+
 // The composition root (Phase 16): wires every dependency into one running web front door from INJECTED
 // primitives (clock/ids/operator token), so the deployable entrypoint stays a thin impure shell. The
 // edge-only SystemClock / RandomIdGenerator are deliberately exported from NEITHER barrel — app/server.ts
