@@ -119,8 +119,15 @@ any sane calibration. Containment:
 - [x] **Step 0 — Design review (architect + doddy + wolf lenses, on THIS plan).** All three APPROVE-WITH-CHANGES.
   Ratified calls + must-fixes (folded into the steps below):
 
-  **wolf (calibration — the load-bearing numbers):**
-  - **`worst_messaging_cents = 50`.** HARD FLOOR is **18** (crossover ≈ 17.2¢): below it the non-separability
+  **NOTE — calibration rescaled at Step 1.** wolf calibrated against email = 3¢, but the shared cost basis is
+  the vendor-agnostic carrier COGS (email = **1¢**, held below the 2¢ retail floor — SF7), so every cents figure
+  and the anchor scale by ~⅓: **`worst_messaging_cents ≈ 18`** (floor ≈ 6), pinned exactly against the recomputed
+  cube in Step 3. wolf's STRUCTURE conclusions are scale-invariant (`worst ≈ 3× corpus-max cents`; corpus-max is
+  now ~6¢, was ~18¢). The fragile cell, the non-sep vector, and the ~9% optimum-shrink all carry over unchanged.
+
+  **wolf (calibration — the load-bearing numbers, AT email = 3¢; rescale ÷3 for the 1¢ basis):**
+  - **`worst_messaging_cents = 50`** (→ ~18 at 1¢). HARD FLOOR is **18** (→ ~6 at 1¢; crossover ≈ 17.2¢ → ~5.7¢):
+    below it the non-separability
     vector `argmaxCadenceAt(s=1, b=*)` flips from `[2,3,1,1]` to `[2,3,0,0]` and the oracle breaks. 50 gives a
     ~9% ratio-shrink at the optimum (a real secondary gradient), keeps the optimum margin `0.0118 > 0.01`, and is
     "~3× corpus-max cents (18)". So the term breaks structure when TOO SMALL, not too large — the opposite of the
@@ -177,8 +184,11 @@ any sane calibration. Containment:
     `MESSAGE_PRICE_CENTS[channel][tier] > MESSAGE_COST_CENTS[channel]` for every channel/tier — makes the
     deferred price_book/shared unification safe (the margin invariant can't silently invert).
 
-- [ ] **Step 1 — The shared per-message cost basis.** `shared/src/domain/message_cost.ts`
-  (`MESSAGE_COST_CENTS` = {email:3, sms:6, whatsapp:4, phone:15, postal:95} — the product price-book ballpark;
+- [x] **Step 1 — The shared per-message cost basis.** (DONE — 700 tests green. `shared/src/domain/message_cost.ts`
+  = vendor-agnostic carrier COGS {email:1,sms:2,whatsapp:1,phone:5,postal:60}, all strictly below retail;
+  drift-guard + SF7 cross-table margin test added.) `shared/src/domain/message_cost.ts`
+  (`MESSAGE_COST_CENTS` = {email:1, sms:2, whatsapp:1, phone:5, postal:60} — the vendor-agnostic carrier COGS,
+  strictly below every retail price;
   `messageCostCents(channel)` total over `CHANNELS`, throws on a stale cast) + barrel export + drift-guard test
   (exhaustive over `CHANNELS`). **Plus the SF7 cross-table consistency test in `product` tests**:
   `MESSAGE_PRICE_CENTS[channel][tier] > MESSAGE_COST_CENTS[channel]` for every channel × tier (product may import
@@ -195,8 +205,9 @@ any sane calibration. Containment:
 
 - [ ] **Step 3 — The metric + the money_cost denominator term (the landscape shift).** `messaging_money_total_cents`
   metric (telemetry, reads the shared cost basis; **unknown channel → max cost, not 0** per doddy P1-1) + catalog +
-  `GUARD_DIRECTIONS` (`lower_better`); **`worst_messaging_cents = 50`** in `NORMALIZATION_ANCHORS` (human-set;
-  hard floor 18 — add an anchor-floor guard test/comment). Combiner: **`money_cost = clamp01(budgetShare +
+  `GUARD_DIRECTIONS` (`lower_better`); **`worst_messaging_cents ≈ 18`** in `NORMALIZATION_ANCHORS` (human-set;
+  hard floor ~6 at the 1¢ basis — add an anchor-floor guard test/comment; pin the exact value against the
+  recomputed cube). Combiner: **`money_cost = clamp01(budgetShare +
   messagingShare)`** (SUM, MF3) + a synthetic `deriveNorthStarInputs` guard test with both present. **Re-pin** the
   `metamorphic_oracle` 2-D matrix + 3-D cube numeric `EXPECTED` (recompute from the impl); keep the `[2,3,1,1]`
   non-sep vector + `argmaxCadence(m,1)===2` / `argmaxCadence(m,2)<2` (MF2) HARD-pinned (do not re-derive); confirm

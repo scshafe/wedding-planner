@@ -29,6 +29,10 @@ export { deepFreeze } from './deep_freeze'
 // schema contracts, drift-guarded) — the messaging boundary and message pricing both reference it.
 export { CHANNELS, type Channel } from './domain/channel'
 
+// The single INWARD per-message money cost basis (integer cents per Channel) — the firewall-clean cost the
+// eval/loop reads to price the comms strategy (Phase 20). Distinct from the product's retail price book.
+export { MESSAGE_COST_CENTS, messageCostCents, isChannel } from './domain/message_cost'
+
 // Contracts (the 12 JSON Schema contracts as runtime validators)
 export {
   CONTRACT_DEFINITIONS,

@@ -1,7 +1,7 @@
 import { ManualClock, SequentialIdGenerator } from '@wedding-planner/shared'
 import { describe, expect, it } from 'vitest'
 
-import { CHANNELS, type Channel } from '@wedding-planner/shared'
+import { CHANNELS, type Channel, MESSAGE_COST_CENTS } from '@wedding-planner/shared'
 
 import {
   BillingLedger,
@@ -54,6 +54,21 @@ describe('price_book', () => {
     for (const channel of CHANNELS) {
       for (const tier of TIERS) {
         expect(messagePriceCents(channel, tier)).toBeGreaterThan(SIMULATED_PROVIDER_COST_CENTS[channel])
+      }
+    }
+  })
+
+  it('every retail message price strictly exceeds the shared inward cost basis (cross-table margin guard)', () => {
+    // Phase 20 (SF7): the inward North-Star cost basis (`MESSAGE_COST_CENTS`, shared) and this RETAIL table
+    // are deliberately kept separate (the eval/loop firewall forbids importing the product price book). They
+    // must not silently diverge below the margin invariant — the product would be billing under its own
+    // modeled cost. Product MAY import both (only eval→product is forbidden), so we pin the relationship here.
+    for (const channel of CHANNELS) {
+      for (const tier of TIERS) {
+        expect(
+          messagePriceCents(channel, tier),
+          `retail ${channel}/${tier} must exceed the shared cost basis`,
+        ).toBeGreaterThan(MESSAGE_COST_CENTS[channel])
       }
     }
   })
