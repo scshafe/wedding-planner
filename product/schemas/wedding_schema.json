@@ -12,6 +12,10 @@
     "couple_display_name": { "type": "string", "minLength": 1, "description": "The couple's display name, e.g. 'Alex & Sam'." },
     "event_date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "The wedding date (YYYY-MM-DD)." },
     "status": { "type": "string", "enum": ["planning", "active", "completed", "cancelled"], "description": "Planning lifecycle. planning = onboarding the couple; active = under active planning; completed = the wedding has happened; cancelled = called off." },
-    "created_at": { "type": "string", "minLength": 1, "description": "ISO 8601 UTC creation time, from the injected clock (never ambient)." }
+    "created_at": { "type": "string", "minLength": 1, "description": "ISO 8601 UTC creation time, from the injected clock (never ambient)." },
+    "ceremony_time": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "Optional. Guest-visible ceremony start time, 24-hour HH:MM. A logistics fact the guest-messaging responder may answer (rides the answered-content channel alongside event_date). NEVER a surprise/PII field — only guest-shareable logistics belong here (the deny-by-fact-classification boundary, see guest_qa_responder.ts)." },
+    "venue_name": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Optional. Guest-visible venue name/location. A logistics fact answered when set, escalated when unset. Guest-shareable only — never a surprise/PII field." },
+    "parking_info": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Optional. Guest-visible parking guidance (free text). Answered when set, escalated when unset. maxLength caps metered-send cost + payload smuggling to guests. Guest-shareable only." },
+    "dress_code": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Optional. Guest-visible dress code / attire. Answered when set, escalated when unset. Guest-shareable only — never a surprise/PII field." }
   }
 }

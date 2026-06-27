@@ -32,4 +32,20 @@ status: ("planning" | "active" | "completed" | "cancelled")
  * ISO 8601 UTC creation time, from the injected clock (never ambient).
  */
 created_at: string
+/**
+ * Optional. Guest-visible ceremony start time, 24-hour HH:MM. A logistics fact the guest-messaging responder may answer (rides the answered-content channel alongside event_date). NEVER a surprise/PII field — only guest-shareable logistics belong here (the deny-by-fact-classification boundary, see guest_qa_responder.ts).
+ */
+ceremony_time?: string
+/**
+ * Optional. Guest-visible venue name/location. A logistics fact answered when set, escalated when unset. Guest-shareable only — never a surprise/PII field.
+ */
+venue_name?: string
+/**
+ * Optional. Guest-visible parking guidance (free text). Answered when set, escalated when unset. maxLength caps metered-send cost + payload smuggling to guests. Guest-shareable only.
+ */
+parking_info?: string
+/**
+ * Optional. Guest-visible dress code / attire. Answered when set, escalated when unset. Guest-shareable only — never a surprise/PII field.
+ */
+dress_code?: string
 }
