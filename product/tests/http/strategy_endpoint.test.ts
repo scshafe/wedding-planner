@@ -2,6 +2,8 @@ import { ManualClock, SequentialIdGenerator, type StrategyGenome, type Tenant } 
 import { describe, expect, it } from 'vitest'
 
 import {
+  GuestAuthorizer,
+  GuestRegistry,
   type ApiRequest,
   BillingLedger,
   OnboardingService,
@@ -45,6 +47,7 @@ function makeApi(opts: { champion?: StrategyGenome } = {}): ProductApi {
     sessionStore: new SessionStore(new SequentialIdGenerator('seedS')),
     weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedW')),
     authorizer: new WeddingAuthorizer(),
+    guests: { registry: new GuestRegistry(store), weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedGW')), authorizer: new GuestAuthorizer() },
     operators: new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret']),
     webhookCredentials: new ProviderWebhookCredentialStore(new SequentialIdGenerator('seedW'), ['wh-secret']),
     onboarding: new OnboardingService(store, new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB'))),

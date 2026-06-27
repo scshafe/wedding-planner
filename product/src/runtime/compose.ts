@@ -1,5 +1,6 @@
 import type { Clock, IdGenerator, StrategyGenome, Tenant } from '@wedding-planner/shared'
 
+import { GuestAuthorizer } from '../auth/guest_authorizer'
 import { OperatorCredentialStore } from '../auth/operator_credential'
 import { ProviderWebhookCredentialStore } from '../auth/provider_webhook_credential'
 import { SessionStore } from '../auth/session_store'
@@ -138,6 +139,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   // responder answers from the bound wedding, metered through the service. The registry + receipt log inherit
   // tenant isolation (they read the same TenantStore liveness); the responder is pure. No loop import.
   const guestRegistry = new GuestRegistry(tenants)
+  const guestAuthorizer = new GuestAuthorizer()
   const inboundReceipts = new InboundReceiptLog(tenants, ids)
   const guestResponder = new DeterministicGuestQaResponder()
 
@@ -146,6 +148,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     sessionStore,
     weddings,
     authorizer,
+    guests: { registry: guestRegistry, weddings, authorizer: guestAuthorizer },
     operators,
     onboarding,
     webhookCredentials,

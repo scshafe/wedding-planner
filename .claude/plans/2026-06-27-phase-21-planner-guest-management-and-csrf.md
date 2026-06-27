@@ -161,32 +161,32 @@ like every other product aggregate (`tenant`/`wedding`/`billing_event`/`inbound_
 
 ## Step 3 — `GuestAuthorizer` (planner-only management)
 
-- [ ] `product/src/auth/guest_authorizer.ts` — `@canonical guest_authorizer`. `authorizeManage(principal):
+- [x] `product/src/auth/guest_authorizer.ts` — `@canonical guest_authorizer`. `authorizeManage(principal):
       AccessDecision` → `assertMintedPrincipal`; `planner` ⇒ `allow`, else `forbidden` (a couple lacks the
       capability entirely — a 403, no resource probe, no oracle). Mirrors `WeddingAuthorizer.authorizeCreate`.
       (Couples managing their own wedding's guests is a documented future refinement, not this rung.)
-- [ ] **Gate:** build + test + lint green.
+- [x] **Gate:** build + test + lint green.
 
 ## Step 4 — JSON guest API (programmatic, Bearer; NOT CSRF-protected — see threat model)
 
-- [ ] `GuestHandlerDeps { registry: GuestRegistry; weddings: WeddingRepository; authorizer: GuestAuthorizer }`
+- [x] `GuestHandlerDeps { registry: GuestRegistry; weddings: WeddingRepository; authorizer: GuestAuthorizer }`
       (a narrow bag, no resolver/sessionStore — structural handler purity). Add to `ProductApiDeps` as a
       **required** `guests` bag (core planner functionality, unlike the optional `messaging` channel).
-- [ ] Route in `#route`, in the `/t/:slug/...` branch, AFTER `weddings`: `if (segments[2] === 'guests')` →
+- [x] Route in `#route`, in the `/t/:slug/...` branch, AFTER `weddings`: `if (segments[2] === 'guests')` →
       `#authenticate(req, context)` (stages 3–4 run before any method/shape distinction — route shape is not a
       pre-auth oracle, exactly like `weddings`) → `dispatchGuests(context, principal, req, segments,
       this.#guests)`.
-- [ ] `dispatchGuests` (3 segments only — no `:id` sub-path; the ref travels in the body, never the URL):
+- [x] `dispatchGuests` (3 segments only — no `:id` sub-path; the ref travels in the body, never the URL):
       `GET` → list, `POST` → register, `DELETE` → remove, else `methodNotAllowed()`.
-  - [ ] `handleGuestList` — `authorizer.authorizeManage` (forbidden ⇒ 403); `200 { guests }` (tenant partition).
-  - [ ] `handleGuestRegister` — authorize; `parseObjectBody`; `requireString` recipient_ref/wedding_id/guest_id;
+  - [x] `handleGuestList` — `authorizer.authorizeManage` (forbidden ⇒ 403); `200 { guests }` (tenant partition).
+  - [x] `handleGuestRegister` — authorize; `parseObjectBody`; `requireString` recipient_ref/wedding_id/guest_id;
         **verify the wedding exists in this tenant** (`deps.weddings.get(context, wedding_id)` — absent ⇒
         `RESP_NOT_FOUND`/404; the planner OWNS the workspace so disclosing in-tenant wedding existence is NOT an
         oracle — contrast login, which must NOT verify the couple's wedding_id); `registry.register` (stamps
         tenant_id from context, schema-validates, dup ⇒ 409); `201 { guest }`.
-  - [ ] `handleGuestRemove` — authorize; `parseObjectBody`; `requireString` recipient_ref; `registry.remove`;
+  - [x] `handleGuestRemove` — authorize; `parseObjectBody`; `requireString` recipient_ref; `registry.remove`;
         **idempotent** `200 { removed }`.
-- [ ] **Gate:** build + test + lint green.
+- [x] **Gate:** build + test + lint green.
 
 ## Step 5 — The CSRF guard (per-session token, distinct from the session token)
 

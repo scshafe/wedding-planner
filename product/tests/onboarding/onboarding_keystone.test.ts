@@ -2,6 +2,8 @@ import { ManualClock, SequentialIdGenerator, type Tenant } from '@wedding-planne
 import { describe, expect, it } from 'vitest'
 
 import {
+  GuestAuthorizer,
+  GuestRegistry,
   type ApiRequest,
   type ApiResponse,
   BillingLedger,
@@ -65,6 +67,7 @@ function makeWorld() {
     ),
     weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedW')),
     authorizer: new WeddingAuthorizer(),
+    guests: { registry: new GuestRegistry(store), weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedGW')), authorizer: new GuestAuthorizer() },
   })
 
   const provision = (slug: string): string => {

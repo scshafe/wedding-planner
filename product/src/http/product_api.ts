@@ -8,6 +8,7 @@ import {
   WeddingPlannerError,
 } from '@wedding-planner/shared'
 
+import type { GuestAuthorizer } from '../auth/guest_authorizer'
 import type { OperatorCredentialStore } from '../auth/operator_credential'
 import type { Principal } from '../auth/principal'
 import type { ProviderWebhookCredentialStore } from '../auth/provider_webhook_credential'
@@ -107,12 +108,29 @@ export interface MessagingHandlerDeps {
   readonly service: MessagingService
 }
 
+/**
+ * The narrow bag handed to the guest-management handlers (Phase 21) — planner-only CRUD over the guest
+ * registry. Carries the `registry` (the tenant-scoped segmentation store), the `weddings` repo (to verify a
+ * registration's wedding exists in-tenant — referential integrity for a trusted planner, NOT an oracle), and
+ * the planner-only `authorizer`. No resolver/sessionStore (structural handler purity).
+ */
+export interface GuestHandlerDeps {
+  readonly registry: GuestRegistry
+  readonly weddings: WeddingRepository
+  readonly authorizer: GuestAuthorizer
+}
+
 /** Everything the pipeline needs. resolver/sessionStore/operators live ONLY here, never in a handler. */
 export interface ProductApiDeps {
   readonly resolver: TenantContextResolver
   readonly sessionStore: SessionStore
   readonly weddings: WeddingRepository
   readonly authorizer: WeddingAuthorizer
+  /**
+   * Phase 21: the planner-facing guest-management surface (register/list/remove). REQUIRED (core planner
+   * functionality, unlike the optional `messaging` channel) — `composeProductSurface` always wires it.
+   */
+  readonly guests: GuestHandlerDeps
   /** Phase 15: the platform-operator credential store (the /admin auth tier) + the onboarding driver. */
   readonly operators: OperatorCredentialStore
   readonly onboarding: OnboardingService
@@ -147,6 +165,8 @@ export class ProductApi {
   readonly #messaging: MessagingHandlerDeps | undefined
   /** The narrow bag handed to every wedding dispatch handler — no resolver/sessionStore. */
   readonly #handlerDeps: WeddingHandlerDeps
+  /** The narrow bag handed to every guest-management handler (Phase 21) — no resolver/sessionStore. */
+  readonly #guests: GuestHandlerDeps
   /** The narrow bag handed to every /admin handler — no operator store. */
   readonly #adminDeps: AdminHandlerDeps
   /**
@@ -165,6 +185,7 @@ export class ProductApi {
     this.#webhookCredentials = deps.webhookCredentials
     this.#messaging = deps.messaging
     this.#handlerDeps = { weddings: deps.weddings, authorizer: deps.authorizer }
+    this.#guests = deps.guests
     this.#adminDeps = { onboarding: deps.onboarding }
     this.#strategyGuidance =
       deps.championStrategy === undefined ? undefined : deepFreeze(describeStrategy(deps.championStrategy))
@@ -217,6 +238,14 @@ export class ProductApi {
       if (segments.length >= 3 && segments[2] === 'weddings') {
         const principal = this.#authenticate(req, context)
         return dispatchWeddings(context, principal, req, segments, this.#handlerDeps)
+      }
+
+      // /t/:slug/guests[...] — PROTECTED planner-only management (Phase 21). Stages 3–4 run BEFORE any
+      // method/shape distinction (route shape is not a pre-auth oracle), exactly like `weddings`. The opaque
+      // recipient_ref travels in the BODY, never the URL, so there is no `:id` sub-path to encode.
+      if (segments.length === 3 && segments[2] === 'guests') {
+        const principal = this.#authenticate(req, context)
+        return dispatchGuests(context, principal, req, this.#guests)
       }
 
       // /t/:slug/messaging/... — the PROVIDER-WEBHOOK surface (Phase 19): an inbound guest message.
@@ -457,6 +486,52 @@ function handleUpdate(
   // (a non-enum value -> CONTRACT.VALIDATION_FAILED -> 400). Keep validation downstream of the cast.
   const saved = deps.weddings.update(context, updated)
   return { status: 200, body: { wedding: saved } }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Guest-management dispatch (Phase 21) — planner-only CRUD over the guest registry. The opaque recipient_ref
+// is carried in the BODY (never the URL), so the route is a single 3-segment `/t/:slug/guests` with the verb
+// selecting the op. Authorization is a CAPABILITY decision (planner allow / couple forbidden -> 403), checked
+// before any body parse — a couple is rejected before a malformed body could distinguish anything.
+// ---------------------------------------------------------------------------------------------------
+
+function dispatchGuests(
+  context: TenantContext,
+  principal: Principal,
+  req: ApiRequest,
+  deps: GuestHandlerDeps,
+): ApiResponse {
+  if (deps.authorizer.authorizeManage(principal) === 'forbidden') throw forbidden()
+  if (req.method === 'GET') return handleGuestList(context, deps)
+  if (req.method === 'POST') return handleGuestRegister(context, req, deps)
+  if (req.method === 'DELETE') return handleGuestRemove(context, req, deps)
+  throw methodNotAllowed()
+}
+
+function handleGuestList(context: TenantContext, deps: GuestHandlerDeps): ApiResponse {
+  return { status: 200, body: { guests: deps.registry.list(context) } }
+}
+
+function handleGuestRegister(context: TenantContext, req: ApiRequest, deps: GuestHandlerDeps): ApiResponse {
+  const body = parseObjectBody(req.rawBody)
+  const recipient_ref = requireString(body, 'recipient_ref')
+  const wedding_id = requireString(body, 'wedding_id')
+  const guest_id = requireString(body, 'guest_id')
+  // Referential integrity: the wedding must exist in THIS tenant. A planner owns the whole workspace, so
+  // disclosing in-tenant wedding existence is NOT an oracle (contrast login, which must not verify the
+  // couple's wedding_id). A foreign/absent id reads back the masked 404 of the scoped repo.
+  if (deps.weddings.get(context, wedding_id) === undefined) return RESP_NOT_FOUND
+  // register stamps tenant_id from the context, rejects a duplicate ref (409), and schema-validates.
+  const guest = deps.registry.register(context, { recipient_ref, wedding_id, guest_id })
+  return { status: 201, body: { guest } }
+}
+
+function handleGuestRemove(context: TenantContext, req: ApiRequest, deps: GuestHandlerDeps): ApiResponse {
+  const body = parseObjectBody(req.rawBody)
+  const recipient_ref = requireString(body, 'recipient_ref')
+  // Idempotent: an absent/foreign ref returns removed:false (no throw, no oracle for the trusted planner).
+  const removed = deps.registry.remove(context, recipient_ref)
+  return { status: 200, body: { removed } }
 }
 
 // ---------------------------------------------------------------------------------------------------

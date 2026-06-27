@@ -2,6 +2,7 @@ import { ManualClock, SequentialIdGenerator, type Tenant } from '@wedding-planne
 import { describe, expect, it } from 'vitest'
 
 import {
+  GuestAuthorizer,
   type ApiRequest,
   type ApiResponse,
   BillingLedger,
@@ -69,6 +70,7 @@ function makeWorld(): World {
     sessionStore: new SessionStore(new SequentialIdGenerator('seedS')),
     weddings,
     authorizer: new WeddingAuthorizer(),
+    guests: { registry: new GuestRegistry(store), weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedGW')), authorizer: new GuestAuthorizer() },
     operators: new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret']),
     onboarding: new OnboardingService(store, billing),
     webhookCredentials: new ProviderWebhookCredentialStore(new SequentialIdGenerator('seedWH'), [WH]),

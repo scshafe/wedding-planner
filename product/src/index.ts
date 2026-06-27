@@ -66,6 +66,8 @@ export {
   type AccessDecision,
   type ListScope,
 } from './auth/wedding_authorizer'
+// The guest-management authorization rule (Phase 21): planner-only capability over the guest registry.
+export { GuestAuthorizer } from './auth/guest_authorizer'
 
 // The platform trust tier (Phase 15): the Operator subject + its sole credential store. The brand symbol
 // and the internal mintOperator are deliberately NOT exported — the store is the sole mint.

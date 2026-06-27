@@ -5,6 +5,8 @@ import { ManualClock, SequentialIdGenerator, type Tenant } from '@wedding-planne
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  GuestAuthorizer,
+  GuestRegistry,
   createProductApiServer,
   BillingLedger,
   OnboardingService,
@@ -45,6 +47,7 @@ function makeApi(): ProductApi {
     onboarding: new OnboardingService(store, new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB'))),
     weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedW')),
     authorizer: new WeddingAuthorizer(),
+    guests: { registry: new GuestRegistry(store), weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedGW')), authorizer: new GuestAuthorizer() },
   })
 }
 

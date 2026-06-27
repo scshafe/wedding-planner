@@ -2,6 +2,7 @@ import { ManualClock, SequentialIdGenerator, type Tenant, type Wedding } from '@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  GuestAuthorizer,
   type ApiRequest,
   type ApiResponse,
   BillingLedger,
@@ -65,6 +66,7 @@ function makeWorld(): World {
     sessionStore: sessions,
     weddings,
     authorizer,
+    guests: { registry: new GuestRegistry(store), weddings, authorizer: new GuestAuthorizer() },
     operators,
     onboarding,
     webhookCredentials,
