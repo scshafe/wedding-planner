@@ -1,6 +1,7 @@
 # Phase 20 — Per-message money into the North Star: the comms strategy trades real money
 
-**Status:** Step 0 (design review) COMPLETE — architect + doddy + wolf all APPROVE-WITH-CHANGES; must-fixes folded below. Step 1 next.
+**Status:** COMPLETE ✅ — all steps ticked (726 tests green; architect + doddy + wolf APPROVE on design AND built
+code). ADR 0020, memory [[messaging-money-north-star]]. The comms strategy now trades real money in the objective.
 **Branch:** `build/phase-3-generalize-search` (the open review artifact for `main`; Phases 3–19 build on it; this continues it)
 **Predecessor:** Phase 19 (the guest inbound HTTP edge) — complete, 695 tests green.
 
@@ -243,7 +244,11 @@ any sane calibration. Containment:
   the existing keystones): a send-count-shaving (or channel-downgrading) candidate would beat the champion on the
   North Star ABSENT the gate, and is vetoed WITH it. GREEN.
 
-- [ ] **Step 5 — ADR + memory + handoff + final built-code review.** Final architect+doddy+wolf review on the
+- [x] **Step 5 — ADR + memory + handoff + final built-code review.** (DONE — 726 tests green. Final
+  architect+doddy+wolf review on the BUILT code: all APPROVE — doddy verified every Step-0 must-fix, wolf
+  confirmed the calibration (exact crossover 5.17¢, 18 = 3.48× headroom, 8.7% shrink), architect's two nits
+  applied (dropped a redundant cast; metric-trusts-the-count note). ADR 0020; memory `messaging-money-north-star.md`
+  (+ MEMORY.md index); handoff updated.) Final architect+doddy+wolf review on the
   BUILT code; apply findings. **ADR 0020.** **Memory** `messaging-money-north-star.md` (+ index in MEMORY.md):
   the load-bearing-via-tier-1 distinction, the deliberate search-corpus entry, the channel+count forge surface,
   the calibration rationale, the deferred product/shared cost unification. Update `.claude/handoff.local.md`.
@@ -259,4 +264,9 @@ any sane calibration. Containment:
   defends channel cost-variation via the integrity gate's channel field-diff, not the landscape.
 - **Per-couple `worst_messaging_cents`** (scenario-relative messaging budget) — Phase-1-style global anchor for
   now, like the other `NORMALIZATION_ANCHORS`.
+- **The SUM combiner clamp under a large overspend** (wolf, final review) — when a budget-bearing scenario with
+  a large `budget_variance_pct` (≥ 20% → budgetShare 1.0) enters the SEARCH corpus, `clamp01(budgetShare +
+  messagingShare)` saturates at 1.0 and FLATTENS the messaging gradient on that scenario. Not a Phase-20 defect
+  (no such scenario is in the search corpus today), but the thing to watch when budget-bearing scenarios join
+  the search set. Floor exact: the non-sep crossover is ~5.17¢; anchor 18 = 3.48× headroom.
 - **Planner-facing guest CRUD + browser-form CSRF**, **richer wedding-facts model** — carried from Phase 19.

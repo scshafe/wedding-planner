@@ -269,7 +269,10 @@ const MAX_MESSAGE_COST_CENTS = Math.max(...Object.values(MESSAGE_COST_CENTS))
  * money. Null when no messaging was claimed (honest-undefined like the rates — a no-messaging corpus keeps
  * money_cost null and byte-identical). The integrity gate reconciles the claimed channel + count, so the priced
  * stream is trustworthy; INDEPENDENTLY (doddy P1-1), an unknown channel here is charged the MAX channel cost,
- * never silently 0 — the metric must not reward a downgrade even though the gate already vetoes it.
+ * never silently 0 — the metric must not reward a downgrade even though the gate already vetoes it. The
+ * message_count is summed as-is (no positivity/integer re-check): the integrity gate is the authority on the
+ * count (an exact `===` field-diff against the trusted integer vetoes any shaved/negative/float value), so the
+ * metric deliberately trusts it — a malformed count is a veto upstream, never a silent cost-shave here.
  */
 export const messagingMoneyTotalCents: MetricFunction = (events) => {
   const claims = events.filter((event) => event.event_name === EVENT_NAMES.guest_messaging_metered)

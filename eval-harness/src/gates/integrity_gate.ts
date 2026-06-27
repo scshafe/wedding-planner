@@ -1,4 +1,4 @@
-import { type Channel, type EventEnvelope, isChannel } from '@wedding-planner/shared'
+import { type EventEnvelope, isChannel } from '@wedding-planner/shared'
 import { COUPLE_SESSION_REASONS, type CoupleSessionReason } from '@wedding-planner/telemetry'
 
 import {
@@ -889,8 +889,9 @@ function detectMessagingSpendDivergences(
     divergences.push(
       ...fieldDivergences('messaging_spend', guestId, [
         {
+          // channelRaw is already narrowed to Channel by the isChannel guard above (no cast needed).
           field: 'channel',
-          claimed: channelRaw as Channel,
+          claimed: channelRaw,
           trusted: trusted.channel,
           skipWhenClaimAbsent: false,
         },
