@@ -5,6 +5,7 @@ import type { ApiRequest } from '../http/api_message'
 import { splitPath } from '../http/path'
 import type { ProductApi } from '../http/product_api'
 import type { StrategyGuidance } from '../strategy/strategy_guidance'
+import { WEDDING_LOGISTICS_FIELDS } from '../wedding/wedding_repository'
 import { normalizeSlugForRoute } from './html'
 import {
   ERROR_500,
@@ -287,8 +288,10 @@ export class ProductWebUi {
     const form = parseForm(req.rawBody)
     if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
     const weddingId = form.get('wedding_id') ?? ''
+    // clearable: an empty optional input is sent as '' (the PUT clear-to-absent sentinel), so a planner can
+    // blank a logistics field from the browser (Phase 25). Create omits empties (the default).
     const apiRes = this.#api.handle(
-      bearerJson('PUT', `/t/${slug}/weddings/${encodeURIComponent(weddingId)}`, token, weddingBodyFromForm(form)),
+      bearerJson('PUT', `/t/${slug}/weddings/${encodeURIComponent(weddingId)}`, token, weddingBodyFromForm(form, { clearable: true })),
     )
     if (apiRes.status === 200) return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}`)
     return this.#detail(req, slug, weddingId, true)
@@ -428,25 +431,29 @@ function parseForm(rawBody: string | undefined): URLSearchParams {
   return new URLSearchParams(rawBody ?? '')
 }
 
-/** The OPTIONAL logistics fields a wedding form may carry (Phase 22 / 23). */
-const WEDDING_OPTIONAL_FIELDS = ['ceremony_time', 'venue_name', 'parking_info', 'dress_code'] as const
-
 /**
  * Build the JSON body for a wedding create/update from a form. The required name/date/status are always sent
- * (the form prefills them); each OPTIONAL logistics field is included ONLY when non-empty, so an empty input
- * is OMITTED — create leaves it unset and update PRESERVES the stored value (the Phase-22 server contract;
- * there is no clear-to-absent sentinel from the browser yet). Identity (tenant_id/wedding_id) is NEVER carried
- * in the body — the JSON pipeline stamps it from the route + context, so a smuggled key here is inert.
+ * (the form prefills them). The OPTIONAL logistics fields (the shared {@link WEDDING_LOGISTICS_FIELDS}) diverge
+ * on exactly ONE axis — whether an empty input is sent — captured by `clearable` (Phase 25):
+ *   - CREATE (`clearable:false`, the default): an empty optional is OMITTED, so create leaves it unset. A POST
+ *     has nothing to clear, and the JSON API rejects a literal optional `''` (so omitting is the only sane shape).
+ *   - UPDATE (`clearable:true`): every optional is ALWAYS sent — empty `''` reaches the PUT clear-to-absent
+ *     sentinel (removes the field), a prefilled value PRESERVES, a new value SETS. This is what lets a planner
+ *     blank a wrong dress code from the browser.
+ * Only the FOUR optional fields are gated by `clearable`; the required fields stay always-sent (an empty
+ * required input still 400s downstream — it can never silently no-op). Identity (tenant_id/wedding_id) is NEVER
+ * carried in the body — the JSON pipeline stamps it from the route + context, so a smuggled key here is inert.
  */
-function weddingBodyFromForm(form: URLSearchParams): Record<string, string> {
+function weddingBodyFromForm(form: URLSearchParams, { clearable }: { clearable: boolean } = { clearable: false }): Record<string, string> {
   const body: Record<string, string> = {
     couple_display_name: form.get('couple_display_name') ?? '',
     event_date: form.get('event_date') ?? '',
     status: form.get('status') ?? '',
   }
-  for (const key of WEDDING_OPTIONAL_FIELDS) {
+  for (const key of WEDDING_LOGISTICS_FIELDS) {
     const value = form.get(key) ?? ''
-    if (value.length > 0) body[key] = value
+    // update sends '' (the PUT clear sentinel); create omits empty (an optional '' is malformed on POST).
+    if (clearable || value.length > 0) body[key] = value
   }
   return body
 }

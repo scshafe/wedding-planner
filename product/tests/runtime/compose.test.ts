@@ -244,5 +244,23 @@ describe('composeProductSurface — Phase 23 e2e: a browser-set logistic reaches
     const usage = messaging.usageView(tenantId)
     expect(usage.message_count).toBe(1)
     expect(usage.billed_total_cents).toBeGreaterThan(0)
+
+    // CLEARED (Phase 25): the planner blanks the dress code via the SAME edit form. The browser sends '' (the
+    // clear-to-absent sentinel), so the fact is removed and the SAME question ESCALATES again — no new send,
+    // the meter stays at 1. Proves the clear reaches the guest responder end-to-end through the front door.
+    const csrf2 = /name="_csrf" value="([^"]+)"/.exec(
+      (ui.handle({ method: 'GET', path: `/t/demo?wedding=${demo?.weddingId}`, headers: { cookie } }).body as string),
+    )?.[1] as string
+    const clearedRes = ui.handle(
+      form(
+        'POST',
+        '/t/demo/weddings/update',
+        { _csrf: csrf2, wedding_id: demo?.weddingId as string, couple_display_name: 'Alex & Sam', event_date: '2027-09-18', status: 'planning', dress_code: '' },
+        cookie,
+      ),
+    )
+    expect(clearedRes.status).toBe(303)
+    expect(api.handle(dressCodeInbound(ref, 'pmr_cleared')).status).toBe(202)
+    expect(messaging.usageView(tenantId).message_count).toBe(1) // escalated again -> no new metered reply
   })
 })

@@ -226,18 +226,44 @@ describe('wedding edit browser flow + CSRF', () => {
     expect(readWeddingJson(api, 'acme', own)?.venue_name).toBe('The Old Mill')
   })
 
-  it('an omitted optional field PRESERVES its stored value (no clear-to-absent from the browser)', () => {
+  it('blanking an optional field on the edit form CLEARS it to absent (Phase 25 clear-to-absent)', () => {
     const { ui, api } = makeWorld()
     const id = createWedding(api, 'acme', 'Alex & Sam')
     const cookie = loginCookie(ui, 'acme', 'planner')
     // First set a dress code...
     const csrf1 = csrfFrom(get(ui, `/t/acme?wedding=${id}`, cookie).body)
     postForm(ui, '/t/acme/weddings/update', { _csrf: csrf1, wedding_id: id, couple_display_name: 'Alex & Sam', event_date: '2029-05-05', status: 'planning', dress_code: 'Black tie' }, cookie)
-    // ...then submit again with the dress_code field BLANK; it must be preserved, not cleared.
+    expect(readWeddingJson(api, 'acme', id)?.dress_code).toBe('Black tie')
+    // ...then submit again with the dress_code field BLANK; the edit form sends '' (clearable), so it CLEARS.
     const csrf2 = csrfFrom(get(ui, `/t/acme?wedding=${id}`, cookie).body)
     const res = postForm(ui, '/t/acme/weddings/update', { _csrf: csrf2, wedding_id: id, couple_display_name: 'Alex & Sam', event_date: '2029-05-05', status: 'planning', dress_code: '' }, cookie)
     expect(res.status).toBe(303)
-    expect(readWeddingJson(api, 'acme', id)?.dress_code).toBe('Black tie')
+    expect(readWeddingJson(api, 'acme', id)).not.toHaveProperty('dress_code')
+    // The detail page no longer renders the dress code.
+    expect(get(ui, `/t/acme?wedding=${id}`, cookie).body).not.toContain('Black tie')
+  })
+
+  it('resending an optional field at its prefilled value PRESERVES it (clear is opt-in via a blank input)', () => {
+    const { ui, api } = makeWorld()
+    const id = createWedding(api, 'acme', 'Alex & Sam')
+    const cookie = loginCookie(ui, 'acme', 'planner')
+    const csrf1 = csrfFrom(get(ui, `/t/acme?wedding=${id}`, cookie).body)
+    postForm(ui, '/t/acme/weddings/update', { _csrf: csrf1, wedding_id: id, couple_display_name: 'Alex & Sam', event_date: '2029-05-05', status: 'planning', venue_name: 'The Old Mill' }, cookie)
+    // Edit an UNRELATED field, resending venue_name at its existing value (as the prefilled form would).
+    const csrf2 = csrfFrom(get(ui, `/t/acme?wedding=${id}`, cookie).body)
+    postForm(ui, '/t/acme/weddings/update', { _csrf: csrf2, wedding_id: id, couple_display_name: 'Alex & Sam', event_date: '2029-05-05', status: 'active', venue_name: 'The Old Mill' }, cookie)
+    expect(readWeddingJson(api, 'acme', id)?.venue_name).toBe('The Old Mill')
+    expect(readWeddingJson(api, 'acme', id)?.status).toBe('active')
+  })
+
+  it('a blank optional on the CREATE form is just unset (create omits empties — no "" clear sentinel on POST)', () => {
+    const { ui } = makeWorld()
+    const cookie = loginCookie(ui, 'acme', 'planner')
+    const csrf = csrfFrom(get(ui, '/t/acme', cookie).body)
+    const res = postForm(ui, '/t/acme/weddings/create', { _csrf: csrf, couple_display_name: 'Blank Optionals', event_date: '2029-09-12', status: 'planning', dress_code: '', venue_name: '' }, cookie)
+    expect(res.status).toBe(303) // created, not a 400 — the empty optionals are omitted, not sent as ''
+    const listed = get(ui, '/t/acme', cookie).body
+    expect(listed).toContain('Blank Optionals')
   })
 
   it('a couple updating a NON-OWNED wedding is masked (404) and mutates nothing', () => {

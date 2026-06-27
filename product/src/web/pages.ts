@@ -308,7 +308,7 @@ export function renderDetail(
       ${csrfField(csrfToken)}
       <input type="hidden" name="wedding_id" value="${wedding.wedding_id}">
       ${weddingFormFields(wedding)}
-      <p class="note">Leave an optional field blank to keep its current value (blanking to remove is not yet supported).</p>
+      <p class="note">Edit any field and save. Blank an optional logistics field (ceremony, venue, parking, dress code) to clear it — guests will then be told to ask, rather than getting the old answer.</p>
       <p><button type="submit">Save changes</button></p>
     </form>
   </div>`,
