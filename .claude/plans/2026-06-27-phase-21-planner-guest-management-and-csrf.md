@@ -190,18 +190,18 @@ like every other product aggregate (`tenant`/`wedding`/`billing_event`/`inbound_
 
 ## Step 5 — The CSRF guard (per-session token, distinct from the session token)
 
-- [ ] `product/src/auth/csrf_guard.ts` — the narrow `CsrfGuard` interface (`issueCsrf(sessionToken): string |
+- [x] `product/src/auth/csrf_guard.ts` — the narrow `CsrfGuard` interface (`issueCsrf(sessionToken): string |
       undefined`, `verifyCsrf(sessionToken, candidate): boolean`) + a pure, **length-safe** `constantTimeEqual(a,
       b)` (no early `length !==` return; reject a non-string candidate before compare). Doc the invariants: the
       token is per-session, **distinct from the session token**, verified constant-time, **fail-closed** (absent
       session OR empty/non-string candidate ⇒ false), and **the `sessionToken` passed to `verifyCsrf` MUST be the
       identical token forwarded as the internal Bearer** (no verify-A-execute-as-B).
-- [ ] `SessionStore` implements `CsrfGuard`: on `login`, mint a **second** opaque id (`ids.next('csrf')`), store
+- [x] `SessionStore` implements `CsrfGuard`: on `login`, mint a **second** opaque id (`ids.next('csrf')`), store
       `#csrfByToken: Map<sessionToken, csrfToken>`, add `csrf_token` to the returned `Session`. `issueCsrf` looks
       it up (undefined ⇒ no session); `verifyCsrf` does the constant-time compare (false for an absent session or
       candidate). The session token NEVER appears in `#csrfByToken` values (distinctness invariant — assert it in
       a test).
-- [ ] **Gate:** build + test + lint green; existing session/login tests green.
+- [x] **Gate:** build + test + lint green; existing session/login tests green.
 
 ## Step 6 — Web UI: the guest-management page + CSRF on every browser mutation
 

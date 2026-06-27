@@ -61,6 +61,9 @@ export { OnboardingService, type ProvisionTenantInput } from './onboarding/onboa
 // and the internal mintPrincipal are deliberately NOT exported — the SessionStore is the sole mint.
 export { type Principal, type PrincipalRole, assertMintedPrincipal } from './auth/principal'
 export { SessionStore, type LoginInput, type Session } from './auth/session_store'
+// The browser-form anti-forgery boundary (Phase 21): SessionStore implements CsrfGuard (per-session token,
+// distinct from the session token). The web layer is the sole consumer; the JSON API is not CSRF-reachable.
+export { type CsrfGuard, constantTimeEqual } from './auth/csrf_guard'
 export {
   WeddingAuthorizer,
   type AccessDecision,

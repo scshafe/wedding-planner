@@ -2,6 +2,7 @@ import type { IdGenerator } from '@wedding-planner/shared'
 
 import { ProductError } from '../product_error'
 import type { TenantContext } from '../tenant/tenant_context'
+import { constantTimeEqual, type CsrfGuard } from './csrf_guard'
 import { mintPrincipal, type Principal, type PrincipalRole } from './principal'
 
 /**
@@ -37,11 +38,21 @@ export interface LoginInput {
 export interface Session {
   readonly token: string
   readonly principal: Principal
+  /**
+   * The per-session CSRF token (Phase 21) — DISTINCT from `token`, minted alongside it. The browser web layer
+   * embeds this in forms and verifies it before any cookie-authenticated mutation; the JSON API never uses it.
+   */
+  readonly csrf_token: string
 }
 
-export class SessionStore {
+export class SessionStore implements CsrfGuard {
   /** token -> principal. `#`-private: never enumerates, never serializes. */
   readonly #byToken = new Map<string, Principal>()
+  /**
+   * session token -> its per-session CSRF token (Phase 21). A SEPARATE id from the session token (never equal
+   * to it — distinctness keeps the session bearer out of the page DOM, preserving HttpOnly). `#`-private.
+   */
+  readonly #csrfByToken = new Map<string, string>()
 
   constructor(private readonly ids: IdGenerator) {}
 
@@ -67,13 +78,33 @@ export class SessionStore {
       principal_id: this.ids.next('principal'),
     })
     const token = this.ids.next('session')
+    // A SEPARATE id (never the session token) — the per-session CSRF secret bound to this session.
+    const csrf_token = this.ids.next('csrf')
     this.#byToken.set(token, principal)
-    return { token, principal }
+    this.#csrfByToken.set(token, csrf_token)
+    return { token, principal, csrf_token }
   }
 
   /** Exchange a presented token for its principal, or `undefined` for an unknown/absent token (fail closed). */
   resolve(token: string | undefined): Principal | undefined {
     if (token === undefined) return undefined
     return this.#byToken.get(token)
+  }
+
+  /** {@link CsrfGuard.issueCsrf} — the CSRF token bound to this session, or undefined when unknown/absent. */
+  issueCsrf(sessionToken: string | undefined): string | undefined {
+    if (sessionToken === undefined) return undefined
+    return this.#csrfByToken.get(sessionToken)
+  }
+
+  /**
+   * {@link CsrfGuard.verifyCsrf} — fail-closed (absent session or empty/absent candidate ⇒ false) and
+   * constant-time against the stored token. The caller MUST forward this same `sessionToken` as the Bearer.
+   */
+  verifyCsrf(sessionToken: string | undefined, candidate: string | undefined): boolean {
+    if (sessionToken === undefined || candidate === undefined || candidate.length === 0) return false
+    const stored = this.#csrfByToken.get(sessionToken)
+    if (stored === undefined) return false
+    return constantTimeEqual(stored, candidate)
   }
 }
