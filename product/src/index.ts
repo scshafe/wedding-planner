@@ -91,13 +91,15 @@ export {
   ProductApi,
   type ProductApiDeps,
   type WeddingHandlerDeps,
+  type GuestHandlerDeps,
   type AdminHandlerDeps,
   type MessagingHandlerDeps,
 } from './http/product_api'
 export { createProductApiServer, MAX_BODY_BYTES } from './http/node_server'
 
 // The server-rendered web UI (Phase 14): the themed white-label HTML front door over the JSON pipeline.
-// It holds only { api, themes } — its sole data path is api.handle(), so it inherits both boundaries.
+// It holds { api, themes, csrf } — its sole DATA path is api.handle() (themes/csrf read no tenant data), so
+// it inherits both boundaries; the Phase-21 csrf guard adds the browser-form anti-forgery check.
 export type { HttpResult } from './web/web_response'
 export { ThemeResolver } from './web/theme_resolver'
 export { ProductWebUi, type ProductWebUiDeps } from './web/product_web_ui'

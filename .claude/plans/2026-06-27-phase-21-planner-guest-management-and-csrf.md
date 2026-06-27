@@ -1,6 +1,6 @@
 # Phase 21 — Planner guest-management CRUD + the first browser-form CSRF
 
-**Status:** IN PROGRESS — Steps 0–8 complete (749 tests green); Step 9 (docs/memory/handoff) next.
+**Status:** COMPLETE — all steps ticked (749 tests green; doddy+architect APPROVE design AND built code). ADR 0021, memory [[planner-guest-management-and-csrf]].
 **Branch:** `build/phase-3-generalize-search` (the open review artifact for `main`; Phases 3–20 build on it; this continues it)
 **Predecessor:** Phase 20 (per-message money in the North Star) — complete, 726 tests green.
 
@@ -264,17 +264,17 @@ like every other product aggregate (`tenant`/`wedding`/`billing_event`/`inbound_
 
 ## Step 9 — Docs, memory, handoff
 
-- [ ] **ADR 0021** — planner guest-management + the browser-form CSRF trust surface (the threat model above; the
+- [x] **ADR 0021** — planner guest-management + the browser-form CSRF trust surface (the threat model above; the
       web-layer seam; the distinct-token rationale; login exemption; the routing split; the 18th schema).
-- [ ] **Memory** `.claude/memory/planner-guest-management-and-csrf.md` (+ index it in `MEMORY.md`): the
+- [x] **Memory** `.claude/memory/planner-guest-management-and-csrf.md` (+ index it in `MEMORY.md`): the
       load-bearing invariants — CSRF at the web layer only / JSON API not CSRF-reachable / token distinct from
       session token / constant-time / no-oracle on failure / login exemption / the wedding-existence check is not
       an oracle for a planner (but is for login) / GuestRegistry CRUD inherits isolation. Link
       [[guest-messaging-inbound-edge]], [[guest-messaging-channel-is-a-roadmap-goal]], [[http-edge-and-intra-tenant-auth]].
-- [ ] **Built-code adversarial re-review** (doddy + architect lenses) on the diff; apply every must-fix.
-- [ ] **Handoff** `.claude/handoff.local.md`: Phase 21 complete; next levers (richer wedding-facts model;
+- [x] **Built-code adversarial re-review** (doddy + architect lenses) on the diff; apply every must-fix.
+- [x] **Handoff** `.claude/handoff.local.md`: Phase 21 complete; next levers (richer wedding-facts model;
       unify `price_book` onto the shared cost basis; couples managing their own guests; period-batched billing).
-- [ ] **Gate:** build + test + lint green; commit; mark this plan COMPLETE.
+- [x] **Gate:** build + test + lint green; commit; mark this plan COMPLETE.
 
 ## Out of scope (deferred — recorded, not faked)
 
