@@ -13,9 +13,9 @@ import { buildBootLog, resolveServerConfig } from './server_config'
 /**
  * @canonical product_server_main -- the deployable entrypoint: the impure shell of the product surface.
  *
- * This is the ONE place ambient reality enters — `process.env`, the wall clock, a crypto-random operator
- * token, the listening socket, and OS signals. Everything below `composeProductSurface` stays injected,
- * deterministic, and testable. The image runs this file directly via `tsx` (see the Dockerfile / `npm run
+ * This is the ONE place ambient reality enters — `process.env`, the wall clock, crypto-random platform
+ * credential tokens (operator + provider-webhook), the listening socket, and OS signals. Everything below
+ * `composeProductSurface` stays injected, deterministic, and testable. The image runs this file directly via `tsx` (see the Dockerfile / `npm run
  * serve`); the build emits no JS and the workspace path aliases resolve through tsconfig.
  *
  * Boot is fail-closed: a bad/weak/absent operator credential (per the policy in server_config.ts) aborts
@@ -49,6 +49,7 @@ function main(): void {
     clock: new SystemClock(),
     ids: new RandomIdGenerator(),
     operatorToken: config.operatorToken,
+    providerWebhookToken: config.providerWebhookToken,
     seedDemo: config.seedDemo,
     demoSlug: config.demoSlug,
     championStrategy: champion,

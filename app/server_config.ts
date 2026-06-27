@@ -8,29 +8,40 @@ import type { DemoSeed } from '@wedding-planner/product'
  * the real environment. `resolveServerConfig` takes the env map and a token generator as ARGUMENTS, so a test
  * drives every branch deterministically.
  *
- * The operator-token policy (the doddy trust seam — a credential is injected, never baked, never weak):
- *   - env-provided token: enforced to a >= MIN_OPERATOR_TOKEN_LENGTH floor; below it -> FAIL CLOSED (throw,
- *     the caller exits non-zero). The OperatorCredentialStore only rejects empty, so the floor lives here.
+ * The credential-token policy (the doddy trust seam — a credential is injected, never baked, never weak). The
+ * SAME policy governs every platform credential (the operator token and, Phase 19, the provider-webhook token):
+ *   - env-provided token: enforced to a >= MIN_CREDENTIAL_TOKEN_LENGTH floor; below it -> FAIL CLOSED (throw,
+ *     the caller exits non-zero). The credential stores only reject empty, so the floor lives here.
  *   - unset + seedDemo (the offline demo default): generate a fresh random token and mark it `generated`, so
  *     the boot log prints it exactly once (an ephemeral, regenerated-each-boot demo credential).
- *   - unset + NOT seedDemo (a "real" build): FAIL CLOSED — never silently auto-mint an admin credential into
- *     a production log. The human must inject WP_OPERATOR_TOKEN.
+ *   - unset + NOT seedDemo (a "real" build): FAIL CLOSED — never silently auto-mint a platform credential into
+ *     a production log. The human must inject the token.
  *
  * related: server.ts (the impure main that injects process.env + a crypto generator), compose.ts.
  */
 
-/** The floor for an operator credential token. Below this, boot fails closed. */
-export const MIN_OPERATOR_TOKEN_LENGTH = 16
+/** The floor for a platform credential token (operator + provider-webhook). Below this, boot fails closed. */
+export const MIN_CREDENTIAL_TOKEN_LENGTH = 16
 
-/** The resolved, validated server configuration. `operatorToken` is always present and policy-checked. */
+/** @deprecated alias retained for callers; identical to {@link MIN_CREDENTIAL_TOKEN_LENGTH}. */
+export const MIN_OPERATOR_TOKEN_LENGTH = MIN_CREDENTIAL_TOKEN_LENGTH
+
+/** Where a resolved credential token came from — gates whether the boot log may print its value. */
+export type TokenSource = 'env-provided' | 'generated'
+
+/** The resolved, validated server configuration. Both credential tokens are present and policy-checked. */
 export interface ServerConfig {
   readonly port: number
   readonly host: string
   readonly seedDemo: boolean
   readonly demoSlug: string
   readonly operatorToken: string
-  /** Provenance, so the boot log knows whether it may print the token (only when it generated it). */
-  readonly tokenSource: 'env-provided' | 'generated'
+  /** Provenance, so the boot log knows whether it may print the operator token (only when generated). */
+  readonly tokenSource: TokenSource
+  /** Phase 19: the provider-webhook secret (the inbound-messaging tier), under the SAME credential policy. */
+  readonly providerWebhookToken: string
+  /** Provenance for the webhook token (only a generated demo token may be printed). */
+  readonly webhookTokenSource: TokenSource
 }
 
 /** A readonly view of the process environment (just the subset the entrypoint reads). */
@@ -46,27 +57,58 @@ export function resolveServerConfig(env: Env, generateToken: () => string): Serv
   const seedDemo = parseBool(env.WP_SEED_DEMO, true)
   const demoSlug = nonEmpty(env.WP_DEMO_SLUG) ?? 'demo'
 
-  const provided = nonEmpty(env.WP_OPERATOR_TOKEN)
-  let operatorToken: string
-  let tokenSource: ServerConfig['tokenSource']
+  const operator = resolveCredentialToken({
+    provided: nonEmpty(env.WP_OPERATOR_TOKEN),
+    envVar: 'WP_OPERATOR_TOKEN',
+    label: 'operator',
+    seedDemo,
+    generateToken,
+  })
+  const webhook = resolveCredentialToken({
+    provided: nonEmpty(env.WP_PROVIDER_WEBHOOK_TOKEN),
+    envVar: 'WP_PROVIDER_WEBHOOK_TOKEN',
+    label: 'provider-webhook',
+    seedDemo,
+    generateToken,
+  })
+
+  return {
+    port,
+    host,
+    seedDemo,
+    demoSlug,
+    operatorToken: operator.token,
+    tokenSource: operator.source,
+    providerWebhookToken: webhook.token,
+    webhookTokenSource: webhook.source,
+  }
+}
+
+/**
+ * Resolve one platform credential token under the single shared policy (see the file docstring): env-provided
+ * is enforced to the length floor; unset+demo is generated (printable once); unset+non-demo fails closed. One
+ * implementation governs both the operator and the provider-webhook credential so they cannot drift.
+ */
+function resolveCredentialToken(input: {
+  readonly provided: string | undefined
+  readonly envVar: string
+  readonly label: string
+  readonly seedDemo: boolean
+  readonly generateToken: () => string
+}): { token: string; source: TokenSource } {
+  const { provided, envVar, label, seedDemo, generateToken } = input
   if (provided !== undefined) {
-    if (provided.length < MIN_OPERATOR_TOKEN_LENGTH) {
+    if (provided.length < MIN_CREDENTIAL_TOKEN_LENGTH) {
       throw new Error(
-        `WP_OPERATOR_TOKEN must be at least ${MIN_OPERATOR_TOKEN_LENGTH} characters; refusing to boot with a weak operator credential.`,
+        `${envVar} must be at least ${MIN_CREDENTIAL_TOKEN_LENGTH} characters; refusing to boot with a weak ${label} credential.`,
       )
     }
-    operatorToken = provided
-    tokenSource = 'env-provided'
-  } else if (seedDemo) {
-    operatorToken = generateToken()
-    tokenSource = 'generated'
-  } else {
-    throw new Error(
-      'WP_OPERATOR_TOKEN is required when WP_SEED_DEMO is false (a non-demo build must not auto-mint an admin credential). Set WP_OPERATOR_TOKEN and retry.',
-    )
+    return { token: provided, source: 'env-provided' }
   }
-
-  return { port, host, seedDemo, demoSlug, operatorToken, tokenSource }
+  if (seedDemo) return { token: generateToken(), source: 'generated' }
+  throw new Error(
+    `${envVar} is required when WP_SEED_DEMO is false (a non-demo build must not auto-mint a ${label} credential). Set ${envVar} and retry.`,
+  )
 }
 
 /**
@@ -82,6 +124,11 @@ export function buildBootLog(config: ServerConfig, demo: DemoSeed | undefined): 
     parts.push(`operator token (generated, offline-demo, regenerated each boot): ${config.operatorToken}`)
   } else {
     parts.push('operator token: env-provided')
+  }
+  if (config.webhookTokenSource === 'generated') {
+    parts.push(`provider webhook token (generated, offline-demo, regenerated each boot): ${config.providerWebhookToken}`)
+  } else {
+    parts.push('provider webhook token: env-provided')
   }
   parts.push('strategy: published')
   return parts.join(' | ')

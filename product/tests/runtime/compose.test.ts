@@ -23,6 +23,7 @@ function baseConfig(overrides: Partial<ComposeProductSurfaceConfig> = {}): Compo
     clock: new ManualClock('2027-05-01T00:00:00.000Z'),
     ids: new SequentialIdGenerator('compose'),
     operatorToken: OP,
+    providerWebhookToken: 'compose-webhook-token-0123456789',
     ...overrides,
   }
 }

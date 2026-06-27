@@ -11,7 +11,13 @@ import { buildBootLog, type Env, MIN_OPERATOR_TOKEN_LENGTH, resolveServerConfig 
  */
 
 const STRONG = 'a-strong-operator-token-0123456789'
+const STRONG_WEBHOOK = 'a-strong-webhook-token-0123456789abc'
 const constGen = (value: string) => (): string => value
+/** A generator that returns distinct values per call (the entrypoint now mints TWO credentials per boot). */
+const seqGen = (...values: string[]): (() => string) => {
+  let i = 0
+  return () => values[i++] ?? `gen-${i}`
+}
 
 describe('resolveServerConfig — the operator-token policy (fail-closed)', () => {
   it('accepts an env-provided token at/above the length floor and marks it env-provided', () => {
@@ -41,6 +47,41 @@ describe('resolveServerConfig — the operator-token policy (fail-closed)', () =
   it('an empty/whitespace WP_OPERATOR_TOKEN is treated as unset (generated under demo)', () => {
     const config = resolveServerConfig({ WP_OPERATOR_TOKEN: '   ' }, constGen('GEN-TOKEN-abcdefghij'))
     expect(config.tokenSource).toBe('generated')
+  })
+})
+
+describe('resolveServerConfig — the provider-webhook-token policy (Phase 19, same fail-closed policy)', () => {
+  it('accepts an env-provided webhook token at/above the floor and marks it env-provided', () => {
+    const env: Env = { WP_OPERATOR_TOKEN: STRONG, WP_PROVIDER_WEBHOOK_TOKEN: STRONG_WEBHOOK }
+    const config = resolveServerConfig(env, constGen('SHOULD-NOT-BE-USED'))
+    expect(config.providerWebhookToken).toBe(STRONG_WEBHOOK)
+    expect(config.webhookTokenSource).toBe('env-provided')
+  })
+
+  it('FAILS CLOSED on a provided webhook token below the length floor', () => {
+    const env: Env = { WP_OPERATOR_TOKEN: STRONG, WP_PROVIDER_WEBHOOK_TOKEN: 'short' }
+    expect(() => resolveServerConfig(env, constGen('gen'))).toThrow(/WP_PROVIDER_WEBHOOK_TOKEN must be at least 16/)
+  })
+
+  it('generates a webhook token when unset AND seedDemo (the offline-demo default)', () => {
+    const config = resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG }, constGen('GEN-WH-TOKEN-abcdef'))
+    expect(config.providerWebhookToken).toBe('GEN-WH-TOKEN-abcdef')
+    expect(config.webhookTokenSource).toBe('generated')
+  })
+
+  it('FAILS CLOSED when the webhook token is unset AND seedDemo is false', () => {
+    const env: Env = { WP_OPERATOR_TOKEN: STRONG, WP_SEED_DEMO: 'false' }
+    expect(() => resolveServerConfig(env, constGen('gen'))).toThrow(/WP_PROVIDER_WEBHOOK_TOKEN is required/)
+  })
+
+  it('boot log NEVER echoes an env-provided webhook token, and prints the provenance', () => {
+    const config = resolveServerConfig(
+      { WP_OPERATOR_TOKEN: STRONG, WP_PROVIDER_WEBHOOK_TOKEN: STRONG_WEBHOOK },
+      constGen('g'),
+    )
+    const line = buildBootLog(config, undefined)
+    expect(line).not.toContain(STRONG_WEBHOOK)
+    expect(line).toContain('provider webhook token: env-provided')
   })
 })
 
@@ -74,11 +115,11 @@ describe('buildBootLog — the disclosure allow-list', () => {
     expect(line).toContain('operator token: env-provided')
   })
 
-  it('prints a generated token exactly once', () => {
-    const config = resolveServerConfig({}, constGen('GENERATED-DEMO-TOKEN-xyz'))
+  it('prints each generated token exactly once', () => {
+    const config = resolveServerConfig({}, seqGen('GENERATED-OP-TOKEN-xyz', 'GENERATED-WH-TOKEN-xyz'))
     const line = buildBootLog(config, demo)
-    const occurrences = line.split('GENERATED-DEMO-TOKEN-xyz').length - 1
-    expect(occurrences).toBe(1)
+    expect(line.split('GENERATED-OP-TOKEN-xyz').length - 1).toBe(1)
+    expect(line.split('GENERATED-WH-TOKEN-xyz').length - 1).toBe(1)
   })
 
   it('never leaks an internal tenant_id / wedding_id', () => {
@@ -90,7 +131,10 @@ describe('buildBootLog — the disclosure allow-list', () => {
   })
 
   it('omits the demo line when there is no demo seed', () => {
-    const config = resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG, WP_SEED_DEMO: 'false' }, constGen('g'))
+    const config = resolveServerConfig(
+      { WP_OPERATOR_TOKEN: STRONG, WP_PROVIDER_WEBHOOK_TOKEN: STRONG_WEBHOOK, WP_SEED_DEMO: 'false' },
+      constGen('g'),
+    )
     expect(buildBootLog(config, undefined)).not.toContain('demo tenant')
   })
 

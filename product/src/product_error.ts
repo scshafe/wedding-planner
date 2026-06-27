@@ -26,6 +26,10 @@ import { WeddingPlannerError } from '@wedding-planner/shared'
  *                                     (untrusted-edge invariant; fail closed before metering — Phase 18)
  *   - PRODUCT.MARGIN_VIOLATION        a tenant message price did not strictly exceed the provider COGS
  *                                     (we never knowingly sell messaging at a loss; fail closed — Phase 18)
+ *   - PRODUCT.NO_WEBHOOK_CREDENTIAL   an inbound webhook carried no / an unknown provider token (Phase 19;
+ *                                     → constant 401, the fourth token namespace, peer of NO_OPERATOR)
+ *   - PRODUCT.FORGED_WEBHOOK_PROVIDER a credential reached a check without the store's brand (Phase 19)
+ *   - PRODUCT.DUPLICATE_WEBHOOK_TOKEN two seeded provider webhook tokens collided (Phase 19)
  *
  * The read path deliberately raises NOTHING for a not-found / cross-tenant id — it returns a
  * value-level `undefined` so a foreign id is indistinguishable from a missing one (no existence

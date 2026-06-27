@@ -71,6 +71,15 @@ export {
 // and the internal mintOperator are deliberately NOT exported — the store is the sole mint.
 export { type Operator, OperatorCredentialStore, assertMintedOperator } from './auth/operator_credential'
 
+// The provider-webhook trust tier (Phase 19): the FOURTH token namespace, authenticating the server-to-server
+// inbound messaging webhook. Mirrors the Operator tier (phantom brand + WeakSet + sole-mint store); the brand
+// symbol and the internal mint are deliberately NOT exported.
+export {
+  type ProviderWebhookCredential,
+  ProviderWebhookCredentialStore,
+  assertMintedProviderWebhook,
+} from './auth/provider_webhook_credential'
+
 // The HTTP request edge (transport-agnostic). The Node socket adapter lands in Step 4.
 export type { ApiRequest, ApiResponse } from './http/api_message'
 export {

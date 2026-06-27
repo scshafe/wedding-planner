@@ -7,6 +7,7 @@ import {
   BillingLedger,
   OnboardingService,
   OperatorCredentialStore,
+  ProviderWebhookCredentialStore,
   ProductApi,
   SessionStore,
   TenantContextResolver,
@@ -49,11 +50,20 @@ function makeWorld(): World {
   )
   const authorizer = new WeddingAuthorizer()
   const operators = new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret'])
+  const webhookCredentials = new ProviderWebhookCredentialStore(new SequentialIdGenerator('seedW'), ['wh-secret'])
   const onboarding = new OnboardingService(
     store,
     new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB')),
   )
-  const api = new ProductApi({ resolver, sessionStore: sessions, weddings, authorizer, operators, onboarding })
+  const api = new ProductApi({
+    resolver,
+    sessionStore: sessions,
+    weddings,
+    authorizer,
+    operators,
+    onboarding,
+    webhookCredentials,
+  })
   return { api, sessions, weddings, resolver }
 }
 
@@ -239,6 +249,48 @@ describe('product_api — endpoints', () => {
 
     it('billing on an unknown tenant id -> 404 (consistent with the other actions, no empty-200)', () => {
       expect(w.api.handle(req('GET', '/admin/tenants/tnt_missing/billing', { token: OP })).status).toBe(404)
+    })
+  })
+
+  // Phase 19 Step 1 — the provider-webhook inbound surface (skeleton). Auth tier + route precedence + the
+  // frozen uniform 202. Body validation / guest resolution / the metered reply land in later steps.
+  describe('the provider-webhook inbound edge', () => {
+    const WH = 'wh-secret'
+
+    it('an authenticated POST -> the frozen 202 constant (uniform acknowledgement)', () => {
+      const res = w.api.handle(req('POST', '/t/alpha/messaging/inbound', { token: WH, body: { any: 'thing' } }))
+      expect(res).toEqual({ status: 202, body: { status: 'accepted' } })
+    })
+
+    it('no credential -> 401; a session/operator-namespace token -> identical 401 (no cross-namespace privilege)', () => {
+      expect(w.api.handle(req('POST', '/t/alpha/messaging/inbound', { body: {} })).status).toBe(401)
+      // A planner SESSION token is absent in the webhook namespace -> the same 401.
+      const planner = plannerToken(w)
+      expect(w.api.handle(req('POST', '/t/alpha/messaging/inbound', { token: planner, body: {} })).status).toBe(401)
+      // The OPERATOR token, likewise, is not a webhook credential.
+      expect(w.api.handle(req('POST', '/t/alpha/messaging/inbound', { token: 'op-secret', body: {} })).status).toBe(401)
+    })
+
+    it('route shape is NOT a pre-auth oracle: any /messaging path+method unauthenticated -> byte-identical 401', () => {
+      const a = w.api.handle(req('POST', '/t/alpha/messaging/inbound', {}))
+      const b = w.api.handle(req('GET', '/t/alpha/messaging/inbound', {}))
+      const c = w.api.handle(req('DELETE', '/t/alpha/messaging/totally-unknown', {}))
+      expect(a).toEqual({ status: 401, body: { error: 'unauthorized' } })
+      expect(b).toEqual(a)
+      expect(c).toEqual(a)
+    })
+
+    it('after auth, a non-POST method on inbound -> 405, and an unknown messaging sub-route -> 404', () => {
+      expect(w.api.handle(req('GET', '/t/alpha/messaging/inbound', { token: WH })).status).toBe(405)
+      expect(w.api.handle(req('POST', '/t/alpha/messaging/nope', { token: WH, body: {} })).status).toBe(404)
+    })
+
+    it('an unknown tenant -> 404 BEFORE webhook auth (tenant-resolve precedence; mask holds vs a secret-holder)', () => {
+      // Even WITH a valid webhook secret, a non-active/unknown slug is the byte-identical masked 404.
+      expect(w.api.handle(req('POST', '/t/ghost/messaging/inbound', { token: WH, body: {} }))).toEqual({
+        status: 404,
+        body: { error: 'not_found' },
+      })
     })
   })
 })

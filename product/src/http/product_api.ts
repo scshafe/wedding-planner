@@ -2,6 +2,7 @@ import { deepFreeze, type StrategyGenome, type Tenant, type Wedding, WeddingPlan
 
 import type { OperatorCredentialStore } from '../auth/operator_credential'
 import type { Principal } from '../auth/principal'
+import type { ProviderWebhookCredentialStore } from '../auth/provider_webhook_credential'
 import type { SessionStore } from '../auth/session_store'
 import type { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import type { PlanTier } from '../billing/price_book'
@@ -34,8 +35,9 @@ import { splitPath } from './path'
  * only the already-resolved `(context, principal, req)` plus a NARROW `WeddingHandlerDeps`
  * (`{ weddings, authorizer }`) — they have no resolver/sessionStore in scope, and a TenantContext can
  * only be minted by the resolver (Phase-12 brand), so a handler physically cannot mint a context for a
- * different tenant. Login and `/healthz` are the only routes that skip stages 3–4 (login IS the mint;
- * healthz is tenant-less).
+ * different tenant. Login, `/healthz`, and the provider-webhook inbound route are the routes that skip stages
+ * 3–4 (login IS the mint; healthz is tenant-less; the inbound webhook is a provider, not a session Principal —
+ * authenticated by the FOURTH token namespace, the provider-webhook credential, before any route shape).
  *
  * Every error becomes a CODE-FREE constant response (arch P1-C / doddy P1): the masked `404` is one
  * frozen constant shared by unknown-tenant, unknown-route, missing-resource, and couple-non-owned, so
@@ -55,6 +57,14 @@ const RESP_CONFLICT: ApiResponse = deepFreeze({ status: 409, body: { error: 'con
 const RESP_METHOD_NOT_ALLOWED: ApiResponse = deepFreeze({ status: 405, body: { error: 'method_not_allowed' } })
 const RESP_INTERNAL: ApiResponse = deepFreeze({ status: 500, body: { error: 'internal_error' } })
 const RESP_HEALTHZ: ApiResponse = deepFreeze({ status: 200, body: { status: 'ok' } })
+/**
+ * The inbound-webhook acknowledgement (Phase 19). ONE frozen, byte-identical 202 returned on EVERY
+ * post-validation branch of `/t/:slug/messaging/inbound` — registered or not, answered / escalated / refused
+ * / deduped — so the response never discloses guest-registry state (doddy P1: the 202 is uniform by
+ * construction). "Accepted" not "OK": the platform acknowledges receipt; any reply is an asynchronous,
+ * out-of-band send, never reflected in this response.
+ */
+const RESP_ACCEPTED: ApiResponse = deepFreeze({ status: 202, body: { status: 'accepted' } })
 
 /** The dependencies the dispatch handlers may touch — DELIBERATELY excludes resolver/sessionStore. */
 export interface WeddingHandlerDeps {
@@ -77,6 +87,12 @@ export interface ProductApiDeps {
   readonly operators: OperatorCredentialStore
   readonly onboarding: OnboardingService
   /**
+   * Phase 19: the provider-webhook credential store — the FOURTH token namespace, authenticating the
+   * server-to-server inbound webhook (`/t/:slug/messaging/inbound`). Lives ONLY in the pipeline (like
+   * `operators`/`sessionStore`); a webhook is not a Principal, so the inbound route skips stages 3–4.
+   */
+  readonly webhookCredentials: ProviderWebhookCredentialStore
+  /**
    * Phase 17: the loop's champion strategy genome (injected — a `@wedding-planner/shared` value; the surface
    * never imports the loop). Projected ONCE to guidance in the constructor; absent ⇒ the strategy route 404s.
    */
@@ -88,6 +104,8 @@ export class ProductApi {
   readonly #sessionStore: SessionStore
   /** The platform-operator credential store — lives ONLY in the pipeline (like #sessionStore). */
   readonly #operators: OperatorCredentialStore
+  /** The provider-webhook credential store (the inbound-webhook tier) — lives ONLY in the pipeline. */
+  readonly #webhookCredentials: ProviderWebhookCredentialStore
   /** The narrow bag handed to every wedding dispatch handler — no resolver/sessionStore. */
   readonly #handlerDeps: WeddingHandlerDeps
   /** The narrow bag handed to every /admin handler — no operator store. */
@@ -105,6 +123,7 @@ export class ProductApi {
     this.#resolver = deps.resolver
     this.#sessionStore = deps.sessionStore
     this.#operators = deps.operators
+    this.#webhookCredentials = deps.webhookCredentials
     this.#handlerDeps = { weddings: deps.weddings, authorizer: deps.authorizer }
     this.#adminDeps = { onboarding: deps.onboarding }
     this.#strategyGuidance =
@@ -160,6 +179,19 @@ export class ProductApi {
         return dispatchWeddings(context, principal, req, segments, this.#handlerDeps)
       }
 
+      // /t/:slug/messaging/... — the PROVIDER-WEBHOOK surface (Phase 19): an inbound guest message.
+      // This route is NOT a session Principal route — it SKIPS stages 3–4 (no #authenticate/bind) and is
+      // authenticated by the provider-webhook credential instead. Webhook auth is the LITERAL FIRST statement
+      // of the branch (before any method/sub-route/body distinction), exactly as operator auth is for /admin,
+      // so an unauthenticated prober gets a byte-identical 401 for ANY /messaging path+method — route shape is
+      // not a pre-auth oracle. (Tenant-resolve at line above runs first, by design: active-tenant existence is
+      // already public via theming, so its 404 mask is the established disclosure boundary for ALL tenant
+      // routes; the webhook caller still cannot probe absent-vs-suspended.)
+      if (segments.length >= 3 && segments[2] === 'messaging') {
+        this.#authenticateWebhook(req)
+        return this.#dispatchMessaging(req, segments)
+      }
+
       // /t/:slug/strategy — PROTECTED read-only (Phase 17): the loop's champion strategy as planner guidance.
       // Stages 3–4 (authenticate + bind) run BEFORE the method check, so route shape is NOT a pre-auth oracle:
       // an unauthenticated prober gets a byte-identical 401 for ANY method. The present/absent answer is a
@@ -191,6 +223,34 @@ export class ProductApi {
     if (operator === undefined) {
       throw new ProductError('PRODUCT.NO_OPERATOR', 'No valid operator credential for this request.', {})
     }
+  }
+
+  /**
+   * Provider-webhook auth for `/t/:slug/messaging/...`: resolve the bearer token via the provider-webhook
+   * store (a FOURTH namespace, separate from session + operator). Absent/unknown -> NO_WEBHOOK_CREDENTIAL
+   * (a constant 401). A session or operator token is simply absent here, so it fails identically — no
+   * cross-namespace privilege. The credential is platform-wide (one provider integration), so the gate IS the
+   * authorization; the tenant is established by the route :slug + the per-tenant guest registry downstream.
+   */
+  #authenticateWebhook(req: ApiRequest): void {
+    const credential = this.#webhookCredentials.resolve(bearerToken(req.headers.authorization))
+    if (credential === undefined) {
+      throw new ProductError('PRODUCT.NO_WEBHOOK_CREDENTIAL', 'No valid provider webhook credential.', {})
+    }
+  }
+
+  /**
+   * Dispatch the provider-webhook messaging surface (auth already passed). This rung wires ONLY the inbound
+   * acknowledgement skeleton: POST `/t/:slug/messaging/inbound` -> the frozen 202. Body validation, guest
+   * resolution, and the metered reply land in the following steps. Every accepted path returns the SAME
+   * `RESP_ACCEPTED` constant (the uniform-202 invariant).
+   */
+  #dispatchMessaging(req: ApiRequest, segments: readonly string[]): ApiResponse {
+    if (segments.length === 4 && segments[3] === 'inbound') {
+      if (req.method !== 'POST') throw methodNotAllowed()
+      return RESP_ACCEPTED
+    }
+    throw routeNotFound()
   }
 
   /** Stage 3 + 4: resolve the bearer token to a principal and bind it to the resolved tenant. */
@@ -234,11 +294,13 @@ function errorToResponse(error: WeddingPlannerError): ApiResponse {
     case 'PRODUCT.TENANT_NOT_USABLE':
     case 'PRODUCT.ROUTE_NOT_FOUND':
       return RESP_NOT_FOUND
-    // NO_OPERATOR: an /admin request with no/unknown operator credential — the same constant 401 as a
-    // missing tenant session, so /admin auth-failure is indistinguishable from any other unauthenticated.
+    // NO_OPERATOR / NO_WEBHOOK_CREDENTIAL: an /admin or inbound-webhook request with no/unknown credential —
+    // the same constant 401 as a missing tenant session, so auth-failure on any of the three non-anonymous
+    // namespaces (session / operator / provider-webhook) is indistinguishable from any other unauthenticated.
     case 'PRODUCT.NO_SESSION':
     case 'PRODUCT.SESSION_TENANT_MISMATCH':
     case 'PRODUCT.NO_OPERATOR':
+    case 'PRODUCT.NO_WEBHOOK_CREDENTIAL':
       return RESP_UNAUTHORIZED
     case 'PRODUCT.FORBIDDEN':
       return RESP_FORBIDDEN

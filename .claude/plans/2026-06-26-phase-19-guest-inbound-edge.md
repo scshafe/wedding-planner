@@ -98,7 +98,8 @@ must-fixes folded into the steps below:
 
 - [ ] **Step 0 — Design reviews.** (COMPLETE — see above; recorded in this plan.)
 
-- [ ] **Step 1 — The provider-webhook trust tier + the inbound route skeleton.**
+- [x] **Step 1 — The provider-webhook trust tier + the inbound route skeleton.** (DONE — 667 tests green;
+  the fourth token namespace + the frozen uniform-202 route skeleton + the boot-time credential policy.)
   - New `product/src/auth/provider_webhook_credential.ts` — `ProviderWebhookCredentialStore`, a verbatim
     mirror of `operator_credential.ts` (phantom `WEBHOOK_BRAND`, module-private `MINTED_WEBHOOK_PROVIDERS`
     `WeakSet`, `#byToken` `Map.get` resolve with NO shape gate, constructor-injected seed tokens, dup/empty

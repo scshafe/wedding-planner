@@ -6,6 +6,7 @@ import {
   BillingLedger,
   OnboardingService,
   OperatorCredentialStore,
+  ProviderWebhookCredentialStore,
   ProductApi,
   type ProductApiDeps,
   SessionStore,
@@ -45,6 +46,7 @@ function makeApi(opts: { champion?: StrategyGenome } = {}): ProductApi {
     weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedW')),
     authorizer: new WeddingAuthorizer(),
     operators: new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret']),
+    webhookCredentials: new ProviderWebhookCredentialStore(new SequentialIdGenerator('seedW'), ['wh-secret']),
     onboarding: new OnboardingService(store, new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB'))),
     ...(opts.champion === undefined ? {} : { championStrategy: opts.champion }),
   }

@@ -7,6 +7,7 @@ import {
   BillingLedger,
   OnboardingService,
   OperatorCredentialStore,
+  ProviderWebhookCredentialStore,
   ProductApi,
   SessionStore,
   TenantContextResolver,
@@ -57,6 +58,7 @@ function makeWorld() {
     resolver: new TenantContextResolver(store),
     sessionStore: new SessionStore(new SequentialIdGenerator('seedS')),
     operators: new OperatorCredentialStore(new SequentialIdGenerator('seedO'), [OP]),
+    webhookCredentials: new ProviderWebhookCredentialStore(new SequentialIdGenerator('seedW'), ['wh-secret']),
     onboarding: new OnboardingService(
       store,
       new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB')),
