@@ -52,7 +52,11 @@ re-render discipline. **No new safety machinery, no new schema, no contract chan
   `renderDetail`. Extract a `#weddingList(req, slug, invalid)` helper so a create-validation failure
   re-renders the console list with the notice (mirrors `#guestsPage(…, true)`). Green.
 
-- [ ] **Step 3 — Web-flow tests (`tests/web/wedding_web.test.ts`).** Mirror `guest_web.test.ts`: planner
+- [x] **Step 3 — Web-flow tests (`tests/web/wedding_web.test.ts`).** 15 tests: planner create happy-path
+  (logistics round-trips to detail); couple create ⇒ themed 403 + no wedding; forged CSRF on create/update ⇒
+  no mutation; planner + couple-own edit persist; omitted optional ⇒ preserved; couple non-owned / empty /
+  path-injection id ⇒ masked 404 + no mutation/breakout; invalid body ⇒ notice re-render (no leak); JSON
+  POST/PUT not CSRF-reachable (cookie-only ⇒ 401). Plus 5 new `pages.test.ts` assertions. Mirror `guest_web.test.ts`: planner
   create happy-path (201 → 303 → new wedding listed); couple create ⇒ themed 403 + no mutation; forged CSRF on
   create/update ⇒ masked 403 + no mutation; planner update happy-path; couple updates their OWN wedding;
   couple update of a non-owned id ⇒ masked (no mutation); logistics round-trip (set `dress_code` via the form
