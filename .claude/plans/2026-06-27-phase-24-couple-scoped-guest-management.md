@@ -94,7 +94,7 @@ unchanged whole-tenant view. **No new schema, no new contract, no new safety mod
   a duplicate-ref couple register can't be distinguished from a fresh one — the 403 precedes the 409 path); a
   planner's whole-tenant list/remove are unchanged. Green.
 
-- [ ] **Step 4 — Browser surface + e2e + docs.** Add `tests/web/guest_web.test.ts` couple cases: a couple opens
+- [x] **Step 4 — Browser surface + e2e + docs.** Add `tests/web/guest_web.test.ts` couple cases: a couple opens
   `?view=guests` and sees their scoped list (200, not a 404/403); a couple removes a guest via the CSRF-gated
   form (303 → gone); a couple's add-guest submit ⇒ themed 403 re-render + no mutation (forged CSRF still masks
   403 first). A compose-level e2e: a couple logs into the HTML front door, sees their wedding's seeded guest, and

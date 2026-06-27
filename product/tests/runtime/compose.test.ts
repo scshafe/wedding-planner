@@ -83,6 +83,23 @@ describe('composeProductSurface — the wired surface boots demoable', () => {
     const weddings = (list.body as { weddings: { wedding_id: string }[] }).weddings
     expect(weddings.map((w) => w.wedding_id)).toContain(demo?.weddingId)
   })
+
+  it('a couple logs in via the public edge and lists + removes THEIR wedding\'s seeded guest (Phase 24)', () => {
+    const { api, demo } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+    const login = api.handle(req('POST', '/t/demo/sessions', { body: { role: 'couple', wedding_id: demo?.weddingId } }))
+    expect(login.status).toBe(201)
+    const token = (login.body as { token: string }).token
+    // The couple sees the demo wedding's seeded guest (scoped to their bound wedding).
+    const list = api.handle(req('GET', '/t/demo/guests', { token }))
+    expect(list.status).toBe(200)
+    const guests = (list.body as { guests: { recipient_ref: string }[] }).guests
+    expect(guests.map((g) => g.recipient_ref)).toContain(demo?.guestRecipientRef)
+    // The couple removes their own guest end-to-end through the wired surface.
+    const del = api.handle(req('DELETE', '/t/demo/guests', { token, body: { recipient_ref: demo?.guestRecipientRef } }))
+    expect(del.status).toBe(200)
+    expect((del.body as { removed: boolean }).removed).toBe(true)
+    expect((api.handle(req('GET', '/t/demo/guests', { token })).body as { guests: unknown[] }).guests).toHaveLength(0)
+  })
 })
 
 describe('composeProductSurface — boundaries inherited unchanged', () => {
