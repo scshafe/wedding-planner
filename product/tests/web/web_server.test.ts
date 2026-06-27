@@ -38,9 +38,10 @@ const THEME: Tenant['theme'] = {
 function makeUi(): ProductWebUi {
   const store = new TenantStore(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedT'))
   store.create({ slug: 'acme', display_name: 'Acme', theme: THEME, plan_tier: 'solo', lifecycle_status: 'active' })
+  const sessions = new SessionStore(new SequentialIdGenerator('seedS'))
   const api = new ProductApi({
     resolver: new TenantContextResolver(store),
-    sessionStore: new SessionStore(new SequentialIdGenerator('seedS')),
+    sessionStore: sessions,
     operators: new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret']),
     webhookCredentials: new ProviderWebhookCredentialStore(new SequentialIdGenerator('seedW'), ['wh-secret']),
     onboarding: new OnboardingService(store, new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB'))),
@@ -48,7 +49,7 @@ function makeUi(): ProductWebUi {
     authorizer: new WeddingAuthorizer(),
     guests: { registry: new GuestRegistry(store), weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedGW')), authorizer: new GuestAuthorizer() },
   })
-  return new ProductWebUi({ api, themes: new ThemeResolver(store) })
+  return new ProductWebUi({ api, themes: new ThemeResolver(store), csrf: sessions })
 }
 
 describe('web_server (integration)', () => {

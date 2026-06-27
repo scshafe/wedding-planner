@@ -76,13 +76,13 @@ describe('renderLogin', () => {
 
 describe('renderConsole / renderDetail', () => {
   it('lists weddings with links to the ?wedding= detail route', () => {
-    const out = renderConsole(SAFE_THEME, 'acme', [EVIL_WEDDING])
+    const out = renderConsole(SAFE_THEME, 'acme', [EVIL_WEDDING], 'csrf-token-1')
     expect(out).toContain('href="/t/acme?wedding=')
     assertNoLiveMarkup(out, 'console/wedding')
   })
 
   it('renders an empty-state when there are no weddings', () => {
-    const out = renderConsole(SAFE_THEME, 'acme', [])
+    const out = renderConsole(SAFE_THEME, 'acme', [], 'csrf-token-1')
     expect(out).toContain('No weddings to show')
   })
 

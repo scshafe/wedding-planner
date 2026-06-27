@@ -62,9 +62,10 @@ function makeWorld(): World {
   store.create({ slug: 'suspendedco', display_name: 'Susp', theme: THEME, plan_tier: 'solo', lifecycle_status: 'suspended' })
   store.create({ slug: 'onboardco', display_name: 'Onb', theme: THEME, plan_tier: 'solo', lifecycle_status: 'onboarding' })
   store.create({ slug: 'evilbrand', display_name: 'Evil', theme: EVIL_THEME, plan_tier: 'solo', lifecycle_status: 'active' })
+  const sessions = new SessionStore(new SequentialIdGenerator('seedS'))
   const api = new ProductApi({
     resolver: new TenantContextResolver(store),
-    sessionStore: new SessionStore(new SequentialIdGenerator('seedS')),
+    sessionStore: sessions,
     operators: new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret']),
     webhookCredentials: new ProviderWebhookCredentialStore(new SequentialIdGenerator('seedW'), ['wh-secret']),
     onboarding: new OnboardingService(store, new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB'))),
@@ -72,7 +73,7 @@ function makeWorld(): World {
     authorizer: new WeddingAuthorizer(),
     guests: { registry: new GuestRegistry(store), weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedGW')), authorizer: new GuestAuthorizer() },
   })
-  return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store) }), api, store }
+  return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store), csrf: sessions }), api, store }
 }
 
 function get(ui: ProductWebUi, path: string, cookie?: string): HttpResult {

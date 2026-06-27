@@ -1,4 +1,4 @@
-import type { Tenant, Wedding } from '@wedding-planner/shared'
+import type { Guest, Tenant, Wedding } from '@wedding-planner/shared'
 
 import type { StrategyGuidance } from '../strategy/strategy_guidance'
 import { html, render, type SafeHtml, safeColor } from './html'
@@ -114,8 +114,17 @@ export function renderLogin(theme: Tenant['theme'], slug: string, invalid = fals
   )
 }
 
-/** The themed console: the list of weddings the principal may see (planner: all; couple: their one). */
-export function renderConsole(theme: Tenant['theme'], slug: string, weddings: readonly Wedding[]): string {
+/**
+ * The themed console: the list of weddings the principal may see (planner: all; couple: their one). The
+ * logout form carries the per-session CSRF token (Phase 21) — a forged logout is rejected like any other
+ * cookie-authenticated mutation.
+ */
+export function renderConsole(
+  theme: Tenant['theme'],
+  slug: string,
+  weddings: readonly Wedding[],
+  csrfToken: string,
+): string {
   const rows = weddings.map(
     (w) => html`<div class="card">
   <div><a href="/t/${slug}?wedding=${w.wedding_id}"><strong>${w.couple_display_name}</strong></a></div>
@@ -132,11 +141,74 @@ export function renderConsole(theme: Tenant['theme'], slug: string, weddings: re
     'Weddings',
     html`<div style="display:flex;justify-content:space-between;align-items:center">
     <h2>Weddings</h2>
-    <form class="inline" method="post" action="/t/${slug}/logout"><button type="submit">Sign out</button></form>
+    <form class="inline" method="post" action="/t/${slug}/logout">${csrfField(csrfToken)}<button type="submit">Sign out</button></form>
   </div>
-  <p><a href="/t/${slug}/strategy">View the planning strategy →</a></p>
+  <p><a href="/t/${slug}/strategy">View the planning strategy →</a> · <a href="/t/${slug}?view=guests">Manage guests →</a></p>
   ${body}`,
   )
+}
+
+/**
+ * The themed guest-management page (Phase 21): the planner's list of registered guests (each with a remove
+ * form) and an add-guest form whose `wedding_id` is a `<select>` of the workspace's weddings. EVERY value —
+ * including the `_csrf` hidden field, the opaque `recipient_ref`, and the `<select>` wedding values — flows
+ * through the `html` template (escaped text only, never a `src`/`href`). Planner-only (the JSON `GET
+ * /t/:slug/guests` it is rendered from is planner-only; a couple never reaches this page).
+ */
+export function renderGuests(
+  theme: Tenant['theme'],
+  slug: string,
+  guests: readonly Guest[],
+  weddings: readonly Wedding[],
+  csrfToken: string,
+  invalid = false,
+): string {
+  const nameOf = new Map(weddings.map((w) => [w.wedding_id, w.couple_display_name]))
+  const rows = guests.map(
+    (g) => html`<div class="card">
+    <div><strong>${g.guest_id}</strong> · <code>${g.recipient_ref}</code></div>
+    <div class="note">Wedding: ${nameOf.get(g.wedding_id) ?? g.wedding_id} · <code>${g.wedding_id}</code></div>
+    <form class="inline" method="post" action="/t/${slug}/guests/remove">${csrfField(csrfToken)}<input type="hidden" name="recipient_ref" value="${g.recipient_ref}"><button type="submit">Remove</button></form>
+  </div>`,
+  )
+  const list = guests.length === 0 ? html`<p class="note">No guests registered yet.</p>` : html`${rows}`
+  const options = weddings.map(
+    (w) => html`<option value="${w.wedding_id}">${w.couple_display_name} (${w.wedding_id})</option>`,
+  )
+  const addForm =
+    weddings.length === 0
+      ? html`<p class="note">Create a wedding first — a guest is always bound to one wedding.</p>`
+      : html`<form method="post" action="/t/${slug}/guests/create">
+    ${csrfField(csrfToken)}
+    <label for="recipient_ref">Guest contact <span class="note">(opaque handle, e.g. <code>sms:+1555…</code>)</span></label>
+    <input id="recipient_ref" name="recipient_ref" type="text" placeholder="sms:+1555…" autocomplete="off">
+    <label for="wedding_id">Wedding</label>
+    <select id="wedding_id" name="wedding_id">${options}</select>
+    <label for="guest_id">Guest id</label>
+    <input id="guest_id" name="guest_id" type="text" placeholder="guest_…" autocomplete="off">
+    <p><button type="submit">Register guest</button></p>
+  </form>`
+  const warning = invalid
+    ? html`<p class="note" style="color:#b00">That guest could not be registered. Check the contact handle and wedding.</p>`
+    : html``
+  return themedShell(
+    theme,
+    slug,
+    'Guests',
+    html`<div style="display:flex;justify-content:space-between;align-items:center">
+    <h2>Guests</h2>
+    <form class="inline" method="post" action="/t/${slug}/logout">${csrfField(csrfToken)}<button type="submit">Sign out</button></form>
+  </div>
+  <p><a href="/t/${slug}">← All weddings</a></p>
+  <div class="card"><h3>Register a guest</h3>${warning}${addForm}</div>
+  <h3>Registered guests</h3>
+  ${list}`,
+  )
+}
+
+/** The hidden CSRF field every cookie-authenticated browser mutation carries (escaped via the html template). */
+function csrfField(csrfToken: string): SafeHtml {
+  return html`<input type="hidden" name="_csrf" value="${csrfToken}">`
 }
 
 /** The themed single-wedding detail page. Reached via `?wedding=<id>` on the console route. */

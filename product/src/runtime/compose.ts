@@ -163,7 +163,9 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     ...(config.championStrategy === undefined ? {} : { championStrategy: config.championStrategy }),
   })
   const themes = new ThemeResolver(tenants)
-  const ui = new ProductWebUi({ api, themes })
+  // The web UI gets the SessionStore typed as the narrow CsrfGuard (issue/verify only — not login/resolve),
+  // so it can check anti-forgery tokens but reads no tenant data (the only-data-path-is-api.handle invariant).
+  const ui = new ProductWebUi({ api, themes, csrf: sessionStore })
 
   let demo: DemoSeed | undefined
   if (seedDemo) {

@@ -42,9 +42,10 @@ function makeUi(opts: { champion?: StrategyGenome } = {}): { ui: ProductWebUi; a
   const store = new TenantStore(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedT'))
   store.create({ slug: 'acme', display_name: 'Acme', theme: THEME, plan_tier: 'solo', lifecycle_status: 'active' })
   store.create({ slug: 'dormant', display_name: 'Dormant', theme: THEME, plan_tier: 'solo', lifecycle_status: 'suspended' })
+  const sessions = new SessionStore(new SequentialIdGenerator('seedS'))
   const api = new ProductApi({
     resolver: new TenantContextResolver(store),
-    sessionStore: new SessionStore(new SequentialIdGenerator('seedS')),
+    sessionStore: sessions,
     operators: new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret']),
     webhookCredentials: new ProviderWebhookCredentialStore(new SequentialIdGenerator('seedW'), ['wh-secret']),
     onboarding: new OnboardingService(store, new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB'))),
@@ -53,7 +54,7 @@ function makeUi(opts: { champion?: StrategyGenome } = {}): { ui: ProductWebUi; a
     guests: { registry: new GuestRegistry(store), weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedGW')), authorizer: new GuestAuthorizer() },
     ...(opts.champion === undefined ? {} : { championStrategy: opts.champion }),
   })
-  return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store) }), api }
+  return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store), csrf: sessions }), api }
 }
 
 function get(ui: ProductWebUi, path: string, cookie?: string): HttpResult {

@@ -1,6 +1,6 @@
 # Phase 21 — Planner guest-management CRUD + the first browser-form CSRF
 
-**Status:** IN PROGRESS — Step 0 (design reviews) next, then Steps 1–9.
+**Status:** IN PROGRESS — Steps 0–8 complete (749 tests green); Step 9 (docs/memory/handoff) next.
 **Branch:** `build/phase-3-generalize-search` (the open review artifact for `main`; Phases 3–20 build on it; this continues it)
 **Predecessor:** Phase 20 (per-message money in the North Star) — complete, 726 tests green.
 
@@ -205,24 +205,24 @@ like every other product aggregate (`tenant`/`wedding`/`billing_event`/`inbound_
 
 ## Step 6 — Web UI: the guest-management page + CSRF on every browser mutation
 
-- [ ] `ProductWebUiDeps` += `csrf: CsrfGuard`; `ProductWebUi` holds `#csrf`. (A third narrow capability beside
+- [x] `ProductWebUiDeps` += `csrf: CsrfGuard`; `ProductWebUi` holds `#csrf`. (A third narrow capability beside
       `themes` — it reads NO tenant data, so the "only data path is `api.handle()`" invariant holds; CSRF is an
       anti-forgery check, not a data path.) Wire in compose (pass the `sessionStore`, typed as `CsrfGuard`).
 - [ ] `pages.ts`:
-  - [ ] `renderGuests(theme, slug, guests, weddings, csrfToken)` — themed: a list of guests
+  - [x] `renderGuests(theme, slug, guests, weddings, csrfToken)` — themed: a list of guests
         (recipient_ref / wedding_id / guest_id) each with an inline **remove** form (hidden `_csrf` + hidden
         `recipient_ref`); an **add-guest** form (text `recipient_ref`, a `<select>` of the tenant's `wedding_id`s
         labeled by couple name, text `guest_id`, hidden `_csrf`); a back link to `/t/:slug`. Every value flows
         through the `html` template (escaped).
-  - [ ] `renderConsole` — the logout form gains a hidden `_csrf`; add a "Manage guests →"
+  - [x] `renderConsole` — the logout form gains a hidden `_csrf`; add a "Manage guests →"
         link to `/t/:slug?view=guests`. (`renderConsole` now takes `csrfToken`.)
 - [ ] `product_web_ui.ts`:
-  - [ ] `#console` — when `?view=guests`, render the guests page: fetch **guests FIRST** (`GET /t/:slug/guests`)
+  - [x] `#console` — when `?view=guests`, render the guests page: fetch **guests FIRST** (`GET /t/:slug/guests`)
         then weddings (`GET /t/:slug/weddings`) via Bearer-from-cookie `api.handle()`; render only on **200/200**
         (resolve theme + `issueCsrf(token)` → `renderGuests`); if EITHER read is non-200 take `#renderNonData(slug,
         status)` on that status (no half-page; a couple ⇒ 403 themed forbidden from the guests read). Pass
         `csrfToken` into `renderConsole` on the plain list path too.
-  - [ ] New web-owned routes (distinct path names from the JSON routes — mirrors `/login` ↔ `/sessions`, so no
+  - [x] New web-owned routes (distinct path names from the JSON routes — mirrors `/login` ↔ `/sessions`, so no
         collision and the delegated JSON routes stay programmatically reachable):
         `POST /t/:slug/guests/create` and `POST /t/:slug/guests/remove` (4-segment, web-owned), plus the existing
         `POST /t/:slug/logout` (now verify-first). Each handler, **in this order**: normalize the slug (unknown ⇒
@@ -233,34 +233,34 @@ like every other product aggregate (`tenant`/`wedding`/`billing_event`/`inbound_
         (`POST`/`DELETE /t/:slug/guests`, or the cookie-clear for logout) and `redirect(303, …)`; map BOTH a 201
         success and a 400/404/409 failure on create to the SAME generic re-render notice (don't leak
         created-vs-already-registered).
-  - [ ] Update the `@canonical product_web_ui` doc — **rewrite the stale "Holds ONLY `{ api, themes }`" line** to
+  - [x] Update the `@canonical product_web_ui` doc — **rewrite the stale "Holds ONLY `{ api, themes }`" line** to
         `{ api, themes, csrf }` and re-state the invariant as *only-data-path-is-`api.handle()`* (csrf is an
         anti-forgery check, not a data path); note CSRF is enforced here (the sole cookie→Bearer seam), the JSON
         API is not CSRF-reachable, and login is the documented exemption.
-- [ ] **Gate:** build + test + lint green.
+- [x] **Gate:** build + test + lint green.
 
 ## Step 7 — Compose wiring
 
-- [ ] `compose.ts`: construct `GuestAuthorizer`; pass the `guests` bag to `ProductApi`; pass `csrf:
+- [x] `compose.ts`: construct `GuestAuthorizer`; pass the `guests` bag to `ProductApi`; pass `csrf:
       sessionStore` to `ProductWebUi`. Keep the demo guest seed (now it's the first row a logged-in planner sees
       on the guests page). Optionally expose `guestRegistry` on `ComposedSurface` for compose-level tests.
-- [ ] **Gate:** build + test + lint green; the deployable wiring (Phase 16 keystone) still green.
+- [x] **Gate:** build + test + lint green; the deployable wiring (Phase 16 keystone) still green.
 
 ## Step 8 — Tests (mirror source paths)
 
-- [ ] **JSON guest API** (`product/tests/http/...`): planner list/register/remove happy paths; **couple ⇒ 403**
+- [x] **JSON guest API** (`product/tests/http/...`): planner list/register/remove happy paths; **couple ⇒ 403**
       on every verb; **anon ⇒ 401**; **tenant isolation** (tenant A's planner never sees/removes tenant B's
       guest; cross-tenant wedding_id on register ⇒ 404); **duplicate register ⇒ 409**; **register to a
       non-existent wedding ⇒ 404**; **remove is idempotent** (absent ref ⇒ 200 `{removed:false}`); body
       smuggling (`tenant_id`/`__proto__`) closed.
-- [ ] **CSRF** (`product/tests/auth/csrf_guard.test.ts` + web tests): valid token ⇒ mutation proceeds; **missing
+- [x] **CSRF** (`product/tests/auth/csrf_guard.test.ts` + web tests): valid token ⇒ mutation proceeds; **missing
       / wrong / other-session token ⇒ 403 and NO mutation**; the CSRF token **≠** the session token; `verifyCsrf`
       fails closed for an absent session; constant-time helper behavior.
-- [ ] **Web flow** (`product/tests/web/...`): the guests page renders with a `_csrf` hidden field in every form;
+- [x] **Web flow** (`product/tests/web/...`): the guests page renders with a `_csrf` hidden field in every form;
       a forged-token POST is rejected; a valid POST forwards and 303-redirects; **csrf-failure on an unknown slug
       ⇒ `GENERIC_404`** (no oracle); the JSON `POST /t/:slug/guests` reached via `#delegate` with only a cookie
       (no Bearer) ⇒ **401** (the "JSON API not CSRF-reachable" proof).
-- [ ] **Gate:** full suite green (target ~+25–35 tests).
+- [x] **Gate:** full suite green (target ~+25–35 tests).
 
 ## Step 9 — Docs, memory, handoff
 

@@ -42,9 +42,10 @@ function makeWorld(): World {
   const store = new TenantStore(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedT'))
   store.create({ slug: 'acme', display_name: 'Acme', theme: THEME, plan_tier: 'solo', lifecycle_status: 'active' })
   store.create({ slug: 'dormant', display_name: 'Dormant', theme: THEME, plan_tier: 'solo', lifecycle_status: 'suspended' })
+  const sessions = new SessionStore(new SequentialIdGenerator('seedS'))
   const api = new ProductApi({
     resolver: new TenantContextResolver(store),
-    sessionStore: new SessionStore(new SequentialIdGenerator('seedS')),
+    sessionStore: sessions,
     operators: new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret']),
     webhookCredentials: new ProviderWebhookCredentialStore(new SequentialIdGenerator('seedW'), ['wh-secret']),
     onboarding: new OnboardingService(store, new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB'))),
@@ -52,12 +53,28 @@ function makeWorld(): World {
     authorizer: new WeddingAuthorizer(),
     guests: { registry: new GuestRegistry(store), weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedGW')), authorizer: new GuestAuthorizer() },
   })
-  return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store) }), api }
+  return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store), csrf: sessions }), api }
 }
 
 function get(ui: ProductWebUi, path: string, cookie?: string): HttpResult {
   const headers: ApiRequest['headers'] = cookie === undefined ? {} : { cookie }
   return ui.handle({ method: 'GET', path, headers })
+}
+
+/** Extract the per-session CSRF token a rendered page embeds in its first `_csrf` hidden field. */
+function csrfFrom(html: string): string {
+  const value = /name="_csrf" value="([^"]+)"/.exec(html)?.[1]
+  expect(value, 'page should embed a _csrf hidden field').toBeTruthy()
+  return value as string
+}
+
+/** POST a urlencoded form to the web front door. */
+function postForm(ui: ProductWebUi, path: string, fields: Record<string, string>, cookie?: string): HttpResult {
+  const headers: ApiRequest['headers'] = {
+    'content-type': 'application/x-www-form-urlencoded',
+    ...(cookie === undefined ? {} : { cookie }),
+  }
+  return ui.handle({ method: 'POST', path, headers, rawBody: new URLSearchParams(fields).toString() })
 }
 
 /** Log in via the HTML POST and return the wp_session cookie value the front door sets. */
@@ -141,11 +158,21 @@ describe('ProductWebUi routing + rendering', () => {
     expect(foreignDetail.body).not.toContain('Other Couple')
   })
 
-  it('logout clears the cookie and redirects', () => {
+  it('logout WITH the CSRF token clears the cookie and redirects', () => {
     const { ui } = makeWorld()
-    const res = ui.handle({ method: 'POST', path: '/t/acme/logout', headers: {} })
+    const cookie = loginCookie(ui, 'acme', 'planner')
+    const csrf = csrfFrom(get(ui, '/t/acme', cookie).body)
+    const res = postForm(ui, '/t/acme/logout', { _csrf: csrf }, cookie)
     expect(res.status).toBe(303)
     expect(res.headers['set-cookie']).toContain('Max-Age=0')
+  })
+
+  it('a forged-token logout is rejected (403) and does NOT clear the cookie (closes logout-CSRF)', () => {
+    const { ui } = makeWorld()
+    const cookie = loginCookie(ui, 'acme', 'planner')
+    const res = postForm(ui, '/t/acme/logout', { _csrf: 'forged' }, cookie)
+    expect(res.status).toBe(403)
+    expect(res.headers['set-cookie']).toBeUndefined()
   })
 })
 

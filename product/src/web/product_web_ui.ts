@@ -1,5 +1,6 @@
-import type { Wedding } from '@wedding-planner/shared'
+import type { Guest, Wedding } from '@wedding-planner/shared'
 
+import type { CsrfGuard } from '../auth/csrf_guard'
 import type { ApiRequest } from '../http/api_message'
 import { splitPath } from '../http/path'
 import type { ProductApi } from '../http/product_api'
@@ -11,6 +12,7 @@ import {
   renderConsole,
   renderDetail,
   renderForbidden,
+  renderGuests,
   renderLanding,
   renderLogin,
   renderStrategy,
@@ -21,11 +23,12 @@ import { htmlResult, type HttpResult, jsonResultFrom, redirect } from './web_res
 /**
  * @canonical product_web_ui -- the server-rendered HTML front door over the Phase-13 JSON pipeline.
  *
- * Holds ONLY `{ api, themes }` — no resolver, sessionStore, or repository (exactly as the Phase-13
- * dispatch handlers don't). Its ONLY data path is `api.handle()`; the only extra capability is the
- * theme-only `ThemeResolver`. So the UI inherits BOTH boundaries structurally — it cannot read a
- * tenant's data except through the pipeline that enforces them, and it makes NO independent existence
- * decision (existence + auth + theme are all derived from ONE `api.handle()` call per page, by status):
+ * Holds `{ api, themes, csrf }` — no resolver, sessionStore, or repository (exactly as the Phase-13
+ * dispatch handlers don't). Its only DATA path is `api.handle()`; `themes` is theme-only and `csrf` (Phase
+ * 21) is an anti-forgery check that reads NO tenant data — neither is a data path. So the UI inherits BOTH
+ * boundaries structurally — it cannot read a tenant's data except through the pipeline that enforces them,
+ * and it makes NO independent existence decision (existence + auth + theme are all derived from `api.handle()`
+ * calls, by status):
  *
  *   200 -> themed data page (console / detail)   401 -> themed login (active tenant, not yet authed)
  *   403 -> themed forbidden                       404/else -> the constant GENERIC_404 (no theme)
@@ -34,16 +37,25 @@ import { htmlResult, type HttpResult, jsonResultFrom, redirect } from './web_res
  * non-match takes the SAME masked GENERIC_404 as an unknown tenant (never a distinct 400 — an oracle).
  * The browser carries the opaque Bearer token in a `wp_session` cookie; the UI forwards it VERBATIM as
  * `Authorization: Bearer <token>` and lets the pipeline's cross-tenant bind veto decide (the cookie adds
- * no new token authority; it is never short-circuited on). Login/logout are the only state-changing HTML
- * routes; HTML create/update forms are deferred.
+ * no new token authority; it is never short-circuited on).
  *
- * Routing is an ordered, exact-segment table: the UI owns `/`, `/t/:slug` (2 segs), `/t/:slug/login`,
- * `/t/:slug/logout`; EVERYTHING else delegates to `api.handle()` (wrapped as a JSON HttpResult), so the
- * keystone-protected JSON paths (`/healthz`, `/t/:slug/sessions`, `/t/:slug/weddings...`) reach the
- * unchanged handler. `/t/:slug?wedding=ID` is the detail page — the query is stripped from the path, so
- * it never collides with the JSON `/t/:slug/weddings/:id`.
+ * The browser MUTATIONS (Phase 21) — `POST /t/:slug/logout`, `/t/:slug/guests/create`, and
+ * `/t/:slug/guests/remove` — are the place a cookie becomes a credential (the handler reads `wp_session` and
+ * mints an internal Bearer), so each is CSRF-protected: it verifies the per-session `_csrf` token before any
+ * mutation, and a forged token returns the masked 403 with NO state change (a forged logout therefore does
+ * NOT clear the cookie). The JSON API is Bearer-only and NOT CSRF-reachable, so it carries no token. Login is
+ * the documented exemption — no session yet to bind a token to (SameSite=Strict covers it).
  *
- * related: pages.ts (the render fns), product_api.ts (the delegated JSON pipeline), theme_resolver.ts.
+ * Routing is an ordered, exact-segment table: the UI owns `/`, `/t/:slug` (2 segs; `?wedding=ID` detail and
+ * `?view=guests` management), `/t/:slug/login`, `/t/:slug/logout`, and the 4-seg `/t/:slug/guests/create` +
+ * `/t/:slug/guests/remove` form posts; EVERYTHING else delegates to `api.handle()` (wrapped as a JSON
+ * HttpResult), so the keystone-protected JSON paths (`/healthz`, `/t/:slug/sessions`, `/t/:slug/weddings...`,
+ * the 3-seg `/t/:slug/guests` JSON API) reach the unchanged handler. The web form routes use DISTINCT names
+ * from the JSON routes (mirroring `/login` ↔ `/sessions`), so they never collide and the JSON API stays
+ * programmatically reachable; queries are stripped from the path before routing.
+ *
+ * related: pages.ts (the render fns), product_api.ts (the delegated JSON pipeline), theme_resolver.ts,
+ * csrf_guard.ts (the anti-forgery boundary).
  */
 
 /** The cookie that carries the opaque session token. */
@@ -55,15 +67,23 @@ const SAFE_TOKEN = /^[A-Za-z0-9_-]+$/
 export interface ProductWebUiDeps {
   readonly api: ProductApi
   readonly themes: ThemeResolver
+  /**
+   * Phase 21: the browser-form anti-forgery guard. Narrowed to {@link CsrfGuard} (issue/verify only — NOT the
+   * SessionStore), so the UI can check a token but can neither mint nor resolve a principal. Reads no tenant
+   * data, so the "only data path is api.handle()" invariant holds.
+   */
+  readonly csrf: CsrfGuard
 }
 
 export class ProductWebUi {
   readonly #api: ProductApi
   readonly #themes: ThemeResolver
+  readonly #csrf: CsrfGuard
 
   constructor(deps: ProductWebUiDeps) {
     this.#api = deps.api
     this.#themes = deps.themes
+    this.#csrf = deps.csrf
   }
 
   /** Run a request through the HTML front door. Never throws — any slip becomes the constant 500. */
@@ -102,15 +122,28 @@ export class ProductWebUi {
           return slug === undefined ? GENERIC_404 : this.#strategy(req, slug)
         }
       }
+
+      // /t/:slug/guests/{create,remove} (Phase 21) — the browser FORM posts (CSRF-protected). DISTINCT names
+      // from the JSON /t/:slug/guests route (3-seg) so they never collide. A malformed slug masks to 404
+      // BEFORE any cookie read / CSRF verdict (the CSRF outcome is never a tenant-existence oracle).
+      if (segments.length === 4 && segments[2] === 'guests' && req.method === 'POST') {
+        if (slug === undefined) return GENERIC_404
+        if (segments[3] === 'create') return this.#guestCreate(req, slug)
+        if (segments[3] === 'remove') return this.#guestRemove(req, slug)
+      }
     }
 
     // Everything else is the JSON API (keystone-protected) — reached unchanged via the pipeline.
     return this.#delegate(req)
   }
 
-  /** GET /t/:slug — list (or `?wedding=ID` detail), themed strictly by the status `api.handle()` returns. */
+  /** GET /t/:slug — list (or `?wedding=ID` detail / `?view=guests` management), themed strictly by status. */
   #console(req: ApiRequest, slug: string): HttpResult {
     const token = readSessionCookie(req.headers.cookie)
+
+    // ?view=guests — the planner-only guest-management page (Phase 21).
+    if (queryParam(req.path, 'view') === 'guests') return this.#guestsPage(req, slug)
+
     const weddingId = queryParam(req.path, 'wedding')
 
     if (weddingId !== undefined) {
@@ -129,10 +162,67 @@ export class ProductWebUi {
     if (apiRes.status === 200) {
       const theme = this.#themes.resolveActiveTheme(slug)
       const weddings = readWeddings(apiRes.body)
-      if (theme === undefined) return GENERIC_404
-      return htmlResult(200, renderConsole(theme, slug, weddings))
+      const csrf = this.#csrf.issueCsrf(token)
+      // A 200 means the session resolved; its CSRF token must exist (same store). Absent ⇒ invariant break.
+      if (theme === undefined || csrf === undefined) return theme === undefined ? GENERIC_404 : ERROR_500
+      return htmlResult(200, renderConsole(theme, slug, weddings, csrf))
     }
     return this.#renderNonData(slug, apiRes.status)
+  }
+
+  /**
+   * GET /t/:slug?view=guests — the planner-only guest-management page (Phase 21). TWO `api.handle()` reads:
+   * GUESTS FIRST (planner-only — a couple gets 403 here and never sees the wedding list), then weddings (for
+   * the picker). Rendered only on 200/200; if EITHER read is non-200 it takes the SAME `#renderNonData`
+   * masking as every other page (no half-page, no distinguishable split). `invalid` re-renders with a generic
+   * notice after a failed create (the PRG re-render).
+   */
+  #guestsPage(req: ApiRequest, slug: string, invalid = false): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const guestsRes = this.#api.handle(bearerGet(`/t/${slug}/guests`, token))
+    if (guestsRes.status !== 200) return this.#renderNonData(slug, guestsRes.status)
+    const weddingsRes = this.#api.handle(bearerGet(`/t/${slug}/weddings`, token))
+    if (weddingsRes.status !== 200) return this.#renderNonData(slug, weddingsRes.status)
+    const theme = this.#themes.resolveActiveTheme(slug)
+    const csrf = this.#csrf.issueCsrf(token)
+    if (theme === undefined || csrf === undefined) return theme === undefined ? GENERIC_404 : ERROR_500
+    return htmlResult(
+      invalid ? 400 : 200,
+      renderGuests(theme, slug, readGuests(guestsRes.body), readWeddings(weddingsRes.body), csrf, invalid),
+    )
+  }
+
+  /**
+   * POST /t/:slug/guests/create — the browser add-guest form. Verify the CSRF token (forged ⇒ masked 403, no
+   * mutation) BEFORE translating the cookie to a Bearer and forwarding to the JSON `POST /t/:slug/guests`.
+   * 201 ⇒ PRG redirect to the guests page; any failure ⇒ re-render the guests page with a generic notice
+   * (which itself masks to 404 if the tenant is unknown — so create-vs-conflict-vs-missing never leaks).
+   */
+  #guestCreate(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    const body = {
+      recipient_ref: form.get('recipient_ref') ?? '',
+      wedding_id: form.get('wedding_id') ?? '',
+      guest_id: form.get('guest_id') ?? '',
+    }
+    const apiRes = this.#api.handle(bearerJson('POST', `/t/${slug}/guests`, token, body))
+    if (apiRes.status === 201) return redirect(303, `/t/${slug}?view=guests`)
+    return this.#guestsPage(req, slug, true)
+  }
+
+  /**
+   * POST /t/:slug/guests/remove — the browser remove form. Verify CSRF (forged ⇒ masked 403, no mutation),
+   * then forward to the JSON `DELETE /t/:slug/guests` (idempotent) and PRG-redirect to the guests page (which
+   * masks unknown-tenant/non-owner outcomes on the follow-up GET).
+   */
+  #guestRemove(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    this.#api.handle(bearerJson('DELETE', `/t/${slug}/guests`, token, { recipient_ref: form.get('recipient_ref') ?? '' }))
+    return redirect(303, `/t/${slug}?view=guests`)
   }
 
   /**
@@ -200,9 +290,15 @@ export class ProductWebUi {
     return theme === undefined ? GENERIC_404 : htmlResult(400, renderLogin(theme, slug, true))
   }
 
-  /** POST /t/:slug/logout — clear the session cookie and return to the tenant root. */
+  /**
+   * POST /t/:slug/logout — clear the session cookie and return to the tenant root. CSRF-protected (Phase 21):
+   * a forged-token logout returns the masked 403 and does NOT clear the cookie (closing a forced-logout CSRF).
+   */
   #logout(req: ApiRequest, slug: string): HttpResult {
     if (req.method !== 'POST') return this.#delegate(req)
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
     return redirect(303, `/t/${slug}`, {
       'set-cookie': `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/t/${slug}; Max-Age=0`,
     })
@@ -223,6 +319,17 @@ function bearerGet(path: string, token: string | undefined): ApiRequest {
     path,
     headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
   }
+}
+
+/**
+ * Build a mutating ApiRequest (POST/DELETE) translating the cookie session token into a Bearer + a JSON body
+ * (Phase 21). This is the SOLE cookie→Bearer translation for a mutation — it runs only AFTER the CSRF token
+ * verified, so a forged cross-site form never reaches it.
+ */
+function bearerJson(method: string, path: string, token: string | undefined, body: unknown): ApiRequest {
+  const headers: Record<string, string | undefined> = { 'content-type': 'application/json' }
+  if (token !== undefined) headers.authorization = `Bearer ${token}`
+  return { method, path, headers, rawBody: JSON.stringify(body) }
 }
 
 /** Read the `wp_session` token from a Cookie header, or undefined. */
@@ -264,6 +371,13 @@ function readWeddings(body: unknown): readonly Wedding[] {
   if (typeof body !== 'object' || body === null) return []
   const weddings = (body as { weddings?: unknown }).weddings
   return Array.isArray(weddings) ? (weddings as Wedding[]) : []
+}
+
+/** Read the guests array from a list (200) JSON body (tolerant — never throws on an odd shape). */
+function readGuests(body: unknown): readonly Guest[] {
+  if (typeof body !== 'object' || body === null) return []
+  const guests = (body as { guests?: unknown }).guests
+  return Array.isArray(guests) ? (guests as Guest[]) : []
 }
 
 /** Read the single wedding from a detail (200) JSON body, or undefined. */
