@@ -114,16 +114,60 @@ export function renderLogin(theme: Tenant['theme'], slug: string, invalid = fals
   )
 }
 
+/** The wedding lifecycle statuses (mirrors the `status` enum in wedding_schema.json). */
+const WEDDING_STATUSES: readonly Wedding['status'][] = ['planning', 'active', 'completed', 'cancelled']
+
+/** A `<select>` of the wedding statuses, marking `selected` the current value (escaped via the template). */
+function statusOptions(selected?: Wedding['status']): SafeHtml[] {
+  return WEDDING_STATUSES.map((s) =>
+    s === selected ? html`<option value="${s}" selected>${s}</option>` : html`<option value="${s}">${s}</option>`,
+  )
+}
+
 /**
- * The themed console: the list of weddings the principal may see (planner: all; couple: their one). The
- * logout form carries the per-session CSRF token (Phase 21) — a forged logout is rejected like any other
- * cookie-authenticated mutation.
+ * The shared labelled input set for the wedding create AND edit forms (Phase 23) — the required name/date/
+ * status plus the four OPTIONAL Phase-22 logistics fields. Every value flows through the `html` template
+ * (escaped into the `value="…"` attribute). `prefill` is the existing record on the edit form (empty on
+ * create); an absent optional field renders an empty input. An empty input is sent as "" and the web handler
+ * OMITS it from the request body, so create leaves it unset and update PRESERVES the stored value (the
+ * Phase-22 contract — there is no clear-to-absent sentinel from the browser yet).
+ */
+type WeddingFormPrefill = Partial<
+  Pick<
+    Wedding,
+    'couple_display_name' | 'event_date' | 'status' | 'ceremony_time' | 'venue_name' | 'parking_info' | 'dress_code'
+  >
+>
+function weddingFormFields(prefill: WeddingFormPrefill = {}): SafeHtml {
+  return html`<label for="couple_display_name">Couple display name</label>
+    <input id="couple_display_name" name="couple_display_name" type="text" maxlength="200" value="${prefill.couple_display_name ?? ''}" placeholder="Alex &amp; Sam" autocomplete="off">
+    <label for="event_date">Event date <span class="note">(YYYY-MM-DD)</span></label>
+    <input id="event_date" name="event_date" type="text" value="${prefill.event_date ?? ''}" placeholder="2027-09-12" autocomplete="off">
+    <label for="status">Status</label>
+    <select id="status" name="status">${statusOptions(prefill.status)}</select>
+    <label for="ceremony_time">Ceremony time <span class="note">(optional, HH:MM)</span></label>
+    <input id="ceremony_time" name="ceremony_time" type="text" value="${prefill.ceremony_time ?? ''}" placeholder="15:30" autocomplete="off">
+    <label for="venue_name">Venue <span class="note">(optional)</span></label>
+    <input id="venue_name" name="venue_name" type="text" maxlength="200" value="${prefill.venue_name ?? ''}" placeholder="The Old Mill" autocomplete="off">
+    <label for="parking_info">Parking <span class="note">(optional)</span></label>
+    <input id="parking_info" name="parking_info" type="text" maxlength="500" value="${prefill.parking_info ?? ''}" placeholder="Free lot behind the venue" autocomplete="off">
+    <label for="dress_code">Dress code <span class="note">(optional)</span></label>
+    <input id="dress_code" name="dress_code" type="text" maxlength="200" value="${prefill.dress_code ?? ''}" placeholder="Cocktail attire" autocomplete="off">`
+}
+
+/**
+ * The themed console: the list of weddings the principal may see (planner: all; couple: their one), plus the
+ * Phase-23 CREATE form. The logout + create forms carry the per-session CSRF token (Phase 21) — a forged
+ * submit is rejected like any other cookie-authenticated mutation. Create is planner-only at the JSON layer:
+ * the form renders for every principal (a CAPABILITY affordance, no resource oracle), and a couple's submit
+ * takes the honest themed 403. `invalid` re-renders the generic create-failure notice after a failed create.
  */
 export function renderConsole(
   theme: Tenant['theme'],
   slug: string,
   weddings: readonly Wedding[],
   csrfToken: string,
+  invalid = false,
 ): string {
   const rows = weddings.map(
     (w) => html`<div class="card">
@@ -135,6 +179,9 @@ export function renderConsole(
     weddings.length === 0
       ? html`<p class="note">No weddings to show.</p>`
       : html`${rows}`
+  const createWarning = invalid
+    ? html`<p class="note" style="color:#b00">That wedding could not be created. Check the name, date, and fields.</p>`
+    : html``
   return themedShell(
     theme,
     slug,
@@ -144,7 +191,14 @@ export function renderConsole(
     <form class="inline" method="post" action="/t/${slug}/logout">${csrfField(csrfToken)}<button type="submit">Sign out</button></form>
   </div>
   <p><a href="/t/${slug}/strategy">View the planning strategy →</a> · <a href="/t/${slug}?view=guests">Manage guests →</a></p>
-  ${body}`,
+  ${body}
+  <div class="card"><h3>Create a wedding</h3>${createWarning}
+    <form method="post" action="/t/${slug}/weddings/create">
+      ${csrfField(csrfToken)}
+      ${weddingFormFields()}
+      <p><button type="submit">Create wedding</button></p>
+    </form>
+  </div>`,
   )
 }
 
@@ -211,8 +265,21 @@ function csrfField(csrfToken: string): SafeHtml {
   return html`<input type="hidden" name="_csrf" value="${csrfToken}">`
 }
 
-/** The themed single-wedding detail page. Reached via `?wedding=<id>` on the console route. */
-export function renderDetail(theme: Tenant['theme'], slug: string, wedding: Wedding): string {
+/**
+ * The themed single-wedding detail page. Reached via `?wedding=<id>` on the console route. Phase 23 adds the
+ * prefilled EDIT form: it carries the per-session CSRF token + the wedding_id in a hidden field (the JSON PUT
+ * takes the id from the URL the web handler builds; the hidden field tells the handler WHICH wedding to PUT).
+ * Both a planner (any wedding) and a couple (their own only) reach this page and may submit — the pipeline
+ * masks a couple's non-owned id to 404 before the form is ever rendered, so a forged id never reaches here.
+ * `invalid` re-renders the generic edit-failure notice after a failed update (a 400 on an OWNED wedding).
+ */
+export function renderDetail(
+  theme: Tenant['theme'],
+  slug: string,
+  wedding: Wedding,
+  csrfToken: string,
+  invalid = false,
+): string {
   // Guest-visible logistics facts — rendered (escaped via `html`) only when the planner/couple has set them.
   // These are exactly the facts the guest-messaging responder answers from (see guest_qa_responder.ts).
   const logistics: SafeHtml[] = []
@@ -220,6 +287,9 @@ export function renderDetail(theme: Tenant['theme'], slug: string, wedding: Wedd
   if (wedding.venue_name !== undefined) logistics.push(html`<p>Venue: <strong>${wedding.venue_name}</strong></p>`)
   if (wedding.parking_info !== undefined) logistics.push(html`<p>Parking: ${wedding.parking_info}</p>`)
   if (wedding.dress_code !== undefined) logistics.push(html`<p>Dress code: ${wedding.dress_code}</p>`)
+  const editWarning = invalid
+    ? html`<p class="note" style="color:#b00">Those changes could not be saved. Check the date, time, and fields.</p>`
+    : html``
   return themedShell(
     theme,
     slug,
@@ -232,6 +302,15 @@ export function renderDetail(theme: Tenant['theme'], slug: string, wedding: Wedd
     <p>Status: <span class="status">${wedding.status}</span></p>
     <p class="note">Wedding id: <code>${wedding.wedding_id}</code> · created ${wedding.created_at}</p>
     <p class="note">Active strategy: <a href="/t/${slug}/strategy">the platform’s data-optimized planning defaults</a> (applied to every wedding in this workspace).</p>
+  </div>
+  <div class="card"><h3>Edit wedding</h3>${editWarning}
+    <form method="post" action="/t/${slug}/weddings/update">
+      ${csrfField(csrfToken)}
+      <input type="hidden" name="wedding_id" value="${wedding.wedding_id}">
+      ${weddingFormFields(wedding)}
+      <p class="note">Leave an optional field blank to keep its current value (blanking to remove is not yet supported).</p>
+      <p><button type="submit">Save changes</button></p>
+    </form>
   </div>`,
   )
 }

@@ -131,6 +131,16 @@ export class ProductWebUi {
         if (segments[3] === 'create') return this.#guestCreate(req, slug)
         if (segments[3] === 'remove') return this.#guestRemove(req, slug)
       }
+
+      // /t/:slug/weddings/{create,update} (Phase 23) — the browser wedding FORM posts (CSRF-protected).
+      // DISTINCT names from the JSON 4-seg /t/:slug/weddings/:id route (which accepts GET/PUT only); a
+      // server-minted `wedding_…` id can never equal the literal `create`/`update`, so they never collide,
+      // and this POST-only intercept runs BEFORE #delegate. Slug masked to 404 before any cookie/CSRF read.
+      if (segments.length === 4 && segments[2] === 'weddings' && req.method === 'POST') {
+        if (slug === undefined) return GENERIC_404
+        if (segments[3] === 'create') return this.#weddingCreate(req, slug)
+        if (segments[3] === 'update') return this.#weddingUpdate(req, slug)
+      }
     }
 
     // Everything else is the JSON API (keystone-protected) — reached unchanged via the pipeline.
@@ -139,25 +149,22 @@ export class ProductWebUi {
 
   /** GET /t/:slug — list (or `?wedding=ID` detail / `?view=guests` management), themed strictly by status. */
   #console(req: ApiRequest, slug: string): HttpResult {
-    const token = readSessionCookie(req.headers.cookie)
-
     // ?view=guests — the planner-only guest-management page (Phase 21).
     if (queryParam(req.path, 'view') === 'guests') return this.#guestsPage(req, slug)
 
     const weddingId = queryParam(req.path, 'wedding')
+    if (weddingId !== undefined) return this.#detail(req, slug, weddingId)
+    return this.#weddingList(req, slug)
+  }
 
-    if (weddingId !== undefined) {
-      // Detail: route the id ONLY into the pipeline (encoded so it stays one segment); never reflect it.
-      const apiRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${encodeURIComponent(weddingId)}`, token))
-      if (apiRes.status === 200) {
-        const theme = this.#themes.resolveActiveTheme(slug)
-        const wedding = readWedding(apiRes.body)
-        if (theme === undefined || wedding === undefined) return GENERIC_404
-        return htmlResult(200, renderDetail(theme, slug, wedding))
-      }
-      return this.#renderNonData(slug, apiRes.status)
-    }
-
+  /**
+   * The wedding LIST page (the console default). Issues the per-session CSRF token (the create form on the
+   * console carries it). `invalid` re-renders with the generic create-failure notice (a 400 page) after a
+   * failed create — the re-render's own read masks unknown/suspended to GENERIC_404, so create-vs-conflict-
+   * vs-missing never leaks (mirrors `#guestsPage`).
+   */
+  #weddingList(req: ApiRequest, slug: string, invalid = false): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
     const apiRes = this.#api.handle(bearerGet(`/t/${slug}/weddings`, token))
     if (apiRes.status === 200) {
       const theme = this.#themes.resolveActiveTheme(slug)
@@ -165,7 +172,29 @@ export class ProductWebUi {
       const csrf = this.#csrf.issueCsrf(token)
       // A 200 means the session resolved; its CSRF token must exist (same store). Absent ⇒ invariant break.
       if (theme === undefined || csrf === undefined) return theme === undefined ? GENERIC_404 : ERROR_500
-      return htmlResult(200, renderConsole(theme, slug, weddings, csrf))
+      return htmlResult(invalid ? 400 : 200, renderConsole(theme, slug, weddings, csrf, invalid))
+    }
+    return this.#renderNonData(slug, apiRes.status)
+  }
+
+  /**
+   * GET /t/:slug?wedding=ID — the single-wedding DETAIL page (carries the Phase-23 edit form, so it issues
+   * the per-session CSRF token like the list page). The id is routed ONLY into the pipeline, encoded so it
+   * stays one segment, and never reflected. Themed strictly by status: a couple's non-owned id is masked to
+   * 404 BEFORE any render (the CSRF token is issued only inside the 200 block, so it adds no oracle). `invalid`
+   * re-renders the generic edit-failure notice (a 400 page) after a failed update on an OWNED wedding.
+   */
+  #detail(req: ApiRequest, slug: string, weddingId: string, invalid = false): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const apiRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${encodeURIComponent(weddingId)}`, token))
+    if (apiRes.status === 200) {
+      const theme = this.#themes.resolveActiveTheme(slug)
+      const wedding = readWedding(apiRes.body)
+      const csrf = this.#csrf.issueCsrf(token)
+      if (theme === undefined || wedding === undefined) return GENERIC_404
+      // A 200 means the session resolved; its CSRF token must exist (same store). Absent ⇒ invariant break.
+      if (csrf === undefined) return ERROR_500
+      return htmlResult(invalid ? 400 : 200, renderDetail(theme, slug, wedding, csrf, invalid))
     }
     return this.#renderNonData(slug, apiRes.status)
   }
@@ -223,6 +252,44 @@ export class ProductWebUi {
     if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
     this.#api.handle(bearerJson('DELETE', `/t/${slug}/guests`, token, { recipient_ref: form.get('recipient_ref') ?? '' }))
     return redirect(303, `/t/${slug}?view=guests`)
+  }
+
+  /**
+   * POST /t/:slug/weddings/create — the browser create-wedding form (Phase 23). Verify CSRF (forged ⇒ masked
+   * 403, no mutation) BEFORE the cookie→Bearer translation, then forward to the JSON `POST /t/:slug/weddings`.
+   * 201 ⇒ PRG redirect to the console; 403 ⇒ themed Forbidden (a couple lacks the create CAPABILITY); any
+   * other failure ⇒ re-render the console with a generic notice (which itself masks unknown-tenant on the
+   * follow-up read, so create-vs-conflict-vs-missing never leaks).
+   */
+  #weddingCreate(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    const apiRes = this.#api.handle(bearerJson('POST', `/t/${slug}/weddings`, token, weddingBodyFromForm(form)))
+    if (apiRes.status === 201) return redirect(303, `/t/${slug}`)
+    if (apiRes.status === 403) return this.#renderNonData(slug, 403)
+    return this.#weddingList(req, slug, true)
+  }
+
+  /**
+   * POST /t/:slug/weddings/update — the browser edit-wedding form (Phase 23). Verify CSRF (forged ⇒ masked
+   * 403, no mutation), then forward to the JSON `PUT /t/:slug/weddings/:id`. The id comes from the FORM body
+   * and is `encodeURIComponent`-encoded into the URL so it provably stays ONE segment (no route breakout); the
+   * JSON handler stamps wedding_id from the route + tenant_id from the context (LAST), so a body-smuggled id
+   * is inert. 200 ⇒ PRG redirect back to the detail page; any failure (400 invalid / 404 masked not-owned-or-
+   * missing / 405 empty-id collapse) ⇒ re-render the detail page, whose own read masks an empty/non-owned id
+   * to GENERIC_404 — byte-identical to a missing id (no raw 4xx oracle reaches the user).
+   */
+  #weddingUpdate(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    const weddingId = form.get('wedding_id') ?? ''
+    const apiRes = this.#api.handle(
+      bearerJson('PUT', `/t/${slug}/weddings/${encodeURIComponent(weddingId)}`, token, weddingBodyFromForm(form)),
+    )
+    if (apiRes.status === 200) return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}`)
+    return this.#detail(req, slug, weddingId, true)
   }
 
   /**
@@ -357,6 +424,29 @@ function queryParam(path: string, name: string): string | undefined {
 /** Parse a urlencoded form body into a params map (empty when absent). */
 function parseForm(rawBody: string | undefined): URLSearchParams {
   return new URLSearchParams(rawBody ?? '')
+}
+
+/** The OPTIONAL logistics fields a wedding form may carry (Phase 22 / 23). */
+const WEDDING_OPTIONAL_FIELDS = ['ceremony_time', 'venue_name', 'parking_info', 'dress_code'] as const
+
+/**
+ * Build the JSON body for a wedding create/update from a form. The required name/date/status are always sent
+ * (the form prefills them); each OPTIONAL logistics field is included ONLY when non-empty, so an empty input
+ * is OMITTED — create leaves it unset and update PRESERVES the stored value (the Phase-22 server contract;
+ * there is no clear-to-absent sentinel from the browser yet). Identity (tenant_id/wedding_id) is NEVER carried
+ * in the body — the JSON pipeline stamps it from the route + context, so a smuggled key here is inert.
+ */
+function weddingBodyFromForm(form: URLSearchParams): Record<string, string> {
+  const body: Record<string, string> = {
+    couple_display_name: form.get('couple_display_name') ?? '',
+    event_date: form.get('event_date') ?? '',
+    status: form.get('status') ?? '',
+  }
+  for (const key of WEDDING_OPTIONAL_FIELDS) {
+    const value = form.get(key) ?? ''
+    if (value.length > 0) body[key] = value
+  }
+  return body
 }
 
 /** Read the opaque token from a login (201) JSON body. */

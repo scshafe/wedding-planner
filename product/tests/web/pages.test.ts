@@ -87,28 +87,33 @@ describe('renderConsole / renderDetail', () => {
   })
 
   it('escapes the couple name and id on the detail page', () => {
-    const out = renderDetail(SAFE_THEME, 'acme', EVIL_WEDDING)
+    const out = renderDetail(SAFE_THEME, 'acme', EVIL_WEDDING, 'csrf-detail-1')
     assertNoLiveMarkup(out, 'detail/wedding')
     expect(out).toContain('← All weddings')
   })
 
   it('renders the guest-visible logistics facts when set, omits them when unset', () => {
-    const bare = renderDetail(SAFE_THEME, 'acme', { ...EVIL_WEDDING, couple_display_name: 'Alex & Sam' })
+    const bare = renderDetail(SAFE_THEME, 'acme', { ...EVIL_WEDDING, couple_display_name: 'Alex & Sam' }, 'csrf-detail-1')
     expect(bare).not.toContain('Ceremony:')
     expect(bare).not.toContain('Dress code:')
 
-    const full = renderDetail(SAFE_THEME, 'acme', {
-      wedding_id: 'w1',
-      tenant_id: 't1',
-      couple_display_name: 'Alex & Sam',
-      event_date: '2029-05-05',
-      status: 'planning',
-      created_at: '2027-01-01T00:00:00.000Z',
-      ceremony_time: '16:30',
-      venue_name: 'The Grand Hall',
-      parking_info: 'Free lot on 5th',
-      dress_code: 'Black tie',
-    })
+    const full = renderDetail(
+      SAFE_THEME,
+      'acme',
+      {
+        wedding_id: 'w1',
+        tenant_id: 't1',
+        couple_display_name: 'Alex & Sam',
+        event_date: '2029-05-05',
+        status: 'planning',
+        created_at: '2027-01-01T00:00:00.000Z',
+        ceremony_time: '16:30',
+        venue_name: 'The Grand Hall',
+        parking_info: 'Free lot on 5th',
+        dress_code: 'Black tie',
+      },
+      'csrf-detail-1',
+    )
     expect(full).toContain('Ceremony:')
     expect(full).toContain('16:30')
     expect(full).toContain('The Grand Hall')
@@ -116,14 +121,55 @@ describe('renderConsole / renderDetail', () => {
   })
 
   it('escapes a malicious logistics value (no double-escape, no live markup)', () => {
-    const out = renderDetail(SAFE_THEME, 'acme', {
-      ...EVIL_WEDDING,
-      couple_display_name: 'Alex & Sam',
-      venue_name: '<script>alert(1)</script>',
-    })
+    const out = renderDetail(
+      SAFE_THEME,
+      'acme',
+      { ...EVIL_WEDDING, couple_display_name: 'Alex & Sam', venue_name: '<script>alert(1)</script>' },
+      'csrf-detail-1',
+    )
     assertNoLiveMarkup(out, 'detail/logistics')
     // The escaped form is present as inert text (proves it rendered, escaped, not dropped).
     expect(out).toContain('&lt;script&gt;')
+  })
+
+  it('renders the edit form prefilled with the wedding + the CSRF token; status select marks the current value', () => {
+    const out = renderDetail(
+      SAFE_THEME,
+      'acme',
+      {
+        wedding_id: 'wedding_42',
+        tenant_id: 't1',
+        couple_display_name: 'Alex & Sam',
+        event_date: '2029-05-05',
+        status: 'active',
+        created_at: '2027-01-01T00:00:00.000Z',
+        dress_code: 'Black tie',
+      },
+      'csrf-edit-tok',
+    )
+    expect(out).toContain('action="/t/acme/weddings/update"')
+    expect(out).toContain('name="_csrf" value="csrf-edit-tok"')
+    expect(out).toContain('name="wedding_id" value="wedding_42"')
+    // Prefilled values + the selected status option.
+    expect(out).toContain('value="2029-05-05"')
+    expect(out).toContain('value="Black tie"')
+    expect(out).toContain('<option value="active" selected>active</option>')
+    expect(out).toContain('<option value="planning">planning</option>')
+  })
+
+  it('renders the create form on the console with the CSRF token and an empty status default', () => {
+    const out = renderConsole(SAFE_THEME, 'acme', [], 'csrf-create-tok')
+    expect(out).toContain('action="/t/acme/weddings/create"')
+    expect(out).toContain('name="_csrf" value="csrf-create-tok"')
+    // No prefill ⇒ no option carries `selected` (browser defaults to the first, planning).
+    expect(out).not.toContain('selected')
+  })
+
+  it('shows the generic failure notices when invalid (no leak of why)', () => {
+    const createOut = renderConsole(SAFE_THEME, 'acme', [], 'csrf-1', true)
+    expect(createOut).toContain('could not be created')
+    const editOut = renderDetail(SAFE_THEME, 'acme', EVIL_WEDDING, 'csrf-1', true)
+    expect(editOut).toContain('could not be saved')
   })
 })
 
