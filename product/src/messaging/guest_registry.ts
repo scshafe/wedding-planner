@@ -29,6 +29,15 @@ import type { RecipientRef } from './messaging_port'
  * edge: `register` rejects a duplicate ref and validates against the `guest` contract; `list`/`remove` are
  * tenant-scoped (isolation inherited); `remove` is idempotent. Compose still seeds one offline demo guest.
  *
+ * Phase 24 adds the COUPLE-scoped slice (`listForWedding`/`removeForWedding`): a couple manages only the
+ * guests of the one wedding they are bound to. The `wedding_id` compare is the segmentation gate, and both
+ * methods are oracle-free — `listForWedding` filters the tenant partition (disclosing only the couple's own
+ * wedding's guests), and `removeForWedding` ALWAYS reads first (running the liveness guard on every path)
+ * then deletes ONLY on a wedding_id match, so the three non-success cases (absent / sibling-wedding /
+ * foreign-tenant ref) and an unbound couple all return the byte-identical `false`. `register` stays
+ * planner-only (the tenant-global `recipient_ref` 409 is a cross-wedding existence oracle — see
+ * guest_authorizer.ts); couple-register is a documented deferral.
+ *
  * related: tenant_scoped_repository.ts (the inherited isolation), guest_qa_responder.ts (the consumer of the
  * bound wedding's facts), messaging_port.ts (RecipientRef / the inbound from_ref).
  */
@@ -90,11 +99,37 @@ export class GuestRegistry {
   }
 
   /**
+   * The couple-facing list: only the guests bound to `wedding_id` within the context's tenant. A partition
+   * FILTER (the response carries ONLY matching bindings — nothing about other weddings' guests), NOT a probe.
+   * An `undefined` wedding_id (a couple with no bound wedding) yields `[]` — the collapse lives HERE so the
+   * handler stays a pure scope-`kind` branch (see GuestScope).
+   */
+  listForWedding(context: TenantContext, wedding_id: string | undefined): readonly GuestBinding[] {
+    if (wedding_id === undefined) return []
+    return this.#repo.list(context).filter((binding) => binding.wedding_id === wedding_id)
+  }
+
+  /**
    * Remove a guest binding by `recipient_ref` within the context's tenant. IDEMPOTENT: an absent/foreign ref
    * is a no-op returning `false` (a trusted planner is never probed — no existence oracle). Returns whether a
    * binding existed.
    */
   remove(context: TenantContext, recipient_ref: RecipientRef): boolean {
+    return this.#repo.delete(context, recipient_ref)
+  }
+
+  /**
+   * The couple-facing remove: delete `recipient_ref` ONLY if its stored binding is for `wedding_id`. ALWAYS
+   * runs `read` first (so `assertMintedContext` + liveness fire on EVERY path, match or miss), then deletes
+   * only on a wedding_id match. The byte-identical-miss property is a REGISTRY guarantee: an absent ref, a
+   * ref bound to a SIBLING wedding, a foreign-tenant ref (read -> undefined), and an `undefined` wedding_id
+   * (a string `binding.wedding_id` can never `=== undefined`) ALL return `false` — so a couple cannot
+   * distinguish "bound to another wedding" from "absent" (no cross-wedding existence oracle). Returns whether
+   * a binding was removed.
+   */
+  removeForWedding(context: TenantContext, recipient_ref: RecipientRef, wedding_id: string | undefined): boolean {
+    const binding = this.#repo.read(context, recipient_ref)
+    if (binding === undefined || binding.wedding_id !== wedding_id) return false
     return this.#repo.delete(context, recipient_ref)
   }
 }

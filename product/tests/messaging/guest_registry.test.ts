@@ -125,4 +125,40 @@ describe('GuestRegistry', () => {
     expect(w.registry.remove(w.ctxA, 'sms:+1777')).toBe(false)
     expect(w.registry.lookup(w.ctxB, 'sms:+1777')).toBeDefined()
   })
+
+  it('listForWedding filters the tenant partition to one wedding (undefined → [])', () => {
+    const w = makeWorld()
+    w.registry.register(w.ctxA, { recipient_ref: 'sms:+mine', wedding_id: 'wed_mine', guest_id: 'gm' })
+    w.registry.register(w.ctxA, { recipient_ref: 'sms:+sib', wedding_id: 'wed_sib', guest_id: 'gs' })
+    expect(w.registry.listForWedding(w.ctxA, 'wed_mine').map((g) => g.recipient_ref)).toEqual(['sms:+mine'])
+    expect(w.registry.listForWedding(w.ctxA, 'wed_unknown')).toEqual([])
+    expect(w.registry.listForWedding(w.ctxA, undefined)).toEqual([])
+  })
+
+  it('removeForWedding deletes ONLY on a wedding_id match; every miss is false (sibling untouched)', () => {
+    const w = makeWorld()
+    w.registry.register(w.ctxA, { recipient_ref: 'sms:+mine', wedding_id: 'wed_mine', guest_id: 'gm' })
+    w.registry.register(w.ctxA, { recipient_ref: 'sms:+sib', wedding_id: 'wed_sib', guest_id: 'gs' })
+    // A sibling-wedding ref, an absent ref, and an undefined wedding_id all no-op false.
+    expect(w.registry.removeForWedding(w.ctxA, 'sms:+sib', 'wed_mine')).toBe(false)
+    expect(w.registry.removeForWedding(w.ctxA, 'sms:+absent', 'wed_mine')).toBe(false)
+    expect(w.registry.removeForWedding(w.ctxA, 'sms:+mine', undefined)).toBe(false)
+    // The sibling binding is untouched by the failed scoped remove.
+    expect(w.registry.lookup(w.ctxA, 'sms:+sib')).toBeDefined()
+    // A wedding_id match deletes.
+    expect(w.registry.removeForWedding(w.ctxA, 'sms:+mine', 'wed_mine')).toBe(true)
+    expect(w.registry.lookup(w.ctxA, 'sms:+mine')).toBeUndefined()
+  })
+
+  it('removeForWedding runs the liveness guard on every path (suspended tenant throws even on a miss)', () => {
+    const store = new TenantStore(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedT'))
+    const tenant = store.create({ slug: 'gamma', display_name: 'Gamma', theme: THEME, plan_tier: 'solo', lifecycle_status: 'active' })
+    const resolver = new TenantContextResolver(store)
+    const registry = new GuestRegistry(store)
+    const ctx = resolver.resolveBySlug('gamma')
+    store.setLifecycleStatus(tenant.tenant_id, 'suspended')
+    // A MISS on a suspended tenant still throws the liveness error (the read runs the guard on every path) —
+    // so a suspended couple can't distinguish a miss from a hit by error vs silent-false.
+    expect(codeOfThrow(() => registry.removeForWedding(ctx, 'sms:+absent', 'wed_mine'))).toBe('PRODUCT.TENANT_NOT_USABLE')
+  })
 })

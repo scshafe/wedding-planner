@@ -514,10 +514,12 @@ function handleUpdate(
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Guest-management dispatch (Phase 21) — planner-only CRUD over the guest registry. The opaque recipient_ref
-// is carried in the BODY (never the URL), so the route is a single 3-segment `/t/:slug/guests` with the verb
-// selecting the op. Authorization is a CAPABILITY decision (planner allow / couple forbidden -> 403), checked
-// before any body parse — a couple is rejected before a malformed body could distinguish anything.
+// Guest-management dispatch (Phase 21 + Phase 24) — CRUD over the guest registry. The opaque recipient_ref is
+// carried in the BODY (never the URL), so the route is a single 3-segment `/t/:slug/guests` with the verb
+// selecting the op. Authorization is now PER-METHOD: `list`/`remove` are RESOURCE-SCOPED (planner: whole
+// tenant; couple: their bound wedding's guests, via `manageScope`), and `register` is a CAPABILITY a couple
+// lacks (`authorizeRegister` -> 403) — checked as the FIRST statement of the register handler, before any body
+// parse, so a couple POST (even a duplicate ref) is 403 and never reaches the 409 cross-wedding oracle.
 // ---------------------------------------------------------------------------------------------------
 
 function dispatchGuests(
@@ -526,18 +528,33 @@ function dispatchGuests(
   req: ApiRequest,
   deps: GuestHandlerDeps,
 ): ApiResponse {
-  if (deps.authorizer.authorizeManage(principal) === 'forbidden') throw forbidden()
-  if (req.method === 'GET') return handleGuestList(context, deps)
-  if (req.method === 'POST') return handleGuestRegister(context, req, deps)
-  if (req.method === 'DELETE') return handleGuestRemove(context, req, deps)
+  if (req.method === 'GET') return handleGuestList(context, principal, deps)
+  if (req.method === 'POST') return handleGuestRegister(context, principal, req, deps)
+  if (req.method === 'DELETE') return handleGuestRemove(context, principal, req, deps)
   throw methodNotAllowed()
 }
 
-function handleGuestList(context: TenantContext, deps: GuestHandlerDeps): ApiResponse {
-  return { status: 200, body: { guests: deps.registry.list(context) } }
+function handleGuestList(context: TenantContext, principal: Principal, deps: GuestHandlerDeps): ApiResponse {
+  // Scope from the MINTED principal (never the body). Planner: the whole tenant partition; couple: only their
+  // bound wedding's guests (the registry filters; an unbound couple yields []).
+  const scope = deps.authorizer.manageScope(principal)
+  const guests =
+    scope.kind === 'all'
+      ? deps.registry.list(context)
+      : deps.registry.listForWedding(context, scope.wedding_id)
+  return { status: 200, body: { guests } }
 }
 
-function handleGuestRegister(context: TenantContext, req: ApiRequest, deps: GuestHandlerDeps): ApiResponse {
+function handleGuestRegister(
+  context: TenantContext,
+  principal: Principal,
+  req: ApiRequest,
+  deps: GuestHandlerDeps,
+): ApiResponse {
+  // Capability check FIRST (before the body parse + the referential-integrity 404 + the duplicate 409): a
+  // couple is 403 regardless of body shape or whether the ref already exists — so the tenant-global
+  // recipient_ref 409 (a cross-wedding existence oracle) is never reachable by a couple.
+  if (deps.authorizer.authorizeRegister(principal) === 'forbidden') throw forbidden()
   const body = parseObjectBody(req.rawBody)
   const recipient_ref = requireString(body, 'recipient_ref')
   const wedding_id = requireString(body, 'wedding_id')
@@ -551,11 +568,25 @@ function handleGuestRegister(context: TenantContext, req: ApiRequest, deps: Gues
   return { status: 201, body: { guest } }
 }
 
-function handleGuestRemove(context: TenantContext, req: ApiRequest, deps: GuestHandlerDeps): ApiResponse {
+function handleGuestRemove(
+  context: TenantContext,
+  principal: Principal,
+  req: ApiRequest,
+  deps: GuestHandlerDeps,
+): ApiResponse {
+  // Body carries ONLY the delete key (recipient_ref); the wedding scope comes from the MINTED principal, so a
+  // body-smuggled wedding_id can't widen a couple's reach. Body-parse-before-scope is fine here (unlike
+  // register): there is no capability denial for remove (both roles may remove, just scoped) and a malformed
+  // couple body yields the same 400 a planner's would — no distinguisher.
+  const scope = deps.authorizer.manageScope(principal)
   const body = parseObjectBody(req.rawBody)
   const recipient_ref = requireString(body, 'recipient_ref')
-  // Idempotent: an absent/foreign ref returns removed:false (no throw, no oracle for the trusted planner).
-  const removed = deps.registry.remove(context, recipient_ref)
+  // Idempotent: an absent/foreign/sibling-wedding ref returns removed:false (no throw, no oracle). The couple
+  // path deletes ONLY on a wedding_id match; every miss is byte-identical {removed:false}.
+  const removed =
+    scope.kind === 'all'
+      ? deps.registry.remove(context, recipient_ref)
+      : deps.registry.removeForWedding(context, recipient_ref, scope.wedding_id)
   return { status: 200, body: { removed } }
 }
 

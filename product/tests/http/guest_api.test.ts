@@ -22,12 +22,15 @@ import {
 } from '@wedding-planner/product'
 
 /**
- * Phase 21 Step 4 — the planner-only JSON guest API (`GET/POST/DELETE /t/:slug/guests`). The opaque
- * recipient_ref travels in the BODY (no `:id` sub-path). Proves: planner CRUD happy paths; couple→403 /
- * anon→401 on every verb; tenant isolation (a planner never sees another tenant's guests, and a
- * cross-tenant wedding_id reads back the masked 404); duplicate→409; register-to-missing-wedding→404;
- * idempotent remove; body-smuggled tenant_id inert. (CSRF lives at the web layer — not here; the JSON API
- * is Bearer-only and not CSRF-reachable.)
+ * Phase 21 + Phase 24 — the JSON guest API (`GET/POST/DELETE /t/:slug/guests`). The opaque recipient_ref
+ * travels in the BODY (no `:id` sub-path). Proves the PLANNER (whole-tenant) CRUD happy paths; tenant
+ * isolation (a planner never sees another tenant's guests, and a cross-tenant wedding_id reads back the
+ * masked 404); duplicate→409; register-to-missing-wedding→404; idempotent remove; body-smuggled tenant_id
+ * inert. Phase 24 adds the COUPLE-scoped slice: a couple lists ONLY their wedding's guests and removes them,
+ * register stays planner-only (couple→403 even for a duplicate ref — never reaching the 409 oracle), and
+ * every couple remove-miss (absent / sibling-wedding / smuggled-wedding_id) is byte-identical {removed:false}
+ * with the sibling binding untouched. anon→401 on every verb. (CSRF lives at the web layer — not here; the
+ * JSON API is Bearer-only and not CSRF-reachable.)
  */
 
 const THEME: Tenant['theme'] = {
@@ -93,7 +96,7 @@ function makeWedding(w: World, slug: string, plannerToken: string): string {
   return (res.body as { wedding: Wedding }).wedding.wedding_id
 }
 
-describe('guest JSON API — planner-only CRUD', () => {
+describe('guest JSON API — planner CRUD + couple-scoped list/remove', () => {
   let w: World
   beforeEach(() => {
     w = makeWorld()
@@ -140,13 +143,65 @@ describe('guest JSON API — planner-only CRUD', () => {
     expect((res.body as { removed: boolean }).removed).toBe(false)
   })
 
-  it('a couple is forbidden (403) on every verb (capability denial, not a resource probe)', () => {
+  it('couple register stays planner-only: 403 — even for a duplicate ref, never reaching the 409 oracle', () => {
     const planner = token(w, 'alpha', { role: 'planner' })
     const weddingId = makeWedding(w, 'alpha', planner)
+    // A ref already registered (to the couple's OWN wedding) by the planner.
+    expect(w.api.handle(req('POST', '/t/alpha/guests', { token: planner, body: { recipient_ref: 'sms:+exists', wedding_id: weddingId, guest_id: 'g1' } })).status).toBe(201)
     const couple = token(w, 'alpha', { role: 'couple', wedding_id: weddingId })
-    expect(w.api.handle(req('GET', '/t/alpha/guests', { token: couple })).status).toBe(403)
-    expect(w.api.handle(req('POST', '/t/alpha/guests', { token: couple, body: { recipient_ref: 'x', wedding_id: weddingId, guest_id: 'g' } })).status).toBe(403)
-    expect(w.api.handle(req('DELETE', '/t/alpha/guests', { token: couple, body: { recipient_ref: 'x' } })).status).toBe(403)
+    // Fresh ref and an already-registered ref are INDISTINGUISHABLE to the couple — both 403, no 409 leak.
+    const fresh = w.api.handle(req('POST', '/t/alpha/guests', { token: couple, body: { recipient_ref: 'sms:+fresh', wedding_id: weddingId, guest_id: 'g2' } }))
+    const dup = w.api.handle(req('POST', '/t/alpha/guests', { token: couple, body: { recipient_ref: 'sms:+exists', wedding_id: weddingId, guest_id: 'g3' } }))
+    expect(fresh.status).toBe(403)
+    expect(JSON.stringify(dup)).toBe(JSON.stringify(fresh))
+    // The 403 precedes the body parse: a malformed couple body is the same 403, not a 400.
+    expect(w.api.handle(req('POST', '/t/alpha/guests', { token: couple, body: { junk: true } })).status).toBe(403)
+  })
+
+  it('couple lists ONLY their own wedding\'s guests (a sibling wedding\'s guest never appears)', () => {
+    const planner = token(w, 'alpha', { role: 'planner' })
+    const mine = makeWedding(w, 'alpha', planner)
+    const sibling = makeWedding(w, 'alpha', planner)
+    expect(w.api.handle(req('POST', '/t/alpha/guests', { token: planner, body: { recipient_ref: 'sms:+mine', wedding_id: mine, guest_id: 'gm' } })).status).toBe(201)
+    expect(w.api.handle(req('POST', '/t/alpha/guests', { token: planner, body: { recipient_ref: 'sms:+sib', wedding_id: sibling, guest_id: 'gs' } })).status).toBe(201)
+    const couple = token(w, 'alpha', { role: 'couple', wedding_id: mine })
+    const list = w.api.handle(req('GET', '/t/alpha/guests', { token: couple }))
+    expect(list.status).toBe(200)
+    const guests = (list.body as { guests: { recipient_ref: string; wedding_id: string }[] }).guests
+    expect(guests).toHaveLength(1)
+    expect(guests[0]?.recipient_ref).toBe('sms:+mine')
+    // The planner still sees BOTH (whole-tenant view unchanged).
+    expect((w.api.handle(req('GET', '/t/alpha/guests', { token: planner })).body as { guests: unknown[] }).guests).toHaveLength(2)
+  })
+
+  it('couple removes their OWN guest (true), and the binding is gone', () => {
+    const planner = token(w, 'alpha', { role: 'planner' })
+    const mine = makeWedding(w, 'alpha', planner)
+    expect(w.api.handle(req('POST', '/t/alpha/guests', { token: planner, body: { recipient_ref: 'sms:+mine', wedding_id: mine, guest_id: 'gm' } })).status).toBe(201)
+    const couple = token(w, 'alpha', { role: 'couple', wedding_id: mine })
+    const del = w.api.handle(req('DELETE', '/t/alpha/guests', { token: couple, body: { recipient_ref: 'sms:+mine' } }))
+    expect(del.status).toBe(200)
+    expect((del.body as { removed: boolean }).removed).toBe(true)
+    expect((w.api.handle(req('GET', '/t/alpha/guests', { token: couple })).body as { guests: unknown[] }).guests).toHaveLength(0)
+  })
+
+  it('couple remove-miss is byte-identical for absent / sibling-wedding / smuggled-wedding_id (no oracle), sibling untouched', () => {
+    const planner = token(w, 'alpha', { role: 'planner' })
+    const mine = makeWedding(w, 'alpha', planner)
+    const sibling = makeWedding(w, 'alpha', planner)
+    expect(w.api.handle(req('POST', '/t/alpha/guests', { token: planner, body: { recipient_ref: 'sms:+sib', wedding_id: sibling, guest_id: 'gs' } })).status).toBe(201)
+    const couple = token(w, 'alpha', { role: 'couple', wedding_id: mine })
+    // (1) a genuinely absent ref.
+    const absent = w.api.handle(req('DELETE', '/t/alpha/guests', { token: couple, body: { recipient_ref: 'sms:+absent' } }))
+    // (2) a ref bound to a SIBLING wedding in the same tenant.
+    const sib = w.api.handle(req('DELETE', '/t/alpha/guests', { token: couple, body: { recipient_ref: 'sms:+sib' } }))
+    // (3) a body-smuggled wedding_id (the sibling's) must NOT widen the couple's reach.
+    const smuggled = w.api.handle(req('DELETE', '/t/alpha/guests', { token: couple, body: { recipient_ref: 'sms:+sib', wedding_id: sibling } }))
+    expect(JSON.stringify(absent)).toBe(JSON.stringify(sib))
+    expect(JSON.stringify(smuggled)).toBe(JSON.stringify(absent))
+    expect((absent.body as { removed: boolean }).removed).toBe(false)
+    // The sibling binding is still there for the planner.
+    expect((w.api.handle(req('GET', '/t/alpha/guests', { token: planner })).body as { guests: unknown[] }).guests).toHaveLength(1)
   })
 
   it('an anonymous request is unauthorized (401) on every verb', () => {

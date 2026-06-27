@@ -149,7 +149,7 @@ export class ProductWebUi {
 
   /** GET /t/:slug — list (or `?wedding=ID` detail / `?view=guests` management), themed strictly by status. */
   #console(req: ApiRequest, slug: string): HttpResult {
-    // ?view=guests — the planner-only guest-management page (Phase 21).
+    // ?view=guests — the guest-management page (Phase 21 planner; Phase 24 couple, scoped to their wedding).
     if (queryParam(req.path, 'view') === 'guests') return this.#guestsPage(req, slug)
 
     const weddingId = queryParam(req.path, 'wedding')
@@ -200,11 +200,13 @@ export class ProductWebUi {
   }
 
   /**
-   * GET /t/:slug?view=guests — the planner-only guest-management page (Phase 21). TWO `api.handle()` reads:
-   * GUESTS FIRST (planner-only — a couple gets 403 here and never sees the wedding list), then weddings (for
-   * the picker). Rendered only on 200/200; if EITHER read is non-200 it takes the SAME `#renderNonData`
-   * masking as every other page (no half-page, no distinguishable split). `invalid` re-renders with a generic
-   * notice after a failed create (the PRG re-render).
+   * GET /t/:slug?view=guests — the guest-management page. TWO `api.handle()` reads: GUESTS FIRST, then
+   * weddings (for the picker). Since Phase 24 a COUPLE also gets 200 here (their wedding's guests, scoped by
+   * the JSON layer); the add-guest form on the page is a capability affordance — a couple's submit forwards to
+   * the planner-only `POST /guests` and takes the honest themed 403 re-render (no role signal exists to hide
+   * it, same call Phase 23 made for wedding-create). Rendered only on 200/200; if EITHER read is non-200 it
+   * takes the SAME `#renderNonData` masking as every other page (no half-page, no distinguishable split).
+   * `invalid` re-renders with a generic notice after a failed create (the PRG re-render).
    */
   #guestsPage(req: ApiRequest, slug: string, invalid = false): HttpResult {
     const token = readSessionCookie(req.headers.cookie)
