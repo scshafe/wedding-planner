@@ -228,7 +228,13 @@ any sane calibration. Containment:
   every STRUCTURAL assertion still passes (unique optimum, margin `0.0118>0.01`, non-sep, b=0 identity) and add the
   MF1 margin-erosion comment. Update `scoring_model.md`'s `money` row to name messaging cost. GREEN.
 
-- [ ] **Step 4 — The loop keystones (the tradeoff is live; the forge loses).** In `loop-orchestrator/tests/loop/`:
+- [x] **Step 4 — The loop keystones (the tradeoff is live; the forge loses).** (DONE — 726 tests green.
+  `messaging_money_forge_keystone.test.ts`: (A) the term is LIVE — messaging cost strictly rises with cadence at
+  (s=1,b=0) `[0,3,5,6]`-sends, batching consolidates to cost LESS, and higher cost strictly lowers the ratio at
+  fixed planning_value; (B) the firewall — shave-count / downgrade-channel / suppress-claim each
+  `forgeWouldWinAbsentGate` + `onlyIntegrityFailed` + rejected, honest candidate gate-clean. Champion/candidate
+  share identical params (sole mover = messaging cost), distinguished by genome_id. Convergence to (3,1,1)
+  already covered green in genome_keystone.test.ts.) In `loop-orchestrator/tests/loop/`:
   (a) a **genome keystone** proving the money term is LIVE and creates a real tradeoff — `messaging_money_total_cents`
   strictly rises with cadence at the **(s=1, b=0)** cell (`[0,9,15,18]`; NOT at the b=1 optimum where it's
   `[0,9,9,12]` — flat 1→2), PLUS an **equal-planning_value / lower-cost-scores-strictly-higher** relation (the
