@@ -49,3 +49,6 @@ export type { BillingEvent } from './generated/billing_event'
 // The untrusted inbound-webhook wire payload (Phase 19): validated at the guest inbound edge before the
 // messaging port normalizes it. Carries the canonical Channel (drift-guarded against shared/src/domain/channel).
 export type { InboundWebhook } from './generated/inbound_webhook'
+// The guest binding (Phase 21): a planner-managed (tenant_id, recipient_ref) → wedding segmentation record,
+// validated at registration. A guest is NOT a session Principal — identity is the opaque recipient_ref alone.
+export type { Guest } from './generated/guest'

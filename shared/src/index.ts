@@ -95,4 +95,5 @@ export type {
   Wedding,
   BillingEvent,
   InboundWebhook,
+  Guest,
 } from './contracts/contract_types'

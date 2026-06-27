@@ -129,35 +129,35 @@ fail-closed) does **not** defeat HttpOnly. Routing split, tenant isolation, no-o
 A guest binding is now an **external write surface** (a planner submits it), so it earns a canonical contract
 like every other product aggregate (`tenant`/`wedding`/`billing_event`/`inbound_webhook`).
 
-- [ ] `product/schemas/guest_schema.json` — `$id` `…/schemas/guest.json`; fields `tenant_id`, `recipient_ref`,
+- [x] `product/schemas/guest_schema.json` — `$id` `…/schemas/guest.json`; fields `tenant_id`, `recipient_ref`,
       `wedding_id`, `guest_id`, all required non-empty strings (`minLength: 1`, a sane `maxLength`).
       `recipient_ref` stays **opaque** (no carrier pattern — no `sms:`/`whatsapp:` assertion in the domain;
       just a bounded non-empty string), consistent with the port's vendor-agnostic discipline. Reuse the
       `maxLength` the `inbound_webhook` ref fields already use (one consistent opaque-ref bound).
-- [ ] Register it in `shared/src/contracts/contract_manifest.ts` (`ContractKey` += `'guest'`; a `CONTRACT_DEFINITIONS`
+- [x] Register it in `shared/src/contracts/contract_manifest.ts` (`ContractKey` += `'guest'`; a `CONTRACT_DEFINITIONS`
       entry under `product`). `npm run gen:types`.
-- [ ] Align `GuestBinding` (in `guest_registry.ts`) to the generated `Guest` type (single source of truth, the
+- [x] Align `GuestBinding` (in `guest_registry.ts`) to the generated `Guest` type (single source of truth, the
       way `Wedding`/`Tenant` are used) — re-export/alias rather than a parallel hand-written interface.
-- [ ] Update the count: `shared/tests/contracts/schema_registry.test.ts` 17 → **18**; `README.md` "17 schemas" →
+- [x] Update the count: `shared/tests/contracts/schema_registry.test.ts` 17 → **18**; `README.md` "17 schemas" →
       "18"; `contract_manifest.ts` doc comment "17 … files" → "18".
-- [ ] **Gate:** build + test + lint green.
+- [x] **Gate:** build + test + lint green.
 
 ## Step 2 — `GuestRegistry` CRUD + `TenantScopedRepository.delete`
 
-- [ ] `TenantScopedRepository.delete(context, id): boolean` — `guard(context)` then `#partition?.delete(id)`;
+- [x] `TenantScopedRepository.delete(context, id): boolean` — `guard(context)` then `#partition?.delete(id)`;
       returns whether a record existed. (Mirrors `read`/`put`: context-keyed, no cross-tenant reach, no oracle —
       a foreign/missing id returns `false` via the same path.) Update the class doc to list `delete`.
-- [ ] `GuestRegistry.list(context): readonly GuestBinding[]` — delegates to `#repo.list(context)` (tenant
+- [x] `GuestRegistry.list(context): readonly GuestBinding[]` — delegates to `#repo.list(context)` (tenant
       partition only).
-- [ ] `GuestRegistry.remove(context, recipient_ref): boolean` — delegates to `#repo.delete`. **Idempotent**
+- [x] `GuestRegistry.remove(context, recipient_ref): boolean` — delegates to `#repo.delete`. **Idempotent**
       (removing an absent ref returns `false`, no throw — a trusted planner is not probed; no oracle).
-- [ ] `GuestRegistry.register` now **rejects a duplicate**: read-before-write within the context; an
+- [x] `GuestRegistry.register` now **rejects a duplicate**: read-before-write within the context; an
       already-bound `recipient_ref` throws `PRODUCT.GUEST_ALREADY_REGISTERED` (prevents a silent rebind). Then
       **validate the assembled binding against the `guest` schema** (`getSchemaRegistry().assertValid<Guest>`)
       before `put` — mirrors `WeddingRepository.create`. (Compose's single demo seed is unaffected.)
-- [ ] Add `PRODUCT.GUEST_ALREADY_REGISTERED` to the product error space; map it → **409** in `product_api.ts`'s
+- [x] Add `PRODUCT.GUEST_ALREADY_REGISTERED` to the product error space; map it → **409** in `product_api.ts`'s
       `errorToResponse`.
-- [ ] **Gate:** build + test + lint green; existing Phase 18/19 messaging tests still green.
+- [x] **Gate:** build + test + lint green; existing Phase 18/19 messaging tests still green.
 
 ## Step 3 — `GuestAuthorizer` (planner-only management)
 

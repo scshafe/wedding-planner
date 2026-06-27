@@ -30,6 +30,9 @@ import { WeddingPlannerError } from '@wedding-planner/shared'
  *                                     → constant 401, the fourth token namespace, peer of NO_OPERATOR)
  *   - PRODUCT.FORGED_WEBHOOK_PROVIDER a credential reached a check without the store's brand (Phase 19)
  *   - PRODUCT.DUPLICATE_WEBHOOK_TOKEN two seeded provider webhook tokens collided (Phase 19)
+ *   - PRODUCT.GUEST_ALREADY_REGISTERED a planner registered a recipient_ref already bound under the tenant
+ *                                     (Phase 21; → honest 409 to the trusted planner, NOT masked — like
+ *                                     DUPLICATE_SLUG, the absent-vs-suspended mask is an anonymous-edge property)
  *
  * The read path deliberately raises NOTHING for a not-found / cross-tenant id — it returns a
  * value-level `undefined` so a foreign id is indistinguishable from a missing one (no existence

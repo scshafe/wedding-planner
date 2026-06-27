@@ -337,8 +337,11 @@ function errorToResponse(error: WeddingPlannerError): ApiResponse {
       return RESP_BAD_REQUEST
     // DUPLICATE_SLUG / ILLEGAL_LIFECYCLE_TRANSITION: honest 409s to the TRUSTED operator (NOT masked — the
     // absent-vs-suspended mask is an ANONYMOUS-edge property; the operator legitimately sees tenant state).
+    // GUEST_ALREADY_REGISTERED joins these: an honest 409 to the TRUSTED planner (a duplicate recipient_ref) —
+    // like DUPLICATE_SLUG, the mask is an anonymous-edge property; the planner legitimately sees their own state.
     case 'PRODUCT.DUPLICATE_SLUG':
     case 'PRODUCT.ILLEGAL_LIFECYCLE_TRANSITION':
+    case 'PRODUCT.GUEST_ALREADY_REGISTERED':
       return RESP_CONFLICT
     case 'PRODUCT.METHOD_NOT_ALLOWED':
       return RESP_METHOD_NOT_ALLOWED

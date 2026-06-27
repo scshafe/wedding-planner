@@ -1,5 +1,5 @@
 /**
- * Generate TypeScript types from the 17 JSON Schema contracts.
+ * Generate TypeScript types from the 18 JSON Schema contracts.
  *
  * What: reads each contract named in shared/src/contracts/contract_manifest.ts and emits a
  *   TypeScript module under shared/src/contracts/generated/<key>.ts via json-schema-to-typescript.

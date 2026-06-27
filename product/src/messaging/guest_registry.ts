@@ -1,3 +1,6 @@
+import { getSchemaRegistry, type Guest } from '@wedding-planner/shared'
+
+import { ProductError } from '../product_error'
 import { type TenantContext } from '../tenant/tenant_context'
 import { TenantScopedRepository } from '../tenant/tenant_scoped_repository'
 import type { TenantLivenessCheck } from '../tenant/tenant_store'
@@ -22,23 +25,21 @@ import type { RecipientRef } from './messaging_port'
  * lookup key across all channels for that sender (opaque; no carrier parsing) — channel-scoped binding is a
  * possible later refinement, not needed while a sender maps to one wedding.
  *
- * SEEDING this rung is offline (compose seeds one demo guest); a planner-facing guest-management surface
- * (register/list/remove over the authenticated edge) is a deferred rung.
+ * Phase 21 adds the planner-facing management surface (`register`/`list`/`remove`) over the authenticated
+ * edge: `register` rejects a duplicate ref and validates against the `guest` contract; `list`/`remove` are
+ * tenant-scoped (isolation inherited); `remove` is idempotent. Compose still seeds one offline demo guest.
  *
  * related: tenant_scoped_repository.ts (the inherited isolation), guest_qa_responder.ts (the consumer of the
  * bound wedding's facts), messaging_port.ts (RecipientRef / the inbound from_ref).
  */
 
-/** A guest bound to one wedding within one tenant. `tenant_id` is COMPARE-only (the repo never routes by it). */
-export interface GuestBinding {
-  readonly tenant_id: string
-  /** The opaque sender handle — the lookup KEY (the inbound `from_ref`). Never a carrier-parsed value. */
-  readonly recipient_ref: RecipientRef
-  /** The single wedding this sender is bound to — the segmentation scope for every reply. */
-  readonly wedding_id: string
-  /** The guest's stable identifier within the wedding (for Q&A correlation; never a routing key). */
-  readonly guest_id: string
-}
+/**
+ * A guest bound to one wedding within one tenant — the `guest` contract (single source of truth), the way
+ * `Wedding`/`Tenant` are used. `tenant_id` is COMPARE-only (the repo never routes by it); `recipient_ref` is
+ * the opaque sender handle (the inbound `from_ref`) and the lookup KEY. Registration validates against the
+ * schema before persisting.
+ */
+export type GuestBinding = Guest
 
 /** What a caller supplies to bind a sender (the tenant comes from the CONTEXT, never the input). */
 export interface RegisterGuestInput {
@@ -57,10 +58,22 @@ export class GuestRegistry {
 
   /**
    * Bind a sender ref to a wedding within the context's tenant. The binding's tenant_id is taken from the
-   * CONTEXT (the repo vetoes a mismatch), so a binding can never be planted under another tenant.
+   * CONTEXT (the repo vetoes a mismatch), so a binding can never be planted under another tenant. REJECTS a
+   * duplicate `recipient_ref` (PRODUCT.GUEST_ALREADY_REGISTERED) rather than silently rebinding it, then
+   * VALIDATES the assembled binding against the `guest` contract before persisting (mirrors
+   * WeddingRepository.create).
    */
   register(context: TenantContext, input: RegisterGuestInput): GuestBinding {
-    return this.#repo.put(context, { tenant_id: context.tenant_id, ...input })
+    if (this.#repo.read(context, input.recipient_ref) !== undefined) {
+      throw new ProductError(
+        'PRODUCT.GUEST_ALREADY_REGISTERED',
+        `A guest is already registered for that recipient under this tenant; remove it first to rebind.`,
+        { context: { tenant_id: context.tenant_id } },
+      )
+    }
+    const binding: GuestBinding = { tenant_id: context.tenant_id, ...input }
+    getSchemaRegistry().assertValid<Guest>('guest', binding)
+    return this.#repo.put(context, binding)
   }
 
   /**
@@ -69,5 +82,19 @@ export class GuestRegistry {
    */
   lookup(context: TenantContext, from_ref: RecipientRef): GuestBinding | undefined {
     return this.#repo.read(context, from_ref)
+  }
+
+  /** Every guest bound within the context's tenant (planner-facing list; only ever this tenant's partition). */
+  list(context: TenantContext): readonly GuestBinding[] {
+    return this.#repo.list(context)
+  }
+
+  /**
+   * Remove a guest binding by `recipient_ref` within the context's tenant. IDEMPOTENT: an absent/foreign ref
+   * is a no-op returning `false` (a trusted planner is never probed — no existence oracle). Returns whether a
+   * binding existed.
+   */
+  remove(context: TenantContext, recipient_ref: RecipientRef): boolean {
+    return this.#repo.delete(context, recipient_ref)
   }
 }

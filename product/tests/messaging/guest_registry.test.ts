@@ -93,11 +93,36 @@ describe('GuestRegistry', () => {
     expect(JSON.stringify(w.registry)).not.toContain('sms:+1555')
   })
 
-  it('overwrites a re-registered ref (last binding wins) rather than duplicating', () => {
+  it('rejects a duplicate ref (no silent rebind) and preserves the original binding', () => {
     const w = makeWorld()
     w.registry.register(w.ctxA, { recipient_ref: 'sms:+1555', wedding_id: 'wed_1', guest_id: 'g_1' })
-    w.registry.register(w.ctxA, { recipient_ref: 'sms:+1555', wedding_id: 'wed_2', guest_id: 'g_2' })
+    expect(
+      codeOfThrow(() =>
+        w.registry.register(w.ctxA, { recipient_ref: 'sms:+1555', wedding_id: 'wed_2', guest_id: 'g_2' }),
+      ),
+    ).toBe('PRODUCT.GUEST_ALREADY_REGISTERED')
+    // The first binding is untouched — a duplicate is a no-op, never a rebind.
     const found = w.registry.lookup(w.ctxA, 'sms:+1555') as GuestBinding
-    expect(found.wedding_id).toBe('wed_2')
+    expect(found.wedding_id).toBe('wed_1')
+  })
+
+  it('lists only the context tenant partition, and remove is idempotent + tenant-scoped', () => {
+    const w = makeWorld()
+    w.registry.register(w.ctxA, { recipient_ref: 'sms:+1555', wedding_id: 'wed_1', guest_id: 'g_1' })
+    w.registry.register(w.ctxA, { recipient_ref: 'sms:+1666', wedding_id: 'wed_1', guest_id: 'g_2' })
+    w.registry.register(w.ctxB, { recipient_ref: 'sms:+1777', wedding_id: 'wed_9', guest_id: 'g_9' })
+
+    // list is tenant-scoped: A sees its two, never B's.
+    expect(w.registry.list(w.ctxA).map((g) => g.recipient_ref).sort()).toEqual(['sms:+1555', 'sms:+1666'])
+    expect(w.registry.list(w.ctxB).map((g) => g.recipient_ref)).toEqual(['sms:+1777'])
+
+    // remove returns true when present, false (idempotent no-op) when absent.
+    expect(w.registry.remove(w.ctxA, 'sms:+1555')).toBe(true)
+    expect(w.registry.remove(w.ctxA, 'sms:+1555')).toBe(false)
+    expect(w.registry.lookup(w.ctxA, 'sms:+1555')).toBeUndefined()
+
+    // A cannot remove B's binding (foreign ref → false no-op; B's binding intact).
+    expect(w.registry.remove(w.ctxA, 'sms:+1777')).toBe(false)
+    expect(w.registry.lookup(w.ctxB, 'sms:+1777')).toBeDefined()
   })
 })

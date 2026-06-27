@@ -15,6 +15,8 @@ import type { TenantLivenessCheck } from './tenant_store'
  *   - `read` returns `T | undefined`: a foreign-tenant id and a never-existed id return the
  *     byte-identical `undefined` via the SAME code path, with no side effect — no existence oracle.
  *   - `list` returns only the context partition's records, ever.
+ *   - `delete` removes by id WITHIN the context partition only; a foreign/missing id is a byte-identical
+ *     no-op returning `false` via the same path (no cross-tenant reach, no existence oracle).
  *   - `put` stamps nothing; it COMPARES `record.tenant_id` to the context and vetoes a mismatch
  *     (PRODUCT.CROSS_TENANT_WRITE) on create and update alike. The payload field is compare-only.
  *   - There is NO unscoped / all-tenants accessor (inv. 9), and the backing partition map is
@@ -90,5 +92,15 @@ export class TenantScopedRepository<T extends TenantOwned> {
     }
     partition.set(this.idOf(record), record)
     return record
+  }
+
+  /**
+   * Remove a record by id within the context's partition. Returns whether a record existed (so a caller can
+   * be idempotent). A foreign/missing id is a no-op returning `false` via the SAME path — no cross-tenant
+   * reach (the partition is the context's), no existence oracle.
+   */
+  delete(context: TenantContext, id: string): boolean {
+    this.guard(context)
+    return this.#readPartition(context)?.delete(id) ?? false
   }
 }
