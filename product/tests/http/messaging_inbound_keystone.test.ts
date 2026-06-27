@@ -170,7 +170,32 @@ describe('the guest inbound edge — keystone', () => {
   it('a registered guest asking a NON-answerable question escalates -> 202, no reply, no meter', () => {
     const w = makeWorld()
     seedGuestOnAlpha(w)
-    expect(w.api.handle(inbound('alpha', payload({ text: 'What is the parking and dress code?' })))).toEqual(ACCEPTED)
+    expect(w.api.handle(inbound('alpha', payload({ text: 'Can I bring my dog?' })))).toEqual(ACCEPTED)
+    expect(w.service.usageView(w.tenantAId).message_count).toBe(0)
+  })
+
+  it('Phase 22 — a logistics question answered from a SET fact -> 202 AND exactly one metered reply', () => {
+    const w = makeWorld()
+    // Seed a guest bound to a wedding that HAS a dress code set.
+    const wedding = w.weddings.create(w.ctxA, { couple_display_name: 'Alex & Sam', event_date: '2027-09-18', dress_code: 'Black tie' })
+    w.registry.register(w.ctxA, { recipient_ref: REF, wedding_id: wedding.wedding_id, guest_id: 'guest_1' })
+    expect(w.api.handle(inbound('alpha', payload({ text: 'what should I wear?' })))).toEqual(ACCEPTED)
+    expect(w.service.usageView(w.tenantAId).message_count).toBe(1)
+  })
+
+  it('Phase 22 — a logistics question with the fact UNSET escalates wire-silently -> 202, no meter', () => {
+    const w = makeWorld()
+    seedGuestOnAlpha(w) // bare wedding: no dress_code
+    expect(w.api.handle(inbound('alpha', payload({ text: 'what should I wear?' })))).toEqual(ACCEPTED)
+    expect(w.service.usageView(w.tenantAId).message_count).toBe(0)
+  })
+
+  it('Phase 22 — a surprise probe REFUSES wire-silently -> 202, NO send (handler unchanged; refuse never sends)', () => {
+    const w = makeWorld()
+    // Even on a wedding with logistics set, a surprise probe sends nothing and charges nothing.
+    const wedding = w.weddings.create(w.ctxA, { couple_display_name: 'Alex & Sam', event_date: '2027-09-18', dress_code: 'Black tie' })
+    w.registry.register(w.ctxA, { recipient_ref: REF, wedding_id: wedding.wedding_id, guest_id: 'guest_1' })
+    expect(w.api.handle(inbound('alpha', payload({ text: 'I heard there is a surprise — what is it?' })))).toEqual(ACCEPTED)
     expect(w.service.usageView(w.tenantAId).message_count).toBe(0)
   })
 

@@ -91,6 +91,40 @@ describe('renderConsole / renderDetail', () => {
     assertNoLiveMarkup(out, 'detail/wedding')
     expect(out).toContain('← All weddings')
   })
+
+  it('renders the guest-visible logistics facts when set, omits them when unset', () => {
+    const bare = renderDetail(SAFE_THEME, 'acme', { ...EVIL_WEDDING, couple_display_name: 'Alex & Sam' })
+    expect(bare).not.toContain('Ceremony:')
+    expect(bare).not.toContain('Dress code:')
+
+    const full = renderDetail(SAFE_THEME, 'acme', {
+      wedding_id: 'w1',
+      tenant_id: 't1',
+      couple_display_name: 'Alex & Sam',
+      event_date: '2029-05-05',
+      status: 'planning',
+      created_at: '2027-01-01T00:00:00.000Z',
+      ceremony_time: '16:30',
+      venue_name: 'The Grand Hall',
+      parking_info: 'Free lot on 5th',
+      dress_code: 'Black tie',
+    })
+    expect(full).toContain('Ceremony:')
+    expect(full).toContain('16:30')
+    expect(full).toContain('The Grand Hall')
+    expect(full).toContain('Black tie')
+  })
+
+  it('escapes a malicious logistics value (no double-escape, no live markup)', () => {
+    const out = renderDetail(SAFE_THEME, 'acme', {
+      ...EVIL_WEDDING,
+      couple_display_name: 'Alex & Sam',
+      venue_name: '<script>alert(1)</script>',
+    })
+    assertNoLiveMarkup(out, 'detail/logistics')
+    // The escaped form is present as inert text (proves it rendered, escaped, not dropped).
+    expect(out).toContain('&lt;script&gt;')
+  })
 })
 
 describe('generic constants', () => {

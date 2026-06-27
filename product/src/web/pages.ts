@@ -213,6 +213,13 @@ function csrfField(csrfToken: string): SafeHtml {
 
 /** The themed single-wedding detail page. Reached via `?wedding=<id>` on the console route. */
 export function renderDetail(theme: Tenant['theme'], slug: string, wedding: Wedding): string {
+  // Guest-visible logistics facts — rendered (escaped via `html`) only when the planner/couple has set them.
+  // These are exactly the facts the guest-messaging responder answers from (see guest_qa_responder.ts).
+  const logistics: SafeHtml[] = []
+  if (wedding.ceremony_time !== undefined) logistics.push(html`<p>Ceremony: <strong>${wedding.ceremony_time}</strong></p>`)
+  if (wedding.venue_name !== undefined) logistics.push(html`<p>Venue: <strong>${wedding.venue_name}</strong></p>`)
+  if (wedding.parking_info !== undefined) logistics.push(html`<p>Parking: ${wedding.parking_info}</p>`)
+  if (wedding.dress_code !== undefined) logistics.push(html`<p>Dress code: ${wedding.dress_code}</p>`)
   return themedShell(
     theme,
     slug,
@@ -221,6 +228,7 @@ export function renderDetail(theme: Tenant['theme'], slug: string, wedding: Wedd
   <div class="card">
     <h2>${wedding.couple_display_name}</h2>
     <p>Date: <strong>${wedding.event_date}</strong></p>
+    ${logistics}
     <p>Status: <span class="status">${wedding.status}</span></p>
     <p class="note">Wedding id: <code>${wedding.wedding_id}</code> · created ${wedding.created_at}</p>
     <p class="note">Active strategy: <a href="/t/${slug}/strategy">the platform’s data-optimized planning defaults</a> (applied to every wedding in this workspace).</p>
