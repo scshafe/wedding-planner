@@ -18,6 +18,17 @@ import type { TenantLivenessCheck } from '../tenant/tenant_store'
  * related: tenant_scoped_repository.ts (the isolation boundary), tenant_context.ts.
  */
 
+/**
+ * The OPTIONAL, guest-visible logistics fields on the wedding aggregate (the Phase-22 set). One canonical
+ * list so the API handler (the `patchOptional` clear-to-absent key set, Phase 25), the web form body builder,
+ * and any future logistics consumer share ONE source of truth — two hand-maintained copies would drift. These
+ * four are GUEST-SHAREABLE only (never surprise/PII; see the schema field descriptions + guest_qa_responder).
+ */
+export const WEDDING_LOGISTICS_FIELDS = ['ceremony_time', 'venue_name', 'parking_info', 'dress_code'] as const
+
+/** One of the optional guest-visible logistics fields. */
+export type WeddingLogisticsField = (typeof WEDDING_LOGISTICS_FIELDS)[number]
+
 /** Input to create a wedding. Identity (wedding_id), ownership (tenant_id), and created_at are owned here. */
 export interface CreateWeddingInput {
   readonly couple_display_name: string

@@ -25,7 +25,7 @@ import type { MessagingService } from '../messaging/messaging_service'
 import { ProductError } from '../product_error'
 import { describeStrategy, type StrategyGuidance } from '../strategy/strategy_guidance'
 import type { TenantContext, TenantContextResolver } from '../tenant/tenant_context'
-import type { CreateWeddingInput, WeddingRepository } from '../wedding/wedding_repository'
+import type { CreateWeddingInput, WeddingLogisticsField, WeddingRepository } from '../wedding/wedding_repository'
 import type { ApiRequest, ApiResponse } from './api_message'
 import { splitPath } from './path'
 
@@ -434,7 +434,10 @@ function handleCreate(
   const body = parseObjectBody(req.rawBody)
   // Optional logistics fields: read as strings here (present-but-not-a-string -> 400), spread in only when
   // present (a literal `k: undefined` would Ajv-reject as the optional `type:string` and pollute the
-  // record's keys), and let the wedding contract validate pattern/maxLength downstream.
+  // record's keys), and let the wedding contract validate pattern/maxLength downstream. NOTE (Phase 25): unlike
+  // PUT, create has NO clear-to-absent sentinel — an empty optional (`dress_code:''`) is malformed on POST
+  // (nothing to clear on a new resource) and the contract's minLength/pattern rejects it -> 400; omit it to
+  // leave the field unset. The '' = clear semantics live ONLY in handleUpdate.
   const ceremony_time = optionalString(body, 'ceremony_time')
   const venue_name = optionalString(body, 'venue_name')
   const parking_info = optionalString(body, 'parking_info')
@@ -481,12 +484,23 @@ function handleUpdate(
   const existing = deps.weddings.get(context, weddingId)
   if (existing === undefined) return RESP_NOT_FOUND // own-but-absent: identical masked 404
   const body = parseObjectBody(req.rawBody)
-  // Each optional logistics field: keep the existing value when the patch omits it, else take the patched
-  // (string-validated) value. Resolves to `string | undefined`, so it is SPREAD in only when defined (a
-  // literal `ceremony_time: undefined` would Ajv-reject as the optional `type:string` and pollute the keys).
-  // NOTE: an omitted field PRESERVES the existing value; there is no clear-to-absent sentinel this rung.
-  const patchOptional = (key: 'ceremony_time' | 'venue_name' | 'parking_info' | 'dress_code'): string | undefined =>
-    body[key] === undefined ? existing[key] : requireString(body, key)
+  // Each optional logistics field is THREE-WAY on update (Phase 25 — PUT is patch semantics):
+  //   key ABSENT          -> PRESERVE the stored value (a direct JSON caller omitting a key is unchanged)
+  //   key present as ''    -> CLEAR to absent: return `undefined` so it flows through the SAME conditional
+  //                          spread below (`...(x===undefined?{}:{x})`) and the key is dropped from the record
+  //   key present, value   -> validate (`requireString`) + set
+  // The '' clear-sentinel is recognized ONLY here (the optional-logistics branch of PUT) — `requireString`/
+  // `optionalString` are untouched, so the CREATE path stays byte-for-byte (a POST `dress_code:''` still 400s
+  // via the contract: nothing to clear on create, so an empty optional is malformed — omit it to leave unset).
+  // The match is on the RAW body value with STRICT equality, so a non-string ([''], 0, null, {}) is neither
+  // absent nor '' and falls to `requireString` -> 400; a cleared field is then re-validated as a valid absent
+  // optional. Clearing strictly REDUCES guest disclosure (the responder escalates instead of answering).
+  const patchOptional = (key: WeddingLogisticsField): string | undefined => {
+    const raw = body[key]
+    if (raw === undefined) return existing[key]
+    if (raw === '') return undefined
+    return requireString(body, key)
+  }
   // Reconstruct from the existing record + the patch; identity (wedding_id) comes from the ROUTE and
   // ownership (tenant_id) from the CONTEXT, both applied LAST so a smuggled body field cannot re-target.
   const ceremony_time = patchOptional('ceremony_time')

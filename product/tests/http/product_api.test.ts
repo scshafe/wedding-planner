@@ -190,6 +190,62 @@ describe('product_api — endpoints', () => {
     expect(weddingOf(bare)).not.toHaveProperty('ceremony_time')
   })
 
+  it('PUT clears an optional logistics field to absent via the "" sentinel (Phase 25), three-way per field', () => {
+    const token = plannerToken(w)
+    const created = w.api.handle(
+      req('POST', '/t/alpha/weddings', {
+        token,
+        body: {
+          couple_display_name: 'Clr & Able',
+          event_date: '2028-07-07',
+          ceremony_time: '17:00',
+          venue_name: 'The Old Mill',
+          parking_info: 'Lot B',
+          dress_code: 'Black tie',
+        },
+      }),
+    )
+    const id = weddingOf(created).wedding_id
+
+    // '' clears dress_code to absent; an OMITTED field (ceremony_time/venue_name/parking_info) is PRESERVED.
+    const cleared = w.api.handle(req('PUT', `/t/alpha/weddings/${id}`, { token, body: { dress_code: '' } }))
+    expect(cleared.status).toBe(200)
+    expect(weddingOf(cleared)).not.toHaveProperty('dress_code')
+    expect(weddingOf(cleared)).toMatchObject({ ceremony_time: '17:00', venue_name: 'The Old Mill', parking_info: 'Lot B' })
+
+    // The clear PERSISTS (re-read shows the field still absent — not a transient view).
+    const reread = w.api.handle(req('GET', `/t/alpha/weddings/${id}`, { token }))
+    expect(weddingOf(reread)).not.toHaveProperty('dress_code')
+
+    // A non-empty value still SETS; the other three each clear independently.
+    const reset = w.api.handle(req('PUT', `/t/alpha/weddings/${id}`, { token, body: { dress_code: 'Cocktail' } }))
+    expect(weddingOf(reset)).toMatchObject({ dress_code: 'Cocktail' })
+    const clearAll = w.api.handle(
+      req('PUT', `/t/alpha/weddings/${id}`, { token, body: { ceremony_time: '', venue_name: '', parking_info: '', dress_code: '' } }),
+    )
+    expect(clearAll.status).toBe(200)
+    for (const k of ['ceremony_time', 'venue_name', 'parking_info', 'dress_code']) {
+      expect(weddingOf(clearAll)).not.toHaveProperty(k)
+    }
+
+    // The '' sentinel is RAW + strict: a non-string ([''], 0, null) is neither absent nor '' -> requireString -> 400
+    // (cannot reach a clear, cannot persist an invalid record).
+    expect(w.api.handle(req('PUT', `/t/alpha/weddings/${id}`, { token, body: { dress_code: [''] } })).status).toBe(400)
+    expect(w.api.handle(req('PUT', `/t/alpha/weddings/${id}`, { token, body: { dress_code: 0 } })).status).toBe(400)
+    expect(w.api.handle(req('PUT', `/t/alpha/weddings/${id}`, { token, body: { dress_code: null } })).status).toBe(400)
+  })
+
+  it('POST keeps the create contract: an empty optional ("" = clear) is NOT a thing on create -> 400 (Phase 25)', () => {
+    const token = plannerToken(w)
+    const post = (body: Record<string, unknown>) =>
+      w.api.handle(req('POST', '/t/alpha/weddings', { token, body: { couple_display_name: 'x', event_date: '2028-01-01', ...body } })).status
+    // The '' clear sentinel lives ONLY on PUT; on POST every optional '' is malformed (contract minLength/pattern).
+    expect(post({ dress_code: '' })).toBe(400)
+    expect(post({ ceremony_time: '' })).toBe(400)
+    expect(post({ venue_name: '' })).toBe(400)
+    expect(post({ parking_info: '' })).toBe(400)
+  })
+
   it('rejects malformed logistics fields -> 400 (bad ceremony_time pattern, null, numeric, too long)', () => {
     const token = plannerToken(w)
     const post = (body: Record<string, unknown>) =>
