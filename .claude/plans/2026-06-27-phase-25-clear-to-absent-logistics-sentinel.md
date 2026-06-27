@@ -56,7 +56,7 @@ absent (the existing conditional-spread already omits an `undefined` field). The
   the web builder AND the `patchOptional` key type (the two hand-maintained copies will otherwise drift);
   do NOT extract a sub-aggregate yet (premature at four flat fields). All adopted below.
 
-- [ ] **Step 1 — JSON API update handler (`product_api.ts`).** Change `patchOptional` in `handleUpdate`
+- [x] **Step 1 — JSON API update handler (`product_api.ts`).** Change `patchOptional` in `handleUpdate`
   to the three-way rule: `body[key] === undefined` ⇒ `existing[key]` (preserve); `body[key] === ''` ⇒
   `undefined` (clear); else `requireString(body, key)` (set). Leave `handleCreate` untouched. Update the
   inline doc (replace the "no clear-to-absent sentinel this rung" note with the new semantics). New
@@ -65,7 +65,7 @@ absent (the existing conditional-spread already omits an `undefined` field). The
   three; PUT `dress_code: 0`/`null` still 400 (non-string); **POST `dress_code: ""` still 400 (create
   contract locked)**. `npm run build && npm test && npm run lint` green.
 
-- [ ] **Step 2 — Web form (`product_web_ui.ts` + `pages.ts`).** Give `weddingBodyFromForm` a `clearable`
+- [x] **Step 2 — Web form (`product_web_ui.ts` + `pages.ts`).** Give `weddingBodyFromForm` a `clearable`
   flag: when true, include the four optional fields even when empty (`body[key] = value` unconditionally);
   when false/absent (create), keep omitting empties. `#weddingUpdate` calls it with `clearable: true`;
   `#weddingCreate` unchanged. Surface the affordance on the EDIT form only: a small note (e.g. "blank to
@@ -73,7 +73,7 @@ absent (the existing conditional-spread already omits an `undefined` field). The
   reuses) — escaped static text, no new field. Update `pages.test.ts` for the note; update doc comments on
   `weddingBodyFromForm` / `#weddingUpdate`. Green.
 
-- [ ] **Step 3 — Web-flow + e2e tests.** `tests/web/wedding_web.test.ts`: a planner sets `dress_code` via
+- [x] **Step 3 — Web-flow + e2e tests.** `tests/web/wedding_web.test.ts`: a planner sets `dress_code` via
   the edit form, then submits the form with `dress_code` blank ⇒ the detail page no longer shows the dress
   code (cleared); a blank optional on the CREATE form is still just unset (regression); preserve-on-resend
   still holds. Extend the compose e2e (`tests/runtime/compose.test.ts`, the existing
@@ -81,7 +81,7 @@ absent (the existing conditional-spread already omits an `undefined` field). The
   guest question goes back to `escalated` (no new meter increment) — proving the clear reaches the guest
   responder end-to-end. Green.
 
-- [ ] **Step 4 — Docs + memory + handoff.** Write **ADR 0025**, a memory file
+- [x] **Step 4 — Docs + memory + handoff.** Write **ADR 0025**, a memory file
   `clear-to-absent-logistics-sentinel.md` (+ index it in `MEMORY.md`, linking
   [[html-wedding-create-edit-forms]] / [[richer-guest-visible-facts]]), and update
   `.claude/handoff.local.md` (where we are, next action, fresh context). Final
