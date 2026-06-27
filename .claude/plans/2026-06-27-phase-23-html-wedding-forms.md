@@ -63,7 +63,9 @@ re-render discipline. **No new safety machinery, no new schema, no contract chan
   → appears on the detail page); invalid body ⇒ re-render with notice (no leak); malformed-slug precedence
   over CSRF. Green.
 
-- [ ] **Step 4 — e2e + docs.** A `product_web_ui`-level (or composed-surface) e2e: a planner creates a wedding
+- [x] **Step 4 — e2e + docs.** Compose e2e: a planner logs into the HTML front door, sets `dress_code` via
+  the edit form, and a guest texting "dress code" goes escalated(meter 0)→answered(meter 1). ADR 0023, memory
+  [[html-wedding-create-edit-forms]] (+ MEMORY.md index), handoff updated. 781 tests green. A `product_web_ui`-level (or composed-surface) e2e: a planner creates a wedding
   with `dress_code` through the browser form, then a guest texts the inbound webhook and the metered responder
   answers the dress-code question — closing the demo loop Phase 22 opened. Write **ADR 0023**, a memory file
   (+ index it in `MEMORY.md`), and update `.claude/handoff.local.md`. Final green; commit.

@@ -179,3 +179,53 @@ describe('composeProductSurface — the engine↔surface strategy seam (Phase 17
     expect(() => composeProductSurface(baseConfig({ championStrategy: malformed as never }))).toThrow()
   })
 })
+
+describe('composeProductSurface — Phase 23 e2e: a browser-set logistic reaches the guest reply', () => {
+  const WEBHOOK = 'compose-webhook-token-0123456789'
+
+  function form(method: string, path: string, fields: Record<string, string>, cookie?: string): ApiRequest {
+    const headers: Record<string, string | undefined> = { 'content-type': 'application/x-www-form-urlencoded' }
+    if (cookie !== undefined) headers.cookie = cookie
+    return { method, path, headers, rawBody: new URLSearchParams(fields).toString() }
+  }
+
+  function dressCodeInbound(ref: string, pmr: string): ApiRequest {
+    return {
+      method: 'POST',
+      path: '/t/demo/messaging/inbound',
+      headers: { authorization: `Bearer ${WEBHOOK}` },
+      rawBody: JSON.stringify({ channel: 'sms', from_ref: ref, text: 'What is the dress code?', provider_message_ref: pmr }),
+    }
+  }
+
+  it('a planner sets dress_code via the BROWSER edit form, then a guest texting "dress code" gets a metered reply (escalated→answered)', () => {
+    const { ui, api, messaging, demo } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+    const ref = demo?.guestRecipientRef as string
+    const tenantId = demo?.tenantId as string
+
+    // BEFORE: dress_code is unset on the demo wedding, so the question ESCALATES — no send, no meter.
+    expect(api.handle(dressCodeInbound(ref, 'pmr_before')).status).toBe(202)
+    expect(messaging.usageView(tenantId).message_count).toBe(0)
+
+    // The planner logs in through the HTML front door and sets the dress code via the edit form.
+    const loginRes = ui.handle(form('POST', '/t/demo/login', { role: 'planner' }))
+    const cookie = `wp_session=${/wp_session=([^;]+)/.exec(loginRes.headers['set-cookie'] ?? '')?.[1]}`
+    const detail = ui.handle({ method: 'GET', path: `/t/demo?wedding=${demo?.weddingId}`, headers: { cookie } })
+    const csrf = /name="_csrf" value="([^"]+)"/.exec(detail.body as string)?.[1] as string
+    const saved = ui.handle(
+      form(
+        'POST',
+        '/t/demo/weddings/update',
+        { _csrf: csrf, wedding_id: demo?.weddingId as string, couple_display_name: 'Alex & Sam', event_date: '2027-09-18', status: 'planning', dress_code: 'Cocktail attire' },
+        cookie,
+      ),
+    )
+    expect(saved.status).toBe(303)
+
+    // AFTER: the SAME question is now ANSWERED from the browser-set fact — one metered reply fires.
+    expect(api.handle(dressCodeInbound(ref, 'pmr_after')).status).toBe(202)
+    const usage = messaging.usageView(tenantId)
+    expect(usage.message_count).toBe(1)
+    expect(usage.billed_total_cents).toBeGreaterThan(0)
+  })
+})
