@@ -485,12 +485,13 @@ function dispatchMessaging(
 /**
  * POST /t/:slug/messaging/inbound — a guest texted in. Validate the wire shape (honest 400 to the trusted
  * provider, post-auth so not a pre-auth oracle), normalize via the provider port, then run the reply path:
- *   1. PER-TENANT inbound dedupe on provider_message_ref (doddy P0): a re-delivered ref is an idempotent
- *      receive — early-return the uniform 202, no second reply, no second charge.
+ *   1. PER-TENANT idempotent receive (doddy P0): a ref already SUCCESSFULLY REPLIED TO is a no-op — early-return
+ *      the uniform 202, no second reply, no second charge.
  *   2. Resolve the guest binding (segmentation): an unregistered/foreign ref -> uniform 202, no reply (no oracle).
  *   3. Load the bound wedding through the SCOPED repo (context + wedding_id — two gates): absent -> uniform 202.
  *   4. Decide from ONLY the guest-visible projection; on `answered`, send the reply through the METER with a
- *      PLATFORM-MINTED idempotency_key (the inbound receipt id — NEVER the untrusted provider ref).
+ *      PLATFORM-MINTED idempotency_key (never the untrusted provider ref), then mark the ref replied AFTER the
+ *      send succeeds (doddy P1: commit-after-success — a send failure stays retryable and the ack stays 202).
  * Identity is sourced from trusted state ONLY — the registry's stored recipient_ref + the bound wedding_id,
  * never a body field — so a body-smuggled guest_id/wedding_id is inert.
  */
@@ -501,10 +502,9 @@ function handleInbound(context: TenantContext, req: ApiRequest, deps: MessagingH
   // Normalize the UNTRUSTED provider payload into a domain message (opaque fields copied; received_at stamped).
   const message = deps.port.inbound(payload)
 
-  // (1) Idempotent receive: only a FRESH provider_message_ref triggers a reply; the minted receipt id is the
-  //     platform-controlled idempotency key for the send.
-  const receipt = deps.receipts.recordInbound(context, message.provider_message_ref)
-  if (!receipt.fresh) return RESP_ACCEPTED
+  // (1) Idempotent receive: a ref we have already replied to (and charged) is a no-op. Checked BEFORE any
+  //     registry/wedding read so a re-delivery of an answered message touches nothing.
+  if (deps.receipts.seen(context, message.provider_message_ref)) return RESP_ACCEPTED
 
   // (2) Segmentation: the registry binds the sender ref to ONE wedding. Unknown ref -> no reply (no oracle).
   const binding = deps.registry.lookup(context, message.sender_ref)
@@ -517,12 +517,23 @@ function handleInbound(context: TenantContext, req: ApiRequest, deps: MessagingH
   // (4) Decide from the guest-visible projection ONLY; reply (metered) only when we can answer.
   const outcome = deps.responder.respond(projectGuestVisibleFacts(wedding), message.body)
   if (outcome.action === 'answered' && outcome.reply_text !== undefined) {
-    deps.service.send(context.tenant_id, {
-      channel: message.channel,
-      recipient_ref: binding.recipient_ref,
-      body: outcome.reply_text,
-      idempotency_key: receipt.receipt_id,
-    })
+    const replyId = deps.receipts.mintReplyId()
+    try {
+      deps.service.send(context.tenant_id, {
+        channel: message.channel,
+        recipient_ref: binding.recipient_ref,
+        body: outcome.reply_text,
+        idempotency_key: replyId,
+      })
+    } catch (error) {
+      // A send failure is a DROPPED reply, never a 500 oracle and never a suppressed message: the ref is NOT
+      // marked replied (so a re-delivery can retry), and the synchronous ack stays the uniform 202. Only the
+      // send's own structured failures are swallowed here; an unexpected error still surfaces as a 500 bug.
+      if (error instanceof WeddingPlannerError) return RESP_ACCEPTED
+      throw error
+    }
+    // Commit-after-success: only now is the ref a no-op for future re-deliveries.
+    deps.receipts.markReplied(context, message.provider_message_ref, replyId)
   }
   return RESP_ACCEPTED
 }

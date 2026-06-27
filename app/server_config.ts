@@ -23,9 +23,6 @@ import type { DemoSeed } from '@wedding-planner/product'
 /** The floor for a platform credential token (operator + provider-webhook). Below this, boot fails closed. */
 export const MIN_CREDENTIAL_TOKEN_LENGTH = 16
 
-/** @deprecated alias retained for callers; identical to {@link MIN_CREDENTIAL_TOKEN_LENGTH}. */
-export const MIN_OPERATOR_TOKEN_LENGTH = MIN_CREDENTIAL_TOKEN_LENGTH
-
 /** Where a resolved credential token came from — gates whether the boot log may print its value. */
 export type TokenSource = 'env-provided' | 'generated'
 

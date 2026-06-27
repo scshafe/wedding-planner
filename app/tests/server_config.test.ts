@@ -1,7 +1,7 @@
 import type { DemoSeed } from '@wedding-planner/product'
 import { describe, expect, it } from 'vitest'
 
-import { buildBootLog, type Env, MIN_OPERATOR_TOKEN_LENGTH, resolveServerConfig } from '../server_config'
+import { buildBootLog, type Env, MIN_CREDENTIAL_TOKEN_LENGTH, resolveServerConfig } from '../server_config'
 
 /**
  * Step-4(d) coverage for the entrypoint's two security-load-bearing decisions — the operator-token policy and
@@ -28,7 +28,7 @@ describe('resolveServerConfig — the operator-token policy (fail-closed)', () =
   })
 
   it('FAILS CLOSED on a provided token below the length floor', () => {
-    const env: Env = { WP_OPERATOR_TOKEN: 'x'.repeat(MIN_OPERATOR_TOKEN_LENGTH - 1) }
+    const env: Env = { WP_OPERATOR_TOKEN: 'x'.repeat(MIN_CREDENTIAL_TOKEN_LENGTH - 1) }
     expect(() => resolveServerConfig(env, constGen('gen'))).toThrow(/at least 16 characters/)
   })
 

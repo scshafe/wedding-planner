@@ -1,4 +1,4 @@
-import type { Channel } from '@wedding-planner/shared'
+import type { Channel, InboundWebhook } from '@wedding-planner/shared'
 
 /**
  * @canonical messaging_port -- the provider-agnostic boundary to a messaging provider (the no-lock-in port).
@@ -74,15 +74,12 @@ export interface DeliveryStatus {
 
 /**
  * A raw, provider-shaped inbound payload — whatever a provider's inbound webhook would POST. UNTRUSTED:
- * every field is opaque and NEVER authoritative. The HTTP edge that VALIDATES this (schema + CSRF) and the
- * guest persona that consumes it land with the guest-channel rung; here it only types the port's `inbound`.
+ * every field is opaque and NEVER authoritative. This is an ALIAS of the generated `InboundWebhook` contract
+ * type (product/schemas/inbound_webhook_schema.json — the @canonical source of truth), so the wire shape has
+ * ONE declaration: the HTTP edge validates against that schema and hands the result straight to `inbound`, and
+ * a schema field change flows here at compile time (no silent drift). `channel` is the canonical `Channel`.
  */
-export interface RawInboundPayload {
-  readonly channel: Channel
-  readonly from_ref: RecipientRef
-  readonly text: string
-  readonly provider_message_ref: string
-}
+export type RawInboundPayload = InboundWebhook
 
 /** A guest message received from a recipient (a guest texting in). UNTRUSTED external input. */
 export interface InboundMessage {

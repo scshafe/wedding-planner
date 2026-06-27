@@ -137,7 +137,7 @@ export {
 // wedding by an opaque sender ref via the GuestRegistry (the segmentation gate, inheriting tenant isolation),
 // and answered by a product-side deterministic GuestQaResponder (no loop import; deny-by-fact-classification).
 export { GuestRegistry, type GuestBinding, type RegisterGuestInput } from './messaging/guest_registry'
-export { InboundReceiptLog, type InboundReceiptResult } from './messaging/inbound_receipt_log'
+export { InboundReceiptLog } from './messaging/inbound_receipt_log'
 export {
   type GuestQaResponder,
   type GuestQaOutcome,

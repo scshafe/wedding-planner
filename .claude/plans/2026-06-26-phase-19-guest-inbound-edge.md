@@ -1,6 +1,7 @@
 # Phase 19 — The guest inbound edge: a guest texts in, the AI replies (metered)
 
-**Status:** IN PROGRESS — Step 0 (design reviews) complete; Steps 1–4 pending.
+**Status:** COMPLETE — all steps ticked (695 tests green; architect + doddy APPROVE design AND built code; the
+meter fires from the request pipeline end-to-end). ADR 0019, memory [[guest-messaging-inbound-edge]].
 **Branch:** `build/phase-3-generalize-search` (the open review artifact for `main`; Phases 3–18 build on it; this continues it)
 **Predecessor:** Phase 18 (the messaging provider boundary + the meter) — complete, 651 tests green.
 
@@ -150,7 +151,9 @@ must-fixes folded into the steps below:
     unknown → undefined; responder answers event_date, escalates unknown, and a surprise-classified fact is
     unreachable for EVERY input text.
 
-- [ ] **Step 4 — Integrate: the metered reply path + the oracle keystones + the seed.**
+- [x] **Step 4 — Integrate: the metered reply path + the oracle keystones + the seed.** (DONE — 695 tests
+  green; the meter fires end-to-end; built-code review APPLIED doddy P1 commit-after-success + P2 receipt-log
+  unit test + architect's two simplifications. ADR 0019 + memory + handoff written.)
   - `product_api.ts` inbound handler, full path: per-tenant **inbound dedupe receipt** (keyed on
     `provider_message_ref`, `#`-private — first occurrence processes, replay → uniform 202 no-op) → registry
     `lookup(context, from_ref)` → on a binding, load the bound wedding via the scoped repo (`context` +
