@@ -1,4 +1,11 @@
-import { deepFreeze, type StrategyGenome, type Tenant, type Wedding, WeddingPlannerError } from '@wedding-planner/shared'
+import {
+  deepFreeze,
+  getSchemaRegistry,
+  type StrategyGenome,
+  type Tenant,
+  type Wedding,
+  WeddingPlannerError,
+} from '@wedding-planner/shared'
 
 import type { OperatorCredentialStore } from '../auth/operator_credential'
 import type { Principal } from '../auth/principal'
@@ -240,14 +247,19 @@ export class ProductApi {
   }
 
   /**
-   * Dispatch the provider-webhook messaging surface (auth already passed). This rung wires ONLY the inbound
-   * acknowledgement skeleton: POST `/t/:slug/messaging/inbound` -> the frozen 202. Body validation, guest
-   * resolution, and the metered reply land in the following steps. Every accepted path returns the SAME
-   * `RESP_ACCEPTED` constant (the uniform-202 invariant).
+   * Dispatch the provider-webhook messaging surface (auth already passed). POST `/t/:slug/messaging/inbound`
+   * VALIDATES the untrusted body against the `inbound_webhook` contract (a malformed/non-conformant payload is
+   * an honest 400 to the trusted provider — NOT masked; the absent-vs-suspended mask is an anonymous-edge
+   * property and webhook auth has already passed), then returns the frozen 202. Guest resolution + the metered
+   * reply land in the following steps; for now every VALID, accepted inbound returns the SAME `RESP_ACCEPTED`
+   * constant (the uniform-202 invariant). The validation runs AFTER auth, so a 400 is not a pre-auth oracle.
    */
   #dispatchMessaging(req: ApiRequest, segments: readonly string[]): ApiResponse {
     if (segments.length === 4 && segments[3] === 'inbound') {
       if (req.method !== 'POST') throw methodNotAllowed()
+      const body = parseObjectBody(req.rawBody)
+      // Validate the wire shape (channel enum / required opaque refs). Throws CONTRACT.VALIDATION_FAILED -> 400.
+      getSchemaRegistry().assertValid('inbound_webhook', body)
       return RESP_ACCEPTED
     }
     throw routeNotFound()

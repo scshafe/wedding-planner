@@ -257,8 +257,10 @@ describe('product_api — endpoints', () => {
   describe('the provider-webhook inbound edge', () => {
     const WH = 'wh-secret'
 
-    it('an authenticated POST -> the frozen 202 constant (uniform acknowledgement)', () => {
-      const res = w.api.handle(req('POST', '/t/alpha/messaging/inbound', { token: WH, body: { any: 'thing' } }))
+    const validInbound = { channel: 'sms', from_ref: 'guest_ref_1', text: 'hello', provider_message_ref: 'pmr_1' }
+
+    it('an authenticated POST of a valid payload -> the frozen 202 constant (uniform acknowledgement)', () => {
+      const res = w.api.handle(req('POST', '/t/alpha/messaging/inbound', { token: WH, body: validInbound }))
       expect(res).toEqual({ status: 202, body: { status: 'accepted' } })
     })
 
@@ -283,6 +285,22 @@ describe('product_api — endpoints', () => {
     it('after auth, a non-POST method on inbound -> 405, and an unknown messaging sub-route -> 404', () => {
       expect(w.api.handle(req('GET', '/t/alpha/messaging/inbound', { token: WH })).status).toBe(405)
       expect(w.api.handle(req('POST', '/t/alpha/messaging/nope', { token: WH, body: {} })).status).toBe(404)
+    })
+
+    it('a well-formed inbound payload validates -> 202; a malformed/non-conformant one -> honest 400 (post-auth)', () => {
+      const good = { channel: 'sms', from_ref: 'guest_ref_1', text: 'when is the wedding?', provider_message_ref: 'pmr_1' }
+      expect(w.api.handle(req('POST', '/t/alpha/messaging/inbound', { token: WH, body: good }))).toEqual({
+        status: 202,
+        body: { status: 'accepted' },
+      })
+      // Missing required field, a non-enum channel, and an extra property are each a 400 (additionalProperties:false).
+      expect(w.api.handle(req('POST', '/t/alpha/messaging/inbound', { token: WH, body: { channel: 'sms', from_ref: 'g', text: 'hi' } })).status).toBe(400)
+      expect(w.api.handle(req('POST', '/t/alpha/messaging/inbound', { token: WH, body: { ...good, channel: 'carrier_pigeon' } })).status).toBe(400)
+      expect(w.api.handle(req('POST', '/t/alpha/messaging/inbound', { token: WH, body: { ...good, extra: 'x' } })).status).toBe(400)
+      // An empty from_ref/text (minLength 1) is rejected at the edge.
+      expect(w.api.handle(req('POST', '/t/alpha/messaging/inbound', { token: WH, body: { ...good, from_ref: '' } })).status).toBe(400)
+      // No body at all -> 400 (parseObjectBody).
+      expect(w.api.handle(req('POST', '/t/alpha/messaging/inbound', { token: WH })).status).toBe(400)
     })
 
     it('an unknown tenant -> 404 BEFORE webhook auth (tenant-resolve precedence; mask holds vs a secret-holder)', () => {

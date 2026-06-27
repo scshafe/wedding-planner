@@ -90,4 +90,5 @@ export type {
   Tenant,
   Wedding,
   BillingEvent,
+  InboundWebhook,
 } from './contracts/contract_types'

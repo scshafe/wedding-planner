@@ -119,7 +119,9 @@ must-fixes folded into the steps below:
     identical 401; authed POST → 202; authed non-POST → 405; the 202 is the frozen shared constant; a webhook
     token is absent in the session/operator namespaces and vice-versa.
 
-- [ ] **Step 2 — The 17th schema + body validation + normalize.**
+- [x] **Step 2 — The 17th schema + body validation.** (DONE — 669 tests green; `inbound_webhook` is the
+  17th contract, channel drift-guarded; the inbound edge validates the wire shape → honest 400 post-auth.
+  Normalization (`port.inbound`) deferred to Step 4 where its consumer (registry lookup) lives — no dead code.)
   - New `product/schemas/inbound_message_schema.json` — validates `RawInboundPayload`
     (`channel` ∈ canonical enum, non-empty `from_ref`/`text`/`provider_message_ref`, `additionalProperties:
     false`). `npm run gen:types` to regenerate the contract type.

@@ -46,3 +46,6 @@ export type { TrustedFeed } from './generated/trusted_feed'
 export type { Tenant } from './generated/tenant'
 export type { Wedding } from './generated/wedding'
 export type { BillingEvent } from './generated/billing_event'
+// The untrusted inbound-webhook wire payload (Phase 19): validated at the guest inbound edge before the
+// messaging port normalizes it. Carries the canonical Channel (drift-guarded against shared/src/domain/channel).
+export type { InboundWebhook } from './generated/inbound_webhook'

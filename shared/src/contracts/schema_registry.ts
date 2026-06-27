@@ -129,7 +129,7 @@ export class SchemaRegistry {
 let cachedRegistry: SchemaRegistry | undefined
 
 /**
- * The process-wide schema registry. Built lazily on first use (reads + compiles the 16 contracts
+ * The process-wide schema registry. Built lazily on first use (reads + compiles the 17 contracts
  * once) so that importing the shared barrel does not perform filesystem work until validation is
  * actually needed.
  */
