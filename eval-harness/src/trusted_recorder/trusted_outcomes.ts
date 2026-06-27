@@ -10,6 +10,7 @@
  * related: trusted_recorder.ts, gates/integrity_gate.ts.
  */
 
+import { type Channel } from '@wedding-planner/shared'
 import {
   type CategoryBookingStatus,
   type CoupleSessionReason,
@@ -233,6 +234,40 @@ export interface TrustedVisionAlignmentRecord {
 }
 
 export type RecordVisionAlignmentInput = TrustedVisionAlignmentRecord
+
+/**
+ * What the harness independently observed about the MESSAGING the product sent ONE guest under the genome's
+ * reminder policy (Phase 20) — the trusted backing for the claimed `messaging_money_total_cents`, which feeds
+ * the North-Star money_cost DENOMINATOR. The product claims its per-guest send via `guest.messaging.metered`
+ * (channel + message_count); the scorer prices the CLAIMED stream (`Σ message_count × MESSAGE_COST_CENTS
+ * [channel]`). This is the trusted backing — Stage B re-derives, from persona ground truth + the trusted
+ * genome policy ALONE (via the shared `honestMessagesSent` fact + the guest's `preferred_channel`), both the
+ * honest send count and the channel, never from the product's claim. One is recorded per guest WITH SENDS
+ * (the `honestMessagesSent > 0` guard, identical on both stages), keyed by `guest_id`.
+ *
+ * money_cost is LOWER-better (a denominator term), so the incentive is to UNDER-report. The gate field-diffs
+ * BOTH fields (each `skipWhenClaimAbsent: false`): `message_count` defends the QUANTITY (a shaved count is a
+ * veto) and `channel` defends the PRICE BASIS (a downgrade to a cheaper channel is a veto). A SUPPRESSED claim
+ * (drop a guest's send → lower sum) is caught by enumerating `allMessagingSpends()`; a FORGED claim (a guest
+ * the trusted record never observed, e.g. a 0-send guest) is caught by the missing trusted record. Like
+ * couple_session this is a SUMMED COST, so there is NO duplicate-as-forge arm (a duplicate ADDS cost —
+ * self-harm; the recorder is append-only-per-guest anyway). Like sentiment/Q&A/category/vision it backs a
+ * GRADER input (the North-Star denominator), not a VETO-GATE input — it extends the firewall without changing
+ * the integrity-gate completeness invariant.
+ *
+ * `channel` is a pure SCENARIO fact (`guest.contact.preferred_channel`), genome-free, so both stages read it
+ * identically and the field-diff never false-positives. TRIPWIRE: a future channel-choosing genome knob makes
+ * channel genome-dependent and reopens this reasoning.
+ */
+export interface TrustedMessagingSpendRecord {
+  readonly guest_id: string
+  /** The channel the guest is reachable on (`preferred_channel`); the gate diffs the claimed channel against this. */
+  readonly channel: Channel
+  /** The honest count of messages actually SENT to this guest; the gate diffs the claimed message_count against this. */
+  readonly message_count: number
+}
+
+export type RecordMessagingSpendInput = TrustedMessagingSpendRecord
 
 /** Grader-side determination of whether one hard constraint is satisfied by the final plan. */
 export interface TrustedConstraintDetermination {

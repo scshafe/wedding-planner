@@ -194,9 +194,17 @@ any sane calibration. Containment:
   `MESSAGE_PRICE_CENTS[channel][tier] > MESSAGE_COST_CENTS[channel]` for every channel × tier (product may import
   both; this keeps the deferred unification safe). No other behavior change. GREEN.
 
-- [ ] **Step 2 — The 9th effect kind: claim + trusted record + integrity reconciliation (NO scoring yet).**
-  The `guest.messaging.metered` event (telemetry constant + payload schema/type + `gen:types` + catalog +
-  manifest count); `honestMessagesSent` shared fact; Stage A emit; Stage B record; `trusted_outcomes` /
+- [x] **Step 2 — The 9th effect kind: claim + trusted record + integrity reconciliation (NO scoring yet).**
+  (DONE — 712 tests green. `guest.messaging.metered` event constant; `honestMessagesSent` shared fact (identical
+  guard both stages); Stage A emit + Stage B record (iff count>0); `TrustedMessagingSpendRecord` + recorder;
+  `MESSAGING_METERED_REPORT_EVENT_NAMES`; `detectMessagingSpendDivergences` (channel-validity guard, both fields
+  `skipWhenClaimAbsent:false`, suppression enumeration, no duplicate arm) wired in. North Star UNCHANGED — the
+  metamorphic cube stays byte-identical. integrity_messaging.test.ts: every arm + an honest-run sweep over the
+  whole cube (incl. zero-send + spacing-3 delivered-0 guests) + the joint resolution+count forge.)
+  The `guest.messaging.metered` event — **EVENT_NAME constant ONLY** (no schema $def / no `gen:types` / no
+  manifest bump: the envelope `event_name` is pattern-constrained not enum'd, and reconciled events
+  sentiment/category/vision likewise read payloads dynamically with no $def — this mirrors them exactly);
+  `honestMessagesSent` shared fact; Stage A emit; Stage B record; `trusted_outcomes` /
   `trusted_recorder`; `report_event_names`; `integrity_gate` detector + union member + wiring. Tests
   (`integrity_messaging.test.ts`): honest run → no divergence; forged (claim with no trusted record);
   field_mismatch on `message_count`; field_mismatch on `channel`; suppressed (trusted, no claim); duplicate.

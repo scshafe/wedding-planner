@@ -47,6 +47,11 @@ export const EVENT_NAMES = {
   guest_rsvp_reminded: 'guest.rsvp.reminded',
   guest_rsvp_received: 'guest.rsvp.received',
   guest_sentiment_sampled: 'guest.sentiment.sampled',
+  // PHASE 20: the per-guest metered-messaging CLAIM — how many messages were SENT to a guest under the
+  // genome's reminder policy, and on which channel — the claim the messaging_money_total_cents metric prices
+  // (channel × count) into the North-Star money_cost denominator. Reconciled by the integrity gate (the 9th
+  // effect kind) against Stage B's trusted send count, so a shaved count / downgraded channel is a veto.
+  guest_messaging_metered: 'guest.messaging.metered',
   // Integration family
   integration_availability_checked: 'integration.availability.checked',
   integration_action_attempted: 'integration.action.attempted',
@@ -73,6 +78,10 @@ export const METRIC_CODES = {
   needless_escalation_count: 'needless_escalation_count',
   // Outcome quality within budget
   budget_variance_pct: 'budget_variance_pct',
+  // PHASE 20: the total money the genome's reminder policy SPENT on messaging, in integer cents
+  // (Σ per-guest message_count × MESSAGE_COST_CENTS[channel]). Feeds the North-Star money_cost denominator
+  // alongside budget_variance_pct, so the tier-1 cadence/spacing/batching knobs trade real money. lower_better.
+  messaging_money_total_cents: 'messaging_money_total_cents',
   category_completeness_rate: 'category_completeness_rate',
   // The `quality` rubric backed offline (Phase 10): alignment of a booked, vision-sensitive category's
   // selection to the couple's ground-truth vision. Feeds planning_value.quality (the only present rubric).

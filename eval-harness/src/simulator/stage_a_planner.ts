@@ -14,6 +14,7 @@ import {
   escalationBudget,
   honestBookingApprovalSession,
   honestCategoryStatus,
+  honestMessagesSent,
   honestQaAction,
   honestQaEscalationSession,
   honestSentimentScore,
@@ -98,6 +99,8 @@ interface GuestOutcome {
   readonly resolved: boolean
   readonly remindersSent: number
   readonly sentimentScore: number
+  /** PHASE-20: the actual digest sends to this guest (feltTouches) — what the messaging meter prices. */
+  readonly messagesSent: number
 }
 
 /** Deterministically resolve one guest's RSVP outcome under a (cadence, spacing, batching) genome. */
@@ -123,7 +126,10 @@ function guestOutcome(
   // here to EMIT the claim, Stage B applies the IDENTICAL fact to RECORD the trusted observation, and
   // the integrity gate reconciles the two (so a forged/inflated/suppressed sentiment claim is vetoed).
   const sentimentScore = honestSentimentScore(needed, delivered, resolved, spacing, batching)
-  return { resolved, remindersSent, sentimentScore }
+  // PHASE-20: the messages ACTUALLY sent to this guest (digest sends) — the SHARED fact Stage B mirrors, so
+  // the claimed message_count and the trusted count are bit-identical on an honest run.
+  const messagesSent = honestMessagesSent(needed, delivered, resolved, batching)
+  return { resolved, remindersSent, sentimentScore, messagesSent }
 }
 
 /** The default Stage-A planner: RSVP resolution + sentiment as a function of `rsvp_reminder_cadence`. */
@@ -182,6 +188,19 @@ export const rsvpCadencePlanner: Planner = ({ scenario, genome, clock, ids }) =>
       guest_id: guestId,
       sentiment_score: outcome.sentimentScore,
     })
+
+    // PHASE-20: the metered-messaging CLAIM — how many messages were SENT to this guest, on which channel
+    // (the guest's `preferred_channel`, a scenario fact). The scorer prices it (channel × count) into the
+    // North-Star money_cost. EMIT IFF `messagesSent > 0` (the identical guard Stage B records under), so a
+    // zero-send guest emits nothing and the b=0/search baselines for non-senders stay byte-identical. A
+    // LYING Stage A may shave the count or downgrade the channel here — the integrity gate vetoes it.
+    if (outcome.messagesSent > 0) {
+      emit(EVENT_NAMES.guest_messaging_metered, 'comms_personalization', 'system', guestId, {
+        guest_id: guestId,
+        channel: guest.contact.preferred_channel,
+        message_count: outcome.messagesSent,
+      })
+    }
 
     // PHASE-7: handle each scripted question. The honest action is `honestQaAction(answerable_by,
     // canEscalate)` — correct for ai/refuse at any tier, but only ESCALATED (correct) for a

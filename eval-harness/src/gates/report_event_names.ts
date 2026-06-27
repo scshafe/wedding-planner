@@ -101,3 +101,18 @@ export const CATEGORY_BOOKED_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
 export const VISION_ALIGNED_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
   EVENT_NAMES.category_vision_aligned,
 ])
+
+/**
+ * PHASE 20. The product reports the MESSAGING it sent one guest via `guest.messaging.metered` — the claim the
+ * `messaging_money_total_cents` metric prices (`Σ message_count × MESSAGE_COST_CENTS[channel]`) into the
+ * North-Star money_cost DENOMINATOR. The integrity gate reconciles each (by `guest_id`) against the trusted
+ * messaging spend Stage B authors per guest-with-sends, field-diffing BOTH `message_count` (the quantity — a
+ * shaved count lowers the summed cost) and `channel` (the price basis — a downgrade to a cheaper channel
+ * lowers it), each `skipWhenClaimAbsent:false`. money_cost is LOWER-better, so SUPPRESSION (drop a guest's
+ * send) is the highest-yield attack — caught by enumerating `allMessagingSpends()`. The join key `guest_id`
+ * defends the denominator (forged/suppressed); the two fields defend the priced quantity. Summed cost ⇒ NO
+ * duplicate-as-forge arm (a duplicate ADDS cost). Backs a GRADER input (the denominator), not a VETO-GATE input.
+ */
+export const MESSAGING_METERED_REPORT_EVENT_NAMES: ReadonlySet<string> = new Set([
+  EVENT_NAMES.guest_messaging_metered,
+])

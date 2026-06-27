@@ -9,6 +9,7 @@ import {
   type RecordCoupleSessionInput,
   type RecordGuestMessageInput,
   type RecordIntegrationActionInput,
+  type RecordMessagingSpendInput,
   type RecordQaOutcomeInput,
   type RecordRsvpOutcomeInput,
   type RecordSentimentObservationInput,
@@ -19,6 +20,7 @@ import {
   type TrustedCoupleSessionRecord,
   type TrustedGuestMessageRecord,
   type TrustedIntegrationActionRecord,
+  type TrustedMessagingSpendRecord,
   type TrustedQaOutcomeRecord,
   type TrustedRsvpOutcomeRecord,
   type TrustedSentimentObservationRecord,
@@ -85,6 +87,7 @@ export class TrustedRecorder {
   private readonly qaOutcomesByCompositeKey = new Map<string, TrustedQaOutcomeRecord>()
   private readonly categoryBookingsByCategoryId = new Map<string, TrustedCategoryBookingRecord>()
   private readonly visionAlignmentsByCategoryId = new Map<string, TrustedVisionAlignmentRecord>()
+  private readonly messagingSpendsByGuestId = new Map<string, TrustedMessagingSpendRecord>()
   private runningCommittedCents = 0
   private sealed = false
 
@@ -301,6 +304,35 @@ export class TrustedRecorder {
   /** All trusted vision alignments. Feeds the integrity vision reconciliation. */
   allVisionAlignments(): readonly TrustedVisionAlignmentRecord[] {
     return [...this.visionAlignmentsByCategoryId.values()]
+  }
+
+  /**
+   * Record the harness-observed messaging the planner sent ONE guest (Phase 20). Append-only, one per
+   * guest_id. Feeds the integrity gate's messaging reconciliation (the trusted backing for the claimed
+   * `messaging_money_total_cents` → money_cost). Throws DUPLICATE_EFFECT on a repeat for the same guest.
+   */
+  recordMessagingSpend(input: RecordMessagingSpendInput): TrustedMessagingSpendRecord {
+    this.assertNotSealed('messaging_spend', input.guest_id)
+    if (this.messagingSpendsByGuestId.has(input.guest_id)) {
+      throw new EvalHarnessError(
+        'TRUSTED_RECORDER.DUPLICATE_EFFECT',
+        `Guest ${input.guest_id} already has a recorded messaging spend; the trusted record is append-only.`,
+        { context: { guest_id: input.guest_id } },
+      )
+    }
+    const record = deepFreeze<TrustedMessagingSpendRecord>({ ...input })
+    this.messagingSpendsByGuestId.set(input.guest_id, record)
+    return record
+  }
+
+  /** The trusted messaging spend for one guest, or undefined if the harness observed no sends. */
+  messagingSpend(guestId: string): TrustedMessagingSpendRecord | undefined {
+    return this.messagingSpendsByGuestId.get(guestId)
+  }
+
+  /** All trusted messaging spends. Feeds the integrity messaging reconciliation (suppression enumeration). */
+  allMessagingSpends(): readonly TrustedMessagingSpendRecord[] {
+    return [...this.messagingSpendsByGuestId.values()]
   }
 
   /** The trusted RSVP outcome for one guest, or undefined if the harness observed no resolution. */

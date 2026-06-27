@@ -8,6 +8,7 @@ import {
   escalationBudget,
   honestBookingApprovalSession,
   honestCategoryStatus,
+  honestMessagesSent,
   honestQaAction,
   honestQaEscalationSession,
   honestSentimentScore,
@@ -127,6 +128,20 @@ export function observeTrustedRecord(
       guest_id: guest.persona_id,
       sentiment_score: honestSentimentScore(reach.needed, reach.delivered, reach.resolved, spacing, batching),
     })
+    // PHASE-20: the trusted messaging spend for this guest — re-derived from the SAME shared
+    // `honestMessagesSent` fact Stage A uses (on Stage B's OWN `reach.resolved`, never a claim) + the guest's
+    // `preferred_channel`. RECORD IFF `messagesSent > 0` (the identical guard Stage A emits under), so a
+    // zero-send guest has no trusted record and a claim for one is correctly a forge. The integrity gate
+    // field-diffs the claimed channel + message_count against this, so a shaved count / downgraded channel is
+    // a veto; a dropped claim is a suppression. Bit-identical to Stage A's claim on an honest run.
+    const messagesSent = honestMessagesSent(reach.needed, reach.delivered, reach.resolved, batching)
+    if (messagesSent > 0) {
+      recorder.recordMessagingSpend({
+        guest_id: guest.persona_id,
+        channel: guest.contact.preferred_channel,
+        message_count: messagesSent,
+      })
+    }
     // PHASE-7: one trusted Q&A outcome per scripted question, re-derived from persona ground truth
     // (answerable_by) + the TRUSTED genome's escalation capability — never from Stage A's claim. Mirrors
     // Stage A's per-question emission exactly on an honest run, so the integrity gate stays load-bearing.

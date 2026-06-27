@@ -1,4 +1,4 @@
-import type { EventEnvelope } from '@wedding-planner/shared'
+import { type Channel, type EventEnvelope, isChannel } from '@wedding-planner/shared'
 import { COUPLE_SESSION_REASONS, type CoupleSessionReason } from '@wedding-planner/telemetry'
 
 import {
@@ -12,6 +12,7 @@ import {
   COMMITMENT_REPORT_EVENT_NAMES,
   COUPLE_SESSION_REPORT_EVENT_NAMES,
   INTEGRATION_REPORT_EVENT_NAMES,
+  MESSAGING_METERED_REPORT_EVENT_NAMES,
   QA_ANSWERED_REPORT_EVENT_NAMES,
   RSVP_RECEIVED_REPORT_EVENT_NAMES,
   SENTIMENT_REPORT_EVENT_NAMES,
@@ -43,7 +44,7 @@ import {
 
 export interface SelfReportDivergence {
   readonly kind: 'forged_effect' | 'field_mismatch' | 'suppressed_effect'
-  readonly effect_kind: 'commitment' | 'integration' | 'rsvp_resolution' | 'couple_session' | 'guest_sentiment' | 'qa_outcome' | 'category_booking' | 'vision_alignment'
+  readonly effect_kind: 'commitment' | 'integration' | 'rsvp_resolution' | 'couple_session' | 'guest_sentiment' | 'qa_outcome' | 'category_booking' | 'vision_alignment' | 'messaging_spend'
   readonly effect_id: string
   readonly field: string | null
   readonly claimed: unknown
@@ -811,6 +812,116 @@ function detectVisionAlignmentDivergences(
 }
 
 /**
+ * PHASE 20 — reconcile the product's claimed MESSAGING SPEND against the trusted messaging record. Every
+ * `guest.messaging.metered` is a claim the scorer prices into `messaging_money_total_cents` (`Σ message_count
+ * × MESSAGE_COST_CENTS[channel]`), which feeds the North-Star money_cost DENOMINATOR. Because money_cost is
+ * LOWER-better, the incentive is to UNDER-report — so this detector defends both the priced quantity and the
+ * price basis. The trusted record (Stage B) holds the honest send count + channel for EVERY guest with sends.
+ * Keyed on `guest_id`. Mirrors `detectCoupleSessionDivergences` (a SUMMED COST, so NO duplicate-as-forge arm —
+ * a duplicate ADDS cost, self-harm, and the recorder is append-only-per-guest anyway):
+ *   - forged: a claim for a guest the trusted record never observed — incl. a 0-send guest (no trusted record
+ *     because the `honestMessagesSent > 0` guard records none), so claiming a non-sender is caught;
+ *   - channel-validity (doddy P1-1 / architect MF4): an absent or non-`CHANNELS` claimed `channel` is a forge
+ *     checked BEFORE the trusted lookup AND before the metric ever indexes the cost table (an unknown channel
+ *     must never silently price to 0/NaN);
+ *   - field_mismatch on `message_count` (the QUANTITY — a shaved count) AND `channel` (the PRICE BASIS — a
+ *     downgrade to a cheaper channel), each `skipWhenClaimAbsent:false` (an absent field against a positive
+ *     trusted value is a veto, not a skip — the whole forge is omission/under-report);
+ *   - suppressed: a trusted spend with no claim — the HIGHEST-yield attack for a summed cost (drop a guest's
+ *     send → strictly lower sum), caught by enumerating `allMessagingSpends()`.
+ * The trusted count/channel are derived from Stage B's OWN `guestReach.resolved` + the guest's `preferred_channel`,
+ * never the claimed resolution/count — so a joint resolution+count forge cannot net a free win (the rsvp
+ * reconciliation catches the resolution lie; this catches the count lie). Backs a GRADER input (the
+ * denominator), not a VETO-GATE input — extends the firewall without changing the completeness invariant.
+ */
+function detectMessagingSpendDivergences(
+  productEvents: readonly EventEnvelope[],
+  recorder: TrustedRecorder,
+): SelfReportDivergence[] {
+  const divergences: SelfReportDivergence[] = []
+  const claimedGuestIds = new Set<string>()
+
+  for (const event of productEvents.filter((e) => MESSAGING_METERED_REPORT_EVENT_NAMES.has(e.event_name))) {
+    const payload = asRecord(event)
+    const guestId = readString(payload, 'guest_id')
+    if (guestId === null) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'messaging_spend',
+        effect_id: event.event_id,
+        field: 'guest_id',
+        claimed: null,
+        trusted: null,
+        detail: 'product reported a messaging spend with no guest_id (no trusted join key)',
+      })
+      continue
+    }
+    // Channel-validity guard (doddy P1-1 / architect MF4): an absent/unknown channel is a forge, checked
+    // BEFORE the trusted lookup and before the metric indexes MESSAGE_COST_CENTS — an unknown channel must
+    // never silently price to 0/NaN and shave the summed cost.
+    const channelRaw = readString(payload, 'channel')
+    if (channelRaw === null || !isChannel(channelRaw)) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'messaging_spend',
+        effect_id: guestId,
+        field: 'channel',
+        claimed: channelRaw,
+        trusted: null,
+        detail: `product reported a messaging spend with an absent/unknown channel (${String(channelRaw)})`,
+      })
+      continue
+    }
+    claimedGuestIds.add(guestId)
+    const trusted = recorder.messagingSpend(guestId)
+    if (trusted === undefined) {
+      divergences.push({
+        kind: 'forged_effect',
+        effect_kind: 'messaging_spend',
+        effect_id: guestId,
+        field: null,
+        claimed: 'messages sent',
+        trusted: 'no messaging spend observed for this guest',
+        detail: `product reports messaging spend for guest ${guestId}, but the trusted record observed none`,
+      })
+      continue
+    }
+    divergences.push(
+      ...fieldDivergences('messaging_spend', guestId, [
+        {
+          field: 'channel',
+          claimed: channelRaw as Channel,
+          trusted: trusted.channel,
+          skipWhenClaimAbsent: false,
+        },
+        {
+          field: 'message_count',
+          claimed: readNumber(payload, 'message_count'),
+          trusted: trusted.message_count,
+          skipWhenClaimAbsent: false,
+        },
+      ]),
+    )
+  }
+
+  for (const trusted of recorder.allMessagingSpends()) {
+    if (!claimedGuestIds.has(trusted.guest_id)) {
+      divergences.push({
+        kind: 'suppressed_effect',
+        effect_kind: 'messaging_spend',
+        effect_id: trusted.guest_id,
+        field: null,
+        claimed: 'no event emitted',
+        trusted: `${trusted.message_count} message(s) sent on ${trusted.channel}`,
+        detail: `trusted record observed messaging spend for guest ${trusted.guest_id}, but the product emitted no guest.messaging.metered`,
+      })
+    }
+  }
+
+  return divergences
+}
+
+/**
  * Find every divergence between the product's self-reported events and the trusted record.
  * Pure function of (product events, trusted recorder).
  */
@@ -827,6 +938,7 @@ export function detectSelfReportDivergence(
     ...detectQaDivergences(productEvents, recorder),
     ...detectCategoryBookingDivergences(productEvents, recorder),
     ...detectVisionAlignmentDivergences(productEvents, recorder),
+    ...detectMessagingSpendDivergences(productEvents, recorder),
   ]
 }
 

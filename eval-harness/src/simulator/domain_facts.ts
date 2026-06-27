@@ -105,6 +105,33 @@ export function feltTouches(received: number, batching: number): number {
 }
 
 /**
+ * PHASE-20 the SHARED messaging-send-count FACT — how many messages were ACTUALLY SENT to one guest under a
+ * (cadence, spacing, batching) policy. This is the digest send count `feltTouches(remindersSent, batching)`
+ * applied to the SAME `remindersSent = resolved ? needed : delivered` both stages already compute for
+ * sentiment — i.e. each delivered digest is ONE outbound message that costs money. So all three tier-1 knobs
+ * move it: cadence raises `delivered`, spacing caps it via `spacingCapacity`, batching CONSOLIDATES digests
+ * (fewer sends → less money — the batching cost upside). SHARED so Stage A's claimed `message_count` and
+ * Stage B's trusted record are BIT-IDENTICAL on an honest run (the integrity gate field-diffs them with exact
+ * `===`, safe by shared computation as in Phases 6/7/8/10); neither stage imports the other's path.
+ *
+ * The emission/record guard is `honestMessagesSent(...) > 0` — IDENTICAL on both stages (doddy P0-1): a guest
+ * with zero sends (an immediate responder, needed 0; or a spacing-capped `delivered === 0`) emits no claim and
+ * records no trusted spend, so it can never be a suppression false-positive or a forge blind spot. Note the
+ * count uses the trusted `resolved` (Stage B's own `guestReach.resolved`), NOT any claimed resolution — a
+ * resolved multi-reminder guest sends FEWER messages (`needed`) than an unresolved one (`delivered`), so the
+ * trusted count is pinned to the trusted resolution and a joint resolution+count forge cannot net a free win.
+ */
+export function honestMessagesSent(
+  needed: number,
+  delivered: number,
+  resolved: boolean,
+  batching: number,
+): number {
+  const remindersSent = resolved ? needed : delivered
+  return feltTouches(remindersSent, batching)
+}
+
+/**
  * The most reminders a guest is comfortable receiving before it reads as nagging.
  *
  * EXPLICIT MODELING DECISION (testineer, Phase-2 Step-4 review): COMFORT_CAP is a UNIVERSAL comfort
