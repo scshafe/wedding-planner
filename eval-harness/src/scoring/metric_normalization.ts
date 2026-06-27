@@ -39,6 +39,21 @@ export function deriveNorthStarInputs(
   const get = (code: string): number | null => metricValues[code] ?? null
   const activeMinutes = get('couple_active_minutes_total')
   const budgetVariancePct = get('budget_variance_pct')
+  const messagingCents = get('messaging_money_total_cents')
+
+  // PHASE 20: money_cost now combines TWO additive money outflows — vendor overspend AND messaging spend — as
+  // a SUM of their normalized [0,1] shares (architect MF3: they are additive dollars, not substitutes; `max`
+  // would let one inert-ify the other and kill the messaging gradient on any over-budget scenario). Each share
+  // is present-or-null; money_cost is null only when BOTH are absent (so a no-money corpus keeps it null and
+  // byte-identical). On the search corpus budget_variance is null, so messaging is the SOLE money driver (and
+  // couple_cost is 100% money there, effort_cost being 0) — the calibrated `worst_messaging_cents` keeps the
+  // term real-but-secondary without overturning the resolution-driven cube optimum (wolf).
+  const budgetShare =
+    budgetVariancePct === null
+      ? null
+      : Math.max(0, budgetVariancePct) / NORMALIZATION_ANCHORS.worst_overspend_pct
+  const messagingShare =
+    messagingCents === null ? null : Math.max(0, messagingCents) / NORMALIZATION_ANCHORS.worst_messaging_cents
 
   return {
     // Mean of the PRESENT quality rubrics (Phase 10). Only vision_match is backed offline; the explicit
@@ -56,9 +71,9 @@ export function deriveNorthStarInputs(
         ? null
         : clamp01(activeMinutes / NORMALIZATION_ANCHORS.worst_effort_minutes),
     money_cost:
-      budgetVariancePct === null
+      budgetShare === null && messagingShare === null
         ? null
-        : clamp01(Math.max(0, budgetVariancePct) / NORMALIZATION_ANCHORS.worst_overspend_pct),
+        : clamp01((budgetShare ?? 0) + (messagingShare ?? 0)),
     stress_cost: get('decision_reversal_rate'),
   }
 }

@@ -3,6 +3,7 @@ import {
   computeNorthStar,
   deriveNorthStarInputs,
   makePlannerSimulator,
+  NORMALIZATION_ANCHORS,
   type ScenarioDefinition,
 } from '@wedding-planner/eval-harness'
 import { type EventEnvelope, genomeArtifactRef, type StrategyGenome } from '@wedding-planner/shared'
@@ -378,11 +379,16 @@ function argmaxCadence(m: number[][], spacing: number): number {
 
 describe('the 2-D North-Star matrix — pinned, with a STRICT interior optimum', () => {
   // Pinned so model/constant drift is loud at CI time rather than silently moving the optimum.
+  // PHASE 20 re-pin: the per-message money_cost term (worst_messaging_cents=18) shrinks every ratio by
+  // 1/(1+0.4286·M), M the genome's normalized messaging cost. The optimum LOCATION (2,1) and ALL structural
+  // properties (unique interior optimum, non-separability, margin) survive — only the magnitudes move (wolf:
+  // the resolution-driven optimum dominates the marginal send cost). The structural `it`s below are the real
+  // oracle; this is the drift pin.
   const EXPECTED: number[][] = [
     [0.5625, 0.5625, 0.5625, 0.5625], // cadence 0
-    [0.6823, 0.6888, 0.6953, 0.5625], // cadence 1
-    [0.776, 0.7956, 0.6953, 0.5625], // cadence 2
-    [0.75, 0.776, 0.6953, 0.5625], // cadence 3
+    [0.6368, 0.6429, 0.649, 0.5625], // cadence 1
+    [0.6935, 0.7109, 0.649, 0.5625], // cadence 2
+    [0.6563, 0.679, 0.649, 0.5625], // cadence 3
   ]
 
   it('matches the pinned aggregate North-Star matrix over the keystone corpus', () => {
@@ -436,9 +442,9 @@ describe('the 2-D North-Star matrix — pinned, with a STRICT interior optimum',
   })
 
   it('the interior optimum has a finite margin over its neighbours (not a knife-edge)', () => {
-    // A robustness proxy without constant-injection: the smallest gap to a neighbour is ~0.0196
-    // (the optimum 0.7956 over (c2,s0)=(c3,s1)=0.776). A non-trivial margin means small constant
-    // perturbations keep the optimum interior; the exact band is documented in stage_a_planner.
+    // A robustness proxy without constant-injection: the smallest gap to a neighbour is ~0.0174
+    // (the optimum 0.7109 over (c2,s0)=0.6935; Phase 20 shrank the band from ~0.0196 — still well clear of
+    // the 0.01 floor). A non-trivial margin means small constant perturbations keep the optimum interior.
     const m = matrix()
     const gVal = m[2]?.[1] as number
     const neighbours = [m[1]?.[1], m[3]?.[1], m[2]?.[0], m[2]?.[2]].filter((v): v is number => v !== undefined)
@@ -534,7 +540,9 @@ describe('the 3-D North-Star cube — interior on the NEW axis, non-separable, d
         margins.push(gVal - n)
       }
     }
-    // Finite margin (not a knife-edge): smallest gap to an axis neighbour is ~0.0130.
+    // Finite margin (not a knife-edge): smallest gap to an axis neighbour is ~0.0119 (Phase 20 shrank it
+    // from ~0.0130 via the money_cost term — the optimum survives with headroom over the 0.01 floor; the
+    // worst_messaging_cents anchor is calibrated to keep it here, see the anchor-floor guard below).
     expect(Math.min(...margins)).toBeGreaterThan(0.01)
     // Unique global argmax of the whole cube.
     const flat = cb.flat(2)
@@ -562,6 +570,19 @@ describe('the 3-D North-Star cube — interior on the NEW axis, non-separable, d
     const argbByCadence = [0, 1, 2, 3].map((c) => argmaxBatchingAt(cb, c, 1))
     expect(new Set(argbByCadence).size).toBeGreaterThan(1)
     expect(argmaxBatchingAt(cb, 3, 1)).toBe(1)
+  })
+
+  it('PHASE 20 anchor-floor guard: worst_messaging_cents stays above the non-separability crossover', () => {
+    // wolf: the messaging money term breaks structure when the anchor is TOO SMALL, not too large. Below a
+    // hard floor (~6¢ at the 1¢ carrier basis — corpus-max messaging ≈ 6¢), the (spacing 1, batching 0)
+    // cadence 0↔2 near-tie flips and `argmaxCadenceAt(s=1, b=*)` goes from [2,3,1,1] to [2,3,0,0], breaking
+    // the non-separability invariant above. The current anchor (18 ≈ 3× corpus-max) sits well clear with a
+    // ~9% optimum ratio-shrink (a real but secondary term). This guard makes a future DOWNWARD edit of the
+    // anchor fail loudly here, not silently in the non-sep assertion.
+    expect(NORMALIZATION_ANCHORS.worst_messaging_cents).toBeGreaterThanOrEqual(12)
+    // And re-affirm the fragile cell directly: at (spacing 1, batching 0), cadence 2 still wins (the crossover
+    // has NOT fired at this anchor) — the assertion that flips first if the anchor drops below the floor.
+    expect(argmaxCadenceAt(cube(), 1, 0)).toBe(2)
   })
 })
 

@@ -51,6 +51,17 @@ export const NORMALIZATION_ANCHORS = {
   worst_effort_minutes: 1200,
   /** budget overspend percentage at which money cost reaches 1.0. */
   worst_overspend_pct: 20,
+  /**
+   * PHASE 20 — messaging_money_total_cents (integer cents) at which the messaging share of money cost reaches
+   * 1.0. The "worst tolerated" per-couple messaging bill. Human-set (the loop may never auto-tune it).
+   *
+   * HARD FLOOR (wolf): this must stay well ABOVE the keystone corpus's per-cent crossover (~6¢ at the 1¢
+   * carrier basis — corpus-max messaging ≈ 6¢; the (spacing 1, batching 0) cadence 0↔2 near-tie flips below
+   * it), or the non-separability invariant `argmaxCadenceAt(s=1,b=*) === [2,3,1,1]` breaks. 18 (≈ 3× corpus-max
+   * cents) gives a real but SECONDARY term (~9% ratio-shrink at the optimum, optimum margin 0.0118 > 0.01) with
+   * large headroom over the floor. The anchor-floor guard test in metamorphic_oracle.test.ts pins this.
+   */
+  worst_messaging_cents: 18,
 } as const
 
 /**
@@ -74,6 +85,8 @@ export const GUARD_DIRECTIONS: Readonly<Record<string, 'higher_better' | 'lower_
   decision_reversal_rate: 'lower_better',
   couple_active_minutes_total: 'lower_better',
   budget_variance_pct: 'lower_better',
+  // Phase 20: messaging spend is a cost — a rise is a regression. Registered for catalog/guard consistency.
+  messaging_money_total_cents: 'lower_better',
 }
 
 /** Tolerances for the accept rule. */

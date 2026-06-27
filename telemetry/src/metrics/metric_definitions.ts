@@ -1,4 +1,4 @@
-import type { EventEnvelope } from '@wedding-planner/shared'
+import { type EventEnvelope, isChannel, MESSAGE_COST_CENTS } from '@wedding-planner/shared'
 
 import {
   readBudgetSnapshotPayload,
@@ -259,6 +259,37 @@ export const budgetVariancePct: MetricFunction = (events) => {
   return computation(METRIC_CODES.budget_variance_pct, ((spend - budget) / budget) * 100, support)
 }
 
+/** The dearest channel cost — what an unknown channel is charged (defense-in-depth, never a free shave). */
+const MAX_MESSAGE_COST_CENTS = Math.max(...Object.values(MESSAGE_COST_CENTS))
+
+/**
+ * messaging_money_total_cents = Σ over `guest.messaging.metered` claims of `message_count × MESSAGE_COST_CENTS
+ * [channel]` (Phase 20). The money the genome's reminder policy SPENT on messaging — feeds the North-Star
+ * money_cost DENOMINATOR alongside budget_variance_pct, so the tier-1 cadence/spacing/batching knobs trade real
+ * money. Null when no messaging was claimed (honest-undefined like the rates — a no-messaging corpus keeps
+ * money_cost null and byte-identical). The integrity gate reconciles the claimed channel + count, so the priced
+ * stream is trustworthy; INDEPENDENTLY (doddy P1-1), an unknown channel here is charged the MAX channel cost,
+ * never silently 0 — the metric must not reward a downgrade even though the gate already vetoes it.
+ */
+export const messagingMoneyTotalCents: MetricFunction = (events) => {
+  const claims = events.filter((event) => event.event_name === EVENT_NAMES.guest_messaging_metered)
+  if (claims.length === 0) {
+    return computation(METRIC_CODES.messaging_money_total_cents, null, { spend_count: 0 })
+  }
+  let totalCents = 0
+  for (const event of claims) {
+    const payload = event.payload as Record<string, unknown>
+    const channelRaw = payload.channel
+    const count = typeof payload.message_count === 'number' ? payload.message_count : 0
+    const cents = isChannel(channelRaw) ? MESSAGE_COST_CENTS[channelRaw] : MAX_MESSAGE_COST_CENTS
+    totalCents += count * cents
+  }
+  return computation(METRIC_CODES.messaging_money_total_cents, totalCents, {
+    spend_count: claims.length,
+    total_cents: totalCents,
+  })
+}
+
 /** The metric_code -> function registry implemented so far. */
 export const METRIC_DEFINITIONS: ReadonlyMap<string, MetricFunction> = new Map<string, MetricFunction>([
   [METRIC_CODES.couple_active_minutes_total, coupleActiveMinutesTotal],
@@ -271,6 +302,7 @@ export const METRIC_DEFINITIONS: ReadonlyMap<string, MetricFunction> = new Map<s
   [METRIC_CODES.guest_sentiment_score, guestSentimentScore],
   [METRIC_CODES.boundary_hold_rate, boundaryHoldRate],
   [METRIC_CODES.budget_variance_pct, budgetVariancePct],
+  [METRIC_CODES.messaging_money_total_cents, messagingMoneyTotalCents],
 ])
 
 /** Build a MetricEngine over the implemented metric definitions. */

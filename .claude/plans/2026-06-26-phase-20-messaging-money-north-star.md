@@ -211,7 +211,13 @@ any sane calibration. Containment:
   **North Star is UNCHANGED this step** (no messaging metric feeds `deriveNorthStarInputs` yet) → the
   `metamorphic_oracle` cube/matrix stay byte-identical and green. Verify no event-count assertions break. GREEN.
 
-- [ ] **Step 3 — The metric + the money_cost denominator term (the landscape shift).** `messaging_money_total_cents`
+- [x] **Step 3 — The metric + the money_cost denominator term (the landscape shift).** (DONE — 719 tests green.
+  `messagingMoneyTotalCents` metric (unknown channel → MAX cost, doddy P1-1); `worst_messaging_cents = 18`
+  (human-set; anchor-floor guard pins it ≥ 12 with the crossover rationale); `money_cost = clamp01(budgetShare +
+  messagingShare)` SUM combiner + 6 combiner guard tests; `lower_better` guard direction. Re-pinned the 2-D matrix;
+  **EVERY structural assertion passes unchanged** (optimum (2,1)/(3,1,1), non-sep `[2,3,1,1]`, margins 0.0174/0.0119,
+  b=0 identity) — the convergence keystone still reaches (3,1,1), published-champion/strategy tests untouched.
+  metric_catalog + scoring_model docs updated.) `messaging_money_total_cents`
   metric (telemetry, reads the shared cost basis; **unknown channel → max cost, not 0** per doddy P1-1) + catalog +
   `GUARD_DIRECTIONS` (`lower_better`); **`worst_messaging_cents ≈ 18`** in `NORMALIZATION_ANCHORS` (human-set;
   hard floor ~6 at the 1¢ basis — add an anchor-floor guard test/comment; pin the exact value against the

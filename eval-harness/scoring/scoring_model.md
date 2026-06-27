@@ -29,7 +29,7 @@ Weighted mean of three normalized costs (0 = at/under target, 1 = at worst toler
 | Component | Built from | Default weight |
 |---|---|---|
 | `effort` | `couple_active_minutes_total` vs. `effort_budget` | 0.40 |
-| `money` | spend vs. budget, and quality-per-dollar (penalize both overspend AND win-by-buying-nothing) | 0.30 |
+| `money` | spend vs. budget, **plus per-message messaging cost** (Phase 20: `budget_variance_pct` + `messaging_money_total_cents`, summed as normalized shares), and quality-per-dollar (penalize overspend, messaging overspend, AND win-by-buying-nothing) | 0.30 |
 | `stress` | `decision_reversal_rate`, `needless_escalation_count`, over-automation regret | 0.30 |
 
 ### 4. North Star ratio (bounded, stable for optimization)

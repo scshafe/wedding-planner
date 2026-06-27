@@ -34,6 +34,7 @@ Gates (`../eval-harness/rubrics/gate_checks.md`) compute from these same events;
 | metric_code | formula | unit/dir | cap | src | guard |
 |---|---|---|---|---|---|
 | `budget_variance_pct` | (`plan.finalized`.total_spend_cents − budget_cents) ÷ budget_cents × 100 | % · lte | budget_management | eval+telem | quality_per_dollar_index |
+| `messaging_money_total_cents`⁵ | Σ(`guest.messaging.metered`.message_count × MESSAGE_COST_CENTS[channel]) | cents · lte | comms_personalization | eval | — (cost; feeds money_cost so cadence/spacing/batching trade real money) |
 | `category_completeness_rate` | count(`category.booked` booking_status=booked³) ÷ count(`category.booked`) | ratio 0–1 · gte | per-category | eval (+telem audit) | — (keystone-only; don't suppress deferred) |
 | `vision_match_rate` | mean(`category.vision.aligned`.vision_match_score⁴) | ratio 0–1 · gte | per-category | eval | couple_active_minutes (don't win by deciding badly-but-fast) |
 | `quality_per_dollar_index` | planning_value.quality ÷ (final_spend_cents ÷ baseline_spend_cents) | index · max | budget_management | eval | guards budget_variance (stops win-by-buying-nothing) |
@@ -71,6 +72,18 @@ golden-scenario spend for a comparable cohort; **online** = the **control arm's 
 median spend** (matched on budget tier, region, guest count — the same covariates CUPED uses). This
 removes the circularity of an `[eval]`-only baseline feeding a metric that, via `north_star_ratio`,
 gates production. `>1` means more outcome quality per dollar than baseline.
+
+⁵ **`messaging_money_total_cents` is the per-message cost the comms strategy trades** (Phase 20) — the money
+the genome's reminder policy SPENT on messaging: `Σ message_count × MESSAGE_COST_CENTS[channel]` over the
+CLAIMED `guest.messaging.metered` stream (per guest with sends; channel is the guest's `preferred_channel`).
+`MESSAGE_COST_CENTS` is the vendor-agnostic per-channel carrier cost in `@wedding-planner/shared` (NOT any
+adapter's COGS, NOT the product's retail price book). Unlike `vision_match_rate`/`category_completeness_rate`,
+this DELIBERATELY enters the search corpus: it feeds `money_cost` (summed with `budget_variance_pct`), so the
+tier-1 cadence/spacing/batching knobs trade REAL money — more reminders cost more, batching consolidates sends
+to save money. The send count is `feltTouches(remindersSent, batching)` (the digest operator); the integrity
+gate's 9th effect kind `messaging_spend` reconciles the claimed channel + count, so a shaved count / downgraded
+channel is a veto. money_cost LOWER-better, so the incentive is to under-report — defended by the gate.
+Normalized by `worst_messaging_cents` (a human-set anchor calibrated to keep the term real-but-secondary).
 
 ---
 
@@ -154,7 +167,7 @@ nobody pays for. The loop tracks but does not directly optimize these offline.
 | code | definition |
 |---|---|
 | `planning_value` | weighted mean of quality (rubrics) · completeness (`category_completeness_rate`, `rsvp_resolution_rate`, `qa_accuracy_rate`) · guest_experience (`guest_sentiment_score`, `boundary_hold_rate`), normalized 0–1 |
-| `couple_cost` | weighted mean of effort (`couple_active_minutes_total` vs `effort_budget`) · money (`budget_variance_pct`, `quality_per_dollar_index`) · stress (`decision_reversal_rate`, `needless_escalation_count`, `over_automation_regret_rate`), normalized 0–1 |
+| `couple_cost` | weighted mean of effort (`couple_active_minutes_total` vs `effort_budget`) · money (`budget_variance_pct` + `messaging_money_total_cents`⁵, `quality_per_dollar_index`) · stress (`decision_reversal_rate`, `needless_escalation_count`, `over_automation_regret_rate`), normalized 0–1 |
 | `north_star_ratio` | `planning_value ÷ (1 + couple_cost)` ∈ [0,1]; **0 if any veto gate failed**. This metric_code is the canonical name; it equals `grade_report.data.north_star.ratio` offline (same quantity, two spellings — the grade report keeps the structured `north_star.{planning_value,couple_cost,ratio}`). As an experiment primary it is **zero-inflated & bounded**: decompose (gate-failure rate vs among-passers quality) and report quantile effects rather than a raw mean — see `../loop-orchestrator/experiment_design.md`. |
 
 ## Adding a metric

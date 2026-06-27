@@ -2,12 +2,18 @@ import {
   buildGradeReport,
   type BuildGradeReportInput,
   computeNorthStar,
+  deriveNorthStarInputs,
   evaluateAcceptRule,
   type GuardSpec,
+  NORMALIZATION_ANCHORS,
   type ScenarioRunResult,
 } from '@wedding-planner/eval-harness'
+import type { CouplePersona } from '@wedding-planner/shared'
 import { type MetricComputation } from '@wedding-planner/telemetry'
 import { describe, expect, it } from 'vitest'
+
+// deriveNorthStarInputs ignores the couple (the `_couple` param); a typed empty stands in for the fixture.
+const NO_COUPLE = {} as CouplePersona
 
 // --- North Star per-run computation --------------------------------------------------------------
 
@@ -54,6 +60,59 @@ describe('computeNorthStar', () => {
       false,
     )
     expect(best.ratio).toBeCloseTo(1, 10)
+  })
+})
+
+// --- PHASE 20: the money_cost combiner (vendor overspend + messaging spend, a SUM of normalized shares) ---
+
+describe('deriveNorthStarInputs.money_cost — the two-money-flow combiner (Phase 20)', () => {
+  const overspendShare = (pct: number): number => pct / NORMALIZATION_ANCHORS.worst_overspend_pct
+  const messagingShare = (cents: number): number => cents / NORMALIZATION_ANCHORS.worst_messaging_cents
+
+  it('is null when BOTH money flows are absent (a no-money corpus stays byte-identical)', () => {
+    expect(deriveNorthStarInputs({}, NO_COUPLE).money_cost).toBeNull()
+  })
+
+  it('is the messaging share alone when only messaging is present (the search corpus)', () => {
+    const cents = 12
+    const inputs = deriveNorthStarInputs({ messaging_money_total_cents: cents }, NO_COUPLE)
+    expect(inputs.money_cost).toBeCloseTo(messagingShare(cents), 10)
+  })
+
+  it('is the budget share alone when only vendor overspend is present (back-compat)', () => {
+    const pct = 10
+    const inputs = deriveNorthStarInputs({ budget_variance_pct: pct }, NO_COUPLE)
+    expect(inputs.money_cost).toBeCloseTo(overspendShare(pct), 10)
+  })
+
+  it('SUMS the two shares when both are present (additive money outflows, not substitutes — MF3)', () => {
+    const pct = 4
+    const cents = 9
+    const inputs = deriveNorthStarInputs(
+      { budget_variance_pct: pct, messaging_money_total_cents: cents },
+      NO_COUPLE,
+    )
+    // The SUM (not max): a `max` combiner would hide the messaging cost behind the larger overspend share.
+    expect(inputs.money_cost).toBeCloseTo(overspendShare(pct) + messagingShare(cents), 10)
+    expect(inputs.money_cost).toBeGreaterThan(overspendShare(pct)) // strictly above either alone
+    expect(inputs.money_cost).toBeGreaterThan(messagingShare(cents))
+  })
+
+  it('clamps the summed share to 1.0 (the unit-interval contract holds even when both flows are extreme)', () => {
+    const inputs = deriveNorthStarInputs(
+      { budget_variance_pct: 100, messaging_money_total_cents: 10_000 },
+      NO_COUPLE,
+    )
+    expect(inputs.money_cost).toBe(1)
+  })
+
+  it('treats a negative overspend (under budget) as 0, so messaging is the sole positive contributor', () => {
+    const cents = 6
+    const inputs = deriveNorthStarInputs(
+      { budget_variance_pct: -15, messaging_money_total_cents: cents },
+      NO_COUPLE,
+    )
+    expect(inputs.money_cost).toBeCloseTo(messagingShare(cents), 10)
   })
 })
 
