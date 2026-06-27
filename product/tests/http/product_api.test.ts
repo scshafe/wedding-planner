@@ -5,11 +5,16 @@ import {
   type ApiRequest,
   type ApiResponse,
   BillingLedger,
+  DeterministicGuestQaResponder,
+  GuestRegistry,
+  InboundReceiptLog,
+  MessagingService,
   OnboardingService,
   OperatorCredentialStore,
   ProviderWebhookCredentialStore,
   ProductApi,
   SessionStore,
+  SimulatedMessagingAdapter,
   TenantContextResolver,
   TenantStore,
   WeddingAuthorizer,
@@ -51,10 +56,10 @@ function makeWorld(): World {
   const authorizer = new WeddingAuthorizer()
   const operators = new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret'])
   const webhookCredentials = new ProviderWebhookCredentialStore(new SequentialIdGenerator('seedW'), ['wh-secret'])
-  const onboarding = new OnboardingService(
-    store,
-    new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB')),
-  )
+  const billing = new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB'))
+  const onboarding = new OnboardingService(store, billing)
+  const adapter = new SimulatedMessagingAdapter(new ManualClock('2027-05-01T00:00:00.000Z'), new SequentialIdGenerator('seedM'))
+  const messagingService = new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS'))
   const api = new ProductApi({
     resolver,
     sessionStore: sessions,
@@ -63,6 +68,14 @@ function makeWorld(): World {
     operators,
     onboarding,
     webhookCredentials,
+    messaging: {
+      port: adapter,
+      receipts: new InboundReceiptLog(store, new SequentialIdGenerator('seedIR')),
+      registry: new GuestRegistry(store),
+      weddings,
+      responder: new DeterministicGuestQaResponder(),
+      service: messagingService,
+    },
   })
   return { api, sessions, weddings, resolver }
 }

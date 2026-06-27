@@ -106,7 +106,12 @@ describe('resolveServerConfig — env parsing', () => {
 })
 
 describe('buildBootLog — the disclosure allow-list', () => {
-  const demo: DemoSeed = { slug: 'demo', tenantId: 'tenant_secret_internal_id', weddingId: 'wedding_secret_id' }
+  const demo: DemoSeed = {
+    slug: 'demo',
+    tenantId: 'tenant_secret_internal_id',
+    weddingId: 'wedding_secret_id',
+    guestRecipientRef: 'sms:+15550100',
+  }
 
   it('NEVER echoes an env-provided token', () => {
     const config = resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG }, constGen('g'))

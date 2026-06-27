@@ -6,6 +6,9 @@ import { SessionStore } from '../auth/session_store'
 import { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import { BillingLedger } from '../billing/billing_ledger'
 import { ProductApi } from '../http/product_api'
+import { DeterministicGuestQaResponder } from '../messaging/guest_qa_responder'
+import { GuestRegistry } from '../messaging/guest_registry'
+import { InboundReceiptLog } from '../messaging/inbound_receipt_log'
 import { MessagingService } from '../messaging/messaging_service'
 import { SimulatedMessagingAdapter } from '../messaging/simulated_messaging_adapter'
 import { OnboardingService } from '../onboarding/onboarding_service'
@@ -77,6 +80,8 @@ export interface DemoSeed {
   readonly slug: string
   readonly tenantId: string
   readonly weddingId: string
+  /** Phase 19: the demo guest's opaque sender ref, registered to the demo wedding (drives the inbound demo). */
+  readonly guestRecipientRef: string
 }
 
 /** The wired product surface. `ui` is the deployable front door; the rest are exposed for tests/inspection. */
@@ -129,6 +134,13 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const messagingAdapter = new SimulatedMessagingAdapter(clock, ids)
   const messaging = new MessagingService(messagingAdapter, tenants, billing, ids)
 
+  // The guest inbound channel (Phase 19): a guest texts in over the provider webhook and the deterministic
+  // responder answers from the bound wedding, metered through the service. The registry + receipt log inherit
+  // tenant isolation (they read the same TenantStore liveness); the responder is pure. No loop import.
+  const guestRegistry = new GuestRegistry(tenants)
+  const inboundReceipts = new InboundReceiptLog(tenants, ids)
+  const guestResponder = new DeterministicGuestQaResponder()
+
   const api = new ProductApi({
     resolver,
     sessionStore,
@@ -137,6 +149,14 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     operators,
     onboarding,
     webhookCredentials,
+    messaging: {
+      port: messagingAdapter,
+      receipts: inboundReceipts,
+      registry: guestRegistry,
+      weddings,
+      responder: guestResponder,
+      service: messaging,
+    },
     ...(config.championStrategy === undefined ? {} : { championStrategy: config.championStrategy }),
   })
   const themes = new ThemeResolver(tenants)
@@ -159,7 +179,20 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
       couple_display_name: 'Alex & Sam',
       event_date: '2027-09-18',
     })
-    demo = { slug: demoSlug, tenantId: tenant.tenant_id, weddingId: wedding.wedding_id }
+    // Register one demo guest so the inbound webhook -> deterministic reply -> meter path is demoable
+    // end-to-end. The recipient_ref is an obvious offline placeholder (no real number).
+    const guestRecipientRef = 'sms:+15550100'
+    guestRegistry.register(context, {
+      recipient_ref: guestRecipientRef,
+      wedding_id: wedding.wedding_id,
+      guest_id: 'guest_demo_1',
+    })
+    demo = {
+      slug: demoSlug,
+      tenantId: tenant.tenant_id,
+      weddingId: wedding.wedding_id,
+      guestRecipientRef,
+    }
   }
 
   return { ui, api, themes, operatorToken, demo, messaging }

@@ -52,6 +52,27 @@ describe('composeProductSurface — the wired surface boots demoable', () => {
     expect(res.status).toBe(200)
   })
 
+  it('the seeded demo guest can text in and gets a metered reply end-to-end (Phase 19)', () => {
+    const { api, messaging, demo } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+    expect(demo?.guestRecipientRef).toBe('sms:+15550100')
+    const res = api.handle({
+      method: 'POST',
+      path: '/t/demo/messaging/inbound',
+      headers: { authorization: 'Bearer compose-webhook-token-0123456789' },
+      rawBody: JSON.stringify({
+        channel: 'sms',
+        from_ref: demo?.guestRecipientRef,
+        text: 'When is the wedding?',
+        provider_message_ref: 'pmr_demo_1',
+      }),
+    })
+    expect(res).toEqual({ status: 202, body: { status: 'accepted' } })
+    // The meter fired through the wired surface: one usage_charge for the demo tenant.
+    const usage = messaging.usageView(demo?.tenantId ?? '')
+    expect(usage.message_count).toBe(1)
+    expect(usage.billed_total_cents).toBeGreaterThan(0)
+  })
+
   it('the demo wedding is listable by a planner who logs in via the public edge (no baked session)', () => {
     const { api, demo } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
     const login = api.handle(req('POST', '/t/demo/sessions', { body: { role: 'planner' } }))

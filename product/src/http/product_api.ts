@@ -1,6 +1,7 @@
 import {
   deepFreeze,
   getSchemaRegistry,
+  type InboundWebhook,
   type StrategyGenome,
   type Tenant,
   type Wedding,
@@ -14,6 +15,12 @@ import type { SessionStore } from '../auth/session_store'
 import type { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import type { PlanTier } from '../billing/price_book'
 import type { OnboardingService } from '../onboarding/onboarding_service'
+import type { GuestQaResponder } from '../messaging/guest_qa_responder'
+import { projectGuestVisibleFacts } from '../messaging/guest_qa_responder'
+import type { GuestRegistry } from '../messaging/guest_registry'
+import type { InboundReceiptLog } from '../messaging/inbound_receipt_log'
+import type { MessagingPort } from '../messaging/messaging_port'
+import type { MessagingService } from '../messaging/messaging_service'
 import { ProductError } from '../product_error'
 import { describeStrategy, type StrategyGuidance } from '../strategy/strategy_guidance'
 import type { TenantContext, TenantContextResolver } from '../tenant/tenant_context'
@@ -84,6 +91,22 @@ export interface AdminHandlerDeps {
   readonly onboarding: OnboardingService
 }
 
+/**
+ * The narrow bag handed to the provider-webhook inbound handler (Phase 19) — DELIBERATELY excludes the webhook
+ * credential store (auth already passed in the pipeline). It carries exactly the collaborators the inbound
+ * reply path orchestrates: the provider `port` (untrusted→domain normalize), the per-tenant inbound dedupe
+ * `receipts`, the guest `registry` (segmentation), the tenant-scoped `weddings` (the bound facts), the
+ * deterministic `responder`, and the metered `service` (the only path that bills).
+ */
+export interface MessagingHandlerDeps {
+  readonly port: MessagingPort
+  readonly receipts: InboundReceiptLog
+  readonly registry: GuestRegistry
+  readonly weddings: WeddingRepository
+  readonly responder: GuestQaResponder
+  readonly service: MessagingService
+}
+
 /** Everything the pipeline needs. resolver/sessionStore/operators live ONLY here, never in a handler. */
 export interface ProductApiDeps {
   readonly resolver: TenantContextResolver
@@ -100,6 +123,13 @@ export interface ProductApiDeps {
    */
   readonly webhookCredentials: ProviderWebhookCredentialStore
   /**
+   * Phase 19: the collaborators the inbound reply path needs. Optional — like `championStrategy`, the messaging
+   * channel is an optional surface feature; when absent the `/t/:slug/messaging/...` route is simply not mounted
+   * (a valid-tenant-no-subresource 404). `composeProductSurface` always wires it; tests that exercise the
+   * inbound edge inject it, others omit it.
+   */
+  readonly messaging?: MessagingHandlerDeps
+  /**
    * Phase 17: the loop's champion strategy genome (injected — a `@wedding-planner/shared` value; the surface
    * never imports the loop). Projected ONCE to guidance in the constructor; absent ⇒ the strategy route 404s.
    */
@@ -113,6 +143,8 @@ export class ProductApi {
   readonly #operators: OperatorCredentialStore
   /** The provider-webhook credential store (the inbound-webhook tier) — lives ONLY in the pipeline. */
   readonly #webhookCredentials: ProviderWebhookCredentialStore
+  /** The inbound reply-path collaborators (Phase 19), or undefined when the messaging channel is not wired. */
+  readonly #messaging: MessagingHandlerDeps | undefined
   /** The narrow bag handed to every wedding dispatch handler — no resolver/sessionStore. */
   readonly #handlerDeps: WeddingHandlerDeps
   /** The narrow bag handed to every /admin handler — no operator store. */
@@ -131,6 +163,7 @@ export class ProductApi {
     this.#sessionStore = deps.sessionStore
     this.#operators = deps.operators
     this.#webhookCredentials = deps.webhookCredentials
+    this.#messaging = deps.messaging
     this.#handlerDeps = { weddings: deps.weddings, authorizer: deps.authorizer }
     this.#adminDeps = { onboarding: deps.onboarding }
     this.#strategyGuidance =
@@ -194,9 +227,9 @@ export class ProductApi {
       // not a pre-auth oracle. (Tenant-resolve at line above runs first, by design: active-tenant existence is
       // already public via theming, so its 404 mask is the established disclosure boundary for ALL tenant
       // routes; the webhook caller still cannot probe absent-vs-suspended.)
-      if (segments.length >= 3 && segments[2] === 'messaging') {
+      if (this.#messaging !== undefined && segments.length >= 3 && segments[2] === 'messaging') {
         this.#authenticateWebhook(req)
-        return this.#dispatchMessaging(req, segments)
+        return dispatchMessaging(context, req, segments, this.#messaging)
       }
 
       // /t/:slug/strategy — PROTECTED read-only (Phase 17): the loop's champion strategy as planner guidance.
@@ -244,25 +277,6 @@ export class ProductApi {
     if (credential === undefined) {
       throw new ProductError('PRODUCT.NO_WEBHOOK_CREDENTIAL', 'No valid provider webhook credential.', {})
     }
-  }
-
-  /**
-   * Dispatch the provider-webhook messaging surface (auth already passed). POST `/t/:slug/messaging/inbound`
-   * VALIDATES the untrusted body against the `inbound_webhook` contract (a malformed/non-conformant payload is
-   * an honest 400 to the trusted provider — NOT masked; the absent-vs-suspended mask is an anonymous-edge
-   * property and webhook auth has already passed), then returns the frozen 202. Guest resolution + the metered
-   * reply land in the following steps; for now every VALID, accepted inbound returns the SAME `RESP_ACCEPTED`
-   * constant (the uniform-202 invariant). The validation runs AFTER auth, so a 400 is not a pre-auth oracle.
-   */
-  #dispatchMessaging(req: ApiRequest, segments: readonly string[]): ApiResponse {
-    if (segments.length === 4 && segments[3] === 'inbound') {
-      if (req.method !== 'POST') throw methodNotAllowed()
-      const body = parseObjectBody(req.rawBody)
-      // Validate the wire shape (channel enum / required opaque refs). Throws CONTRACT.VALIDATION_FAILED -> 400.
-      getSchemaRegistry().assertValid('inbound_webhook', body)
-      return RESP_ACCEPTED
-    }
-    throw routeNotFound()
   }
 
   /** Stage 3 + 4: resolve the bearer token to a principal and bind it to the resolved tenant. */
@@ -447,6 +461,71 @@ function handleUpdate(
 // touch a TenantContext; they drive the OnboardingService. The operator is platform-wide (no per-operator
 // scoping), so the gate IS the authorization and the handlers need only the narrow { onboarding } bag.
 // ---------------------------------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------------------------------
+// Messaging dispatch — the provider-webhook inbound surface (Phase 19). Webhook auth already passed in the
+// pipeline; these never touch the credential store. A guest is an UNTRUSTED actor (not a Principal): the
+// only trusted identity is the resolved TenantContext + the registry binding. EVERY post-validation branch
+// returns the SAME frozen RESP_ACCEPTED (the uniform-202 invariant — response never discloses registry state).
+// ---------------------------------------------------------------------------------------------------
+
+function dispatchMessaging(
+  context: TenantContext,
+  req: ApiRequest,
+  segments: readonly string[],
+  deps: MessagingHandlerDeps,
+): ApiResponse {
+  if (segments.length === 4 && segments[3] === 'inbound') {
+    if (req.method !== 'POST') throw methodNotAllowed()
+    return handleInbound(context, req, deps)
+  }
+  throw routeNotFound()
+}
+
+/**
+ * POST /t/:slug/messaging/inbound — a guest texted in. Validate the wire shape (honest 400 to the trusted
+ * provider, post-auth so not a pre-auth oracle), normalize via the provider port, then run the reply path:
+ *   1. PER-TENANT inbound dedupe on provider_message_ref (doddy P0): a re-delivered ref is an idempotent
+ *      receive — early-return the uniform 202, no second reply, no second charge.
+ *   2. Resolve the guest binding (segmentation): an unregistered/foreign ref -> uniform 202, no reply (no oracle).
+ *   3. Load the bound wedding through the SCOPED repo (context + wedding_id — two gates): absent -> uniform 202.
+ *   4. Decide from ONLY the guest-visible projection; on `answered`, send the reply through the METER with a
+ *      PLATFORM-MINTED idempotency_key (the inbound receipt id — NEVER the untrusted provider ref).
+ * Identity is sourced from trusted state ONLY — the registry's stored recipient_ref + the bound wedding_id,
+ * never a body field — so a body-smuggled guest_id/wedding_id is inert.
+ */
+function handleInbound(context: TenantContext, req: ApiRequest, deps: MessagingHandlerDeps): ApiResponse {
+  const body = parseObjectBody(req.rawBody)
+  // Validate the wire shape (channel enum / required opaque refs). Throws CONTRACT.VALIDATION_FAILED -> 400.
+  const payload = getSchemaRegistry().assertValid<InboundWebhook>('inbound_webhook', body)
+  // Normalize the UNTRUSTED provider payload into a domain message (opaque fields copied; received_at stamped).
+  const message = deps.port.inbound(payload)
+
+  // (1) Idempotent receive: only a FRESH provider_message_ref triggers a reply; the minted receipt id is the
+  //     platform-controlled idempotency key for the send.
+  const receipt = deps.receipts.recordInbound(context, message.provider_message_ref)
+  if (!receipt.fresh) return RESP_ACCEPTED
+
+  // (2) Segmentation: the registry binds the sender ref to ONE wedding. Unknown ref -> no reply (no oracle).
+  const binding = deps.registry.lookup(context, message.sender_ref)
+  if (binding === undefined) return RESP_ACCEPTED
+
+  // (3) The bound wedding's facts, read through the tenant-scoped repo (context + the registry's wedding_id).
+  const wedding = deps.weddings.get(context, binding.wedding_id)
+  if (wedding === undefined) return RESP_ACCEPTED
+
+  // (4) Decide from the guest-visible projection ONLY; reply (metered) only when we can answer.
+  const outcome = deps.responder.respond(projectGuestVisibleFacts(wedding), message.body)
+  if (outcome.action === 'answered' && outcome.reply_text !== undefined) {
+    deps.service.send(context.tenant_id, {
+      channel: message.channel,
+      recipient_ref: binding.recipient_ref,
+      body: outcome.reply_text,
+      idempotency_key: receipt.receipt_id,
+    })
+  }
+  return RESP_ACCEPTED
+}
 
 function dispatchAdmin(req: ApiRequest, segments: readonly string[], deps: AdminHandlerDeps): ApiResponse {
   // /admin/tenants — provision a new tenant.
