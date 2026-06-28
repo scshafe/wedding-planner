@@ -93,7 +93,7 @@ contract (render-time projection, like `StrategyGuidance`/Phase 17 — **manifes
     (byte-identical for any method); unmounted (no `billing` dep)→404; a second tenant's summary is independent.
   - Verify; commit.
 
-- [ ] **Step 3 — The themed `?view=billing` browser page.**
+- [x] **Step 3 — The themed `?view=billing` browser page.**
   - `renderBilling(theme, slug, summary)` in `pages.ts`: plan tier + monthly price (cents→dollars), messages sent,
     messaging spend, subscription charges, payments, **balance owed** — all via the `html` template. Add a
     "Billing & usage →" link to `renderConsole`'s nav line.
@@ -107,7 +107,7 @@ contract (render-time projection, like `StrategyGuidance`/Phase 17 — **manifes
     and `messaging_spend_cents` increase and `balance_cents` rises — the meter→bill→customer loop, demoable.
   - Verify; commit.
 
-- [ ] **Step 4 — ADR 0030 + memory + handoff.** Write `docs/adr/0030-*.md` (the decisions above), a
+- [x] **Step 4 — ADR 0030 + memory + handoff.** Write `docs/adr/0030-*.md` (the decisions above), a
   `.claude/memory/planner-billing-view.md` (+ index in `MEMORY.md`), update `.claude/handoff.local.md` with where
   things stand and the next lever. Verify; commit.
 
