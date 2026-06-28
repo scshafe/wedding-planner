@@ -96,4 +96,5 @@ export type {
   BillingEvent,
   InboundWebhook,
   Guest,
+  GuestEscalation,
 } from './contracts/contract_types'

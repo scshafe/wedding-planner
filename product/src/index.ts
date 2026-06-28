@@ -145,6 +145,9 @@ export {
 // and answered by a product-side deterministic GuestQaResponder (no loop import; deny-by-fact-classification).
 export { GuestRegistry, type GuestBinding, type RegisterGuestInput } from './messaging/guest_registry'
 export { InboundReceiptLog } from './messaging/inbound_receipt_log'
+// The escalation inbox (Phase 26): an `escalated` guest question (one the platform could not answer) is recorded
+// here, keyed (tenant_id, provider_message_ref), and read by the couple (their wedding) / planner (whole tenant).
+export { EscalationLog, type RecordEscalationInput } from './messaging/escalation_log'
 export {
   type GuestQaResponder,
   type GuestQaOutcome,

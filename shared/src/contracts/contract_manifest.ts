@@ -1,7 +1,7 @@
 /**
  * @canonical contract_manifest -- the authoritative list of the system's JSON Schema contracts.
  *
- * The 18 `* /schemas/*.json` files are the canonical contracts of the system (root README).
+ * The 19 `* /schemas/*.json` files are the canonical contracts of the system (root README).
  * This manifest names each one (so "the grade_report schema" maps to exactly one entry),
  * records its `$id` (as declared inside the file) and its repo-relative path, and is the single
  * source the schema registry loads from. A test cross-checks this manifest against on-disk glob
@@ -37,6 +37,7 @@ export type ContractKey =
   | 'billing_event'
   | 'inbound_webhook'
   | 'guest'
+  | 'guest_escalation'
 
 export interface ContractDefinition {
   /** Stable friendly key, e.g. 'grade_report'. */
@@ -164,6 +165,12 @@ export const CONTRACT_DEFINITIONS: readonly ContractDefinition[] = [
     key: 'guest',
     schemaId: `${SCHEMA_ID_PREFIX}/guest.json`,
     repoRelativePath: 'product/schemas/guest_schema.json',
+    domain: 'product',
+  },
+  {
+    key: 'guest_escalation',
+    schemaId: `${SCHEMA_ID_PREFIX}/guest_escalation.json`,
+    repoRelativePath: 'product/schemas/guest_escalation_schema.json',
     domain: 'product',
   },
 ] as const

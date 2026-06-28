@@ -52,3 +52,7 @@ export type { InboundWebhook } from './generated/inbound_webhook'
 // The guest binding (Phase 21): a planner-managed (tenant_id, recipient_ref) → wedding segmentation record,
 // validated at registration. A guest is NOT a session Principal — identity is the opaque recipient_ref alone.
 export type { Guest } from './generated/guest'
+// A recorded unanswerable guest question (Phase 26): the product-side trace of an `escalated` responder outcome,
+// keyed (tenant_id, provider_message_ref), read by the couple (their wedding) / planner (whole tenant). Only
+// `escalated` is recorded, never `refused`. See escalation_log.ts and ADR 0026.
+export type { GuestEscalation } from './generated/guest_escalation'
