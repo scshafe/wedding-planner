@@ -1,4 +1,4 @@
-import type { Guest, GuestEscalation, Tenant, Wedding } from '@wedding-planner/shared'
+import type { EscalationResolution, Guest, GuestEscalation, Tenant, Wedding } from '@wedding-planner/shared'
 
 import type { StrategyGuidance } from '../strategy/strategy_guidance'
 import { html, render, type SafeHtml, safeColor } from './html'
@@ -261,29 +261,55 @@ export function renderGuests(
 }
 
 /**
- * The themed escalation-inbox page (Phase 26): the questions guests asked that the platform could not answer.
- * READ-ONLY (no form, so no CSRF — mirrors the strategy page). Each row links to the matching wedding's edit
- * page, so the couple/planner can fill the missing fact and make the next ask answerable (closing the loop).
- * The guest's `text` is UNTRUSTED input — it flows through the `html` template (escaped text, never a
- * `src`/`href`), so a hostile question can never inject markup. Rendered from the scoped `GET
- * /t/:slug/escalations` (planner: whole tenant; couple: their wedding), so the page discloses only in-scope rows.
+ * The themed escalation-inbox page (Phase 26 read + Phase 27 resolve): the questions guests asked that the
+ * platform could not answer, split into OPEN (still to handle) and HANDLED (resolved/dismissed). Each OPEN row
+ * carries a CSRF-protected Resolve and Dismiss form (Phase 27 — the inbox's first mutation, reusing the
+ * Phase-21 seam; the page therefore now issues a CSRF token, unlike the read-only strategy page) plus a link to
+ * the matching wedding's edit page (fill the missing fact → the next ask is answered). The guest's `text` is
+ * UNTRUSTED input — it (and every other value, incl. the hidden `escalation_id`/`status`) flows through the
+ * `html` template (escaped text, never a `src`/`href`), so a hostile question can never inject markup. Rendered
+ * from the scoped `GET /t/:slug/escalations` (planner: whole tenant; couple: their wedding) so the page
+ * discloses only in-scope rows; the `resolutions` are scoped by the SAME branch, joined here by `escalation_id`.
  */
 export function renderEscalations(
   theme: Tenant['theme'],
   slug: string,
   escalations: readonly GuestEscalation[],
+  resolutions: readonly EscalationResolution[],
+  csrfToken: string,
 ): string {
-  const rows = escalations.map(
+  // Join by escalation_id: an escalation with a resolution is HANDLED; the rest are OPEN. The resolution log is
+  // append-only/first-writer-wins, so at most one resolution per escalation_id.
+  const resolutionOf = new Map(resolutions.map((r) => [r.escalation_id, r]))
+  const open = escalations.filter((e) => !resolutionOf.has(e.escalation_id))
+  const handled = escalations.filter((e) => resolutionOf.has(e.escalation_id))
+
+  const actionForm = (escalationId: string, status: 'resolved' | 'dismissed', label: string): SafeHtml =>
+    html`<form class="inline" method="post" action="/t/${slug}/escalations/resolve">${csrfField(csrfToken)}<input type="hidden" name="escalation_id" value="${escalationId}"><input type="hidden" name="status" value="${status}"><button type="submit">${label}</button></form>`
+
+  const openRows = open.map(
     (e) => html`<div class="card">
     <div><strong>“${e.text}”</strong></div>
     <div class="note">From <code>${e.from_ref}</code> · ${e.received_at}</div>
     <div class="note">Wedding <code>${e.wedding_id}</code> · <a href="/t/${slug}?wedding=${e.wedding_id}">Set the missing details →</a></div>
+    <div class="inline">${actionForm(e.escalation_id, 'resolved', 'Mark resolved')} ${actionForm(e.escalation_id, 'dismissed', 'Dismiss')}</div>
   </div>`,
   )
-  const body =
-    escalations.length === 0
-      ? html`<p class="note">No open questions — guests haven't asked anything we couldn't answer.</p>`
-      : html`${rows}`
+  const handledRows = handled.map((e) => {
+    const r = resolutionOf.get(e.escalation_id) as EscalationResolution
+    const badge = r.status === 'resolved' ? 'Resolved' : 'Dismissed'
+    return html`<div class="card">
+    <div><strong>“${e.text}”</strong> <span class="note">— ${badge} by ${r.resolved_by}</span></div>
+    <div class="note">From <code>${e.from_ref}</code> · ${e.received_at}</div>
+  </div>`
+  })
+
+  const openBody =
+    open.length === 0
+      ? html`<p class="note">No open questions — guests haven't asked anything we couldn't answer (or you've handled them all).</p>`
+      : html`${openRows}`
+  const handledBody =
+    handled.length === 0 ? html`` : html`<h3>Handled</h3>${handledRows}`
   return themedShell(
     theme,
     slug,
@@ -291,9 +317,10 @@ export function renderEscalations(
     html`<p><a href="/t/${slug}">← All weddings</a></p>
   <div class="card">
     <h2>Questions we couldn't answer</h2>
-    <p class="note">A guest texted in and we had no fact to answer from. Open the wedding to fill the detail — then the next guest who asks gets an automatic reply.</p>
+    <p class="note">A guest texted in and we had no fact to answer from. Open the wedding to fill the detail — then the next guest who asks gets an automatic reply. Mark a question resolved once you've handled it, or dismiss one that isn't actionable.</p>
   </div>
-  ${body}`,
+  ${openBody}
+  ${handledBody}`,
   )
 }
 

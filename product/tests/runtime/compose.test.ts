@@ -338,3 +338,55 @@ describe('composeProductSurface — Phase 26 e2e: the guest→couple escalation 
     expect(ui.handle({ method: 'GET', path: '/t/nope?view=escalations', headers: {} }).status).toBe(404)
   })
 })
+
+describe('composeProductSurface — Phase 27 e2e: resolving an escalation clears the inbox', () => {
+  const WEBHOOK = 'compose-webhook-token-0123456789'
+
+  function form(method: string, path: string, fields: Record<string, string>, cookie?: string): ApiRequest {
+    const headers: Record<string, string | undefined> = { 'content-type': 'application/x-www-form-urlencoded' }
+    if (cookie !== undefined) headers.cookie = cookie
+    return { method, path, headers, rawBody: new URLSearchParams(fields).toString() }
+  }
+
+  function inbound(ref: string, pmr: string, text: string): ApiRequest {
+    return {
+      method: 'POST',
+      path: '/t/demo/messaging/inbound',
+      headers: { authorization: `Bearer ${WEBHOOK}` },
+      rawBody: JSON.stringify({ channel: 'sms', from_ref: ref, text, provider_message_ref: pmr }),
+    }
+  }
+
+  it('the couple marks an escalated question handled via the browser form → it moves to Handled, idempotently', () => {
+    const { ui, api, demo } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+    const ref = demo?.guestRecipientRef as string
+    const weddingId = demo?.weddingId as string
+
+    // A guest texts an unanswerable parking question → escalated, recorded in the inbox.
+    expect(api.handle(inbound(ref, 'pmr_q1', 'where do I park?')).status).toBe(202)
+
+    // The couple logs in and opens the inbox — the question is Open with a Resolve/Dismiss form.
+    const loginRes = ui.handle(form('POST', '/t/demo/login', { role: 'couple', wedding_id: weddingId }))
+    const cookie = `wp_session=${/wp_session=([^;]+)/.exec(loginRes.headers['set-cookie'] ?? '')?.[1]}`
+    const open = ui.handle({ method: 'GET', path: '/t/demo?view=escalations', headers: { cookie } })
+    expect(open.body).toContain('action="/t/demo/escalations/resolve"')
+    const csrf = /name="_csrf" value="([^"]+)"/.exec(open.body as string)?.[1] as string
+    const escId = /name="escalation_id" value="([^"]+)"/.exec(open.body as string)?.[1] as string
+
+    // Resolve it via the form (CSRF-protected) → PRG redirect, the question is now Handled.
+    const resolved = ui.handle(form('POST', '/t/demo/escalations/resolve', { _csrf: csrf, escalation_id: escId, status: 'resolved' }, cookie))
+    expect(resolved.status).toBe(303)
+    const after = ui.handle({ method: 'GET', path: '/t/demo?view=escalations', headers: { cookie } })
+    expect(after.body).toContain('Resolved by couple')
+    expect(after.body).not.toContain('action="/t/demo/escalations/resolve"') // nothing Open left
+
+    // Idempotent first-writer-wins: a LATER dismiss (fresh CSRF) is a no-op — the recorded status stays 'resolved'.
+    // The Open form is gone, so the dismiss is posted directly; the page then still shows 'Resolved', never 'Dismissed'.
+    const detail = ui.handle({ method: 'GET', path: `/t/demo?wedding=${weddingId}`, headers: { cookie } })
+    const csrf2 = /name="_csrf" value="([^"]+)"/.exec(detail.body as string)?.[1] as string
+    ui.handle(form('POST', '/t/demo/escalations/resolve', { _csrf: csrf2, escalation_id: escId, status: 'dismissed' }, cookie))
+    const final = ui.handle({ method: 'GET', path: '/t/demo?view=escalations', headers: { cookie } })
+    expect(final.body).toContain('Resolved by couple') // the first status stuck
+    expect(final.body).not.toContain('Dismissed by couple')
+  })
+})

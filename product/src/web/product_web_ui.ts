@@ -1,4 +1,4 @@
-import type { Guest, GuestEscalation, Wedding } from '@wedding-planner/shared'
+import type { EscalationResolution, Guest, GuestEscalation, Wedding } from '@wedding-planner/shared'
 
 import type { CsrfGuard } from '../auth/csrf_guard'
 import type { ApiRequest } from '../http/api_message'
@@ -134,6 +134,15 @@ export class ProductWebUi {
         if (segments[3] === 'remove') return this.#guestRemove(req, slug)
       }
 
+      // /t/:slug/escalations/resolve (Phase 27) — the browser Resolve/Dismiss FORM post (CSRF-protected).
+      // DISTINCT from the 3-seg JSON /t/:slug/escalations route (GET read / POST resolve), so they never
+      // collide. A malformed slug masks to 404 BEFORE any cookie read / CSRF verdict (the CSRF outcome is never
+      // a tenant-existence oracle), exactly like the guests/weddings form posts.
+      if (segments.length === 4 && segments[2] === 'escalations' && segments[3] === 'resolve' && req.method === 'POST') {
+        if (slug === undefined) return GENERIC_404
+        return this.#escalationResolve(req, slug)
+      }
+
       // /t/:slug/weddings/{create,update} (Phase 23) — the browser wedding FORM posts (CSRF-protected).
       // DISTINCT names from the JSON 4-seg /t/:slug/weddings/:id route (which accepts GET/PUT only); a
       // server-minted `wedding_…` id can never equal the literal `create`/`update`, so they never collide,
@@ -228,20 +237,39 @@ export class ProductWebUi {
   }
 
   /**
-   * GET /t/:slug?view=escalations — the READ-ONLY escalation inbox (Phase 26). ONE `api.handle()` read of the
-   * scoped JSON `GET /t/:slug/escalations` (planner: whole tenant; couple: their wedding), themed strictly by
-   * status: any non-200 takes the SAME `#renderNonData` masking as every other page (unknown/suspended/
-   * unauthenticated all mask identically). No CSRF (no form on the page — mirrors the strategy page).
+   * GET /t/:slug?view=escalations — the escalation inbox (Phase 26 read + Phase 27 resolve). ONE `api.handle()`
+   * read of the scoped JSON `GET /t/:slug/escalations` (planner: whole tenant; couple: their wedding), themed
+   * strictly by status: any non-200 takes the SAME `#renderNonData` masking as every other page (unknown/
+   * suspended/unauthenticated all mask identically). Since Phase 27 the page carries Resolve/Dismiss forms, so
+   * it issues the per-session CSRF token (mirrors `#guestsPage` — a 200 means the session resolved, so its CSRF
+   * token must exist in the same store; absent ⇒ invariant break ⇒ ERROR_500). The body carries BOTH the
+   * escalations and the resolutions (scoped identically by the JSON layer); the page joins them.
    */
   #escalationsPage(req: ApiRequest, slug: string): HttpResult {
     const token = readSessionCookie(req.headers.cookie)
     const apiRes = this.#api.handle(bearerGet(`/t/${slug}/escalations`, token))
     if (apiRes.status === 200) {
       const theme = this.#themes.resolveActiveTheme(slug)
-      if (theme === undefined) return GENERIC_404
-      return htmlResult(200, renderEscalations(theme, slug, readEscalations(apiRes.body)))
+      const csrf = this.#csrf.issueCsrf(token)
+      if (theme === undefined || csrf === undefined) return theme === undefined ? GENERIC_404 : ERROR_500
+      return htmlResult(200, renderEscalations(theme, slug, readEscalations(apiRes.body), readResolutions(apiRes.body), csrf))
     }
     return this.#renderNonData(slug, apiRes.status)
+  }
+
+  /**
+   * POST /t/:slug/escalations/resolve — the browser Resolve/Dismiss form (Phase 27). Verify the CSRF token
+   * (forged ⇒ masked 403, no mutation) BEFORE translating the cookie to a Bearer and forwarding to the JSON
+   * `POST /t/:slug/escalations`. Always PRG-redirect back to the inbox (the follow-up GET masks unknown-tenant /
+   * non-owner outcomes); a foreign/absent escalation is the JSON layer's idempotent `{resolved:false}` no-op.
+   */
+  #escalationResolve(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    const body = { escalation_id: form.get('escalation_id') ?? '', status: form.get('status') ?? '' }
+    this.#api.handle(bearerJson('POST', `/t/${slug}/escalations`, token, body))
+    return redirect(303, `/t/${slug}?view=escalations`)
   }
 
   /**
@@ -504,6 +532,13 @@ function readEscalations(body: unknown): readonly GuestEscalation[] {
   if (typeof body !== 'object' || body === null) return []
   const escalations = (body as { escalations?: unknown }).escalations
   return Array.isArray(escalations) ? (escalations as GuestEscalation[]) : []
+}
+
+/** Read the resolutions array from a list (200) JSON body (tolerant — never throws on an odd shape). */
+function readResolutions(body: unknown): readonly EscalationResolution[] {
+  if (typeof body !== 'object' || body === null) return []
+  const resolutions = (body as { resolutions?: unknown }).resolutions
+  return Array.isArray(resolutions) ? (resolutions as EscalationResolution[]) : []
 }
 
 /** Read the single wedding from a detail (200) JSON body, or undefined. */

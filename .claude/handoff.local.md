@@ -1,63 +1,71 @@
 # Handoff
 
-## Where things stand — Phase 26 (guest-escalation inbox) is COMPLETE ✅
-`.claude/plans/2026-06-27-phase-26-guest-escalation-inbox.md` is **complete — Step 0 design review +
-Steps 1–4 ticked**, on branch **`build/phase-3-generalize-search`** (the open review artifact for `main`;
-Phases 3–26 build on it; the loop's merge-keeper advances `main` when green). Working tree clean.
-`npm run build && npm test && npm run lint` all green (**820 tests**, up from 798 at the start of this run).
+## Where things stand — Phase 27 (escalation resolution / dismissal) is COMPLETE ✅
+`.claude/plans/2026-06-27-phase-27-escalation-resolution.md` is **complete — Step 0 design review +
+Steps 1–3 ticked**, on branch **`build/phase-3-generalize-search`** (the open review artifact for `main`;
+Phases 3–27 build on it; the loop's merge-keeper advances `main` when green). Working tree clean.
+`npm run build && npm test && npm run lint` all green (**844 tests**, up from 820 at the start of this run).
 
-This rung gives `escalated` a **real downstream surface** (the most product-motivated Phase-25 next-lever):
-when a guest texts an **unanswerable** question the responder returns `escalated`, and it is now **recorded** in a
-per-tenant, wedding-scoped `EscalationLog`. The couple (their wedding) + planner (whole tenant) **read** it via
-JSON `GET /t/:slug/escalations` and a themed read-only `?view=escalations` page — closing the **guest→couple
-loop** (gap surfaced → couple fills the field via the Phase-23 edit form → next ask is answered). ADR 0026, memory
-[[guest-escalation-inbox]]. doddy + architect APPROVE-WITH-FIXES on the design (**no exploit found**); all fixes
-applied in the build.
+This rung makes the Phase-26 escalation inbox **clearable**: the couple (their wedding) / planner (whole tenant)
+mark a guest escalation **handled** — `resolved` (dealt with, typically the missing fact filled) or `dismissed`
+(not actionable: spam/irrelevant/duplicate) — moving it from the **Open** section to **Handled**. The inbox's
+FIRST mutation. The escalation record stays **immutable**: handling is a SEPARATE append-only resolution record
+keyed by `escalation_id` (ADR 0026 F6, pinned in advance). ADR 0027, memory [[escalation-resolution]].
+doddy + architect APPROVE-WITH-FIXES on the design (**no exploit found**); all fixes applied in the build.
 
 ## What changed this phase
-- **19th schema** `product/schemas/guest_escalation_schema.json` + manifest/count-test/gen-script bookkeeping
-  (18→19) + `gen:types` emits `GuestEscalation`; barrel-exported from shared + product.
-- **`escalation_log.ts`** (new) — `EscalationLog`: a thin face over `TenantScopedRepository<GuestEscalation>`
-  **keyed by `provider_message_ref`** (the receipt-log dedup PATTERN reused, read-first-put-if-absent → exactly one
-  record per re-delivery). `record` / `list` (planner) / `listForWedding` (couple filter, `undefined → []`).
-- **`product_api.ts`** — `handleInbound` records on `outcome.action === 'escalated'` (sourced from the binding +
-  the already-validated message, NEVER the raw body; NOT swallowed to 202). New `GET /t/:slug/escalations`
-  (`dispatchEscalations` + `handleEscalationList`), scoped by the REUSED `GuestAuthorizer.manageScope`; minimal
-  `EscalationHandlerDeps { escalations, authorizer }` (no `weddings`); optional `escalations?` on `ProductApiDeps`.
-- **`product_web_ui.ts` + `pages.ts`** — `?view=escalations` read-only page (`#escalationsPage` DELEGATES via
-  `api.handle(bearerGet(...))` — NO `escalations` dep on the web UI; `renderEscalations` escapes the untrusted
-  `text`; a console nav link). `readEscalations` body reader.
-- **`compose.ts`** — ONE `EscalationLog` wired into BOTH `messaging.escalations` (capture) AND the `escalations`
-  read deps; exposed on `ComposedSurface`.
-- **Tests** — `escalation_log.test.ts` (record/idempotency/scope/isolation/liveness; real port-stamped
-  received_at); keystone +4 (escalated records one; answered/refused record zero; re-delivery idempotent);
-  `escalation_api.test.ts` (planner all / couple theirs / no sibling leak / tenant isolation / 405 / 401 / answered
-  never appears); `pages.test.ts` +3 (renderEscalations renders + empty-state + XSS-escaped); `compose.test.ts` +3
-  e2e (the couple loop escalated→fill→answered; stored-XSS escaped; unknown-slug masked 404).
+- **20th schema** `product/schemas/escalation_resolution_schema.json` (`resolution_id`/`tenant_id`/`escalation_id`/
+  `wedding_id`/`status` enum/`resolved_by` enum/`resolved_at`; `resolved_at` = `minLength:1`, **no format** —
+  matches `received_at` so the real `clock.now()` can't fail validation) + manifest/count-test/gen-script
+  bookkeeping (19→20) + `gen:types` emits `EscalationResolution`; barrel-exported from shared + product.
+- **`escalation_resolution_log.ts`** (new) — `EscalationResolutionLog`: a thin face over
+  `TenantScopedRepository<EscalationResolution>` **keyed by `escalation_id`**, ctor `(liveness, ids, clock)`.
+  `resolve` (read-first-put-if-absent → FIRST-WRITER-WINS, clock-stamps `resolved_at`) / `list` (planner) /
+  `listForWedding` (couple). Plus **`EscalationLog.getByEscalationId`** (a tenant-scoped `list().find`) for the
+  couple-scope lookup.
+- **`product_api.ts`** — `dispatchEscalations` now GET→`handleEscalationList` / POST→`handleEscalationResolve` /
+  else 405. `handleEscalationList` returns `{escalations, resolutions}` (both scoped by the SAME `manageScope`
+  branch). `handleEscalationResolve` with PINNED statement order + the shared frozen `RESP_RESOLVE_MISS`.
+  `EscalationHandlerDeps` gains `resolutions`.
+- **`product_web_ui.ts` + `pages.ts`** — `#escalationsPage` now issues CSRF + reads both arrays
+  (`readResolutions`); new 4-seg `POST /t/:slug/escalations/resolve` form route + `#escalationResolve` (slug-mask
+  → 404 before CSRF; forged → 403 no mutation). `renderEscalations(theme, slug, escalations, resolutions, csrf)`
+  splits **Open** (Resolve/Dismiss CSRF forms) vs **Handled** (status badge + `resolved_by`).
+- **`compose.ts`** — ONE `EscalationResolutionLog` wired into the `escalations` deps (read + resolve); exposed on
+  `ComposedSurface`.
+- **Tests** — `escalation_resolution_log.test.ts` (resolve/first-writer-wins/scope/isolation/liveness, real
+  clock value); `escalation_log.test.ts` +1 (`getByEscalationId` hit/miss/foreign-tenant); `escalation_resolve_api.test.ts`
+  (planner-any / couple-theirs / **F1 byte-equality of absent vs foreign-wedding miss** / **F2 foreign probe
+  writes nothing** / smuggle-inert / idempotency / bad-status-400 / **F4 two-array scope** / tenant isolation);
+  `escalation_api.test.ts` (405/401 verbs updated for the new POST); `pages.test.ts` +2 (Open/Handled split +
+  CSRF forms; XSS still escaped); `escalation_web.test.ts` (new — forged-CSRF 403 no-mutation / valid resolve 303
+  / unknown-slug 404 before CSRF / JSON not CSRF-reachable); `compose.test.ts` +1 e2e (resolve via the browser
+  form → Handled → later dismiss is a no-op, status stays `resolved`).
 
-## The load-bearing insight (carry forward) — see [[guest-escalation-inbox]] for the full set
-- **Record `escalated` ONLY, NEVER `refused`** (predicate `=== 'escalated'`). `refused` is the fact-independent
-  surprise outcome; recording it would persist surprise-probe content. SAFE to omit — the guest wire is unchanged
-  (escalated/refused both → uniform 202; record is server-side couple/planner-only). COMMS.SURPRISE_LEAK intact.
-- **`guest_escalation.text` is BYTE-IDENTICAL to `inbound_webhook.text`** (`minLength:1`, NO maxLength) so a message
-  that passed the inbound edge can never fail `record()` → no 500 oracle → the capture is NOT swallowed to 202.
-  `text` is UNTRUSTED → HTML-escaped at render, never reflected to the guest.
-- **Idempotency is the receipt-log PATTERN reused, NOT the receipt log widened** — EscalationLog keys its own repo
-  by `provider_message_ref`; the doddy-P0 receipt log stays pristine. The two logs dedup DIFFERENT side effects.
-- **Reuse `manageScope` for the read; the web page delegates through the JSON read** (no `escalations` dep on the
-  web UI — preserves the only-data-path-is-api.handle invariant).
+## The load-bearing insight (carry forward) — see [[escalation-resolution]] for the full set
+- **The escalation is IMMUTABLE; the resolution is a SEPARATE append-only record keyed by `escalation_id`**
+  (first-writer-wins). Re-opening / changing a recorded status is deferred (a mutation-of-a-mutation).
+- **The resolve mutation is oracle-free by ONE shared frozen `RESP_RESOLVE_MISS`** — a couple's absent-id and
+  foreign-wedding-id misses are byte-identical by CONSTRUCTION (not test-hoped), and the couple `wedding_id`
+  match gates the WRITE (a foreign probe records nothing). Statement order is pinned (status enum 400 fires
+  independent of existence).
+- **Trusted-state provenance:** `wedding_id` copied from the live escalation read in the SAME request,
+  `resolved_by` from `principal.role`, `resolved_at` clock-stamped in the log (its ctor takes the clock — unlike
+  `received_at`, which the messaging PORT stamps). A smuggled body field is inert.
+- **CSRF at the web layer only; the JSON mutation API is Bearer-only / not CSRF-reachable.** The 4-seg
+  `escalations/resolve` web route ≠ the 3-seg JSON route. The read returns two arrays scoped identically.
 
 ## Next action — your call. Pick the next high-value lever (ranked)
-- **Escalation resolution / dismissal** — the natural follow-up: mark an escalation handled. Pinned shape (ADR
-  0026 F6): a SEPARATE append-only resolution record keyed by `escalation_id` (preserve the escalation's
-  immutability), NOT a mutation of `guest_escalation`. Needs a mutation surface (CSRF) + an oracle pass. Medium.
+- **Reply-from-the-inbox** — let the couple/planner answer an escalated guest directly (a console-initiated
+  metered send). Now DOUBLY motivated (resolve-by-replying). A new outbound-from-console capability; larger —
+  needs a mutation surface (CSRF), the meter wired from the console path, and an oracle pass on the recipient.
 - **A couple-REGISTER design rung** — resolve the deferred Phase-24 oracle (per-wedding `recipient_ref`
   namespacing, OR masked-conflict semantics that doesn't corrupt the planner path). The most-cited open
   product-authz deferral. Medium; needs a real design pass on the tenant-global-key collision.
 - **Unify `product/price_book.ts` onto the shared cost basis** (retail = COGS × margin over `MESSAGE_COST_CENTS`)
   — the clean Phase-20 follow-up; tidies the two-cents-tables seam. Smaller.
-- **Reply-from-the-inbox** — let the couple/planner answer an escalated guest directly (a console-initiated metered
-  send). A new outbound-from-console capability; larger. Now motivated by this inbox.
+- **Auto-resolve on fill** — automatically mark an escalation resolved when the couple fills the matching fact.
+  Needs an escalation→field link the record lacks (a `topic`/field tag); deferred with the `topic` field.
 - **Return-to-the-engine threads** — the self-improvement loop (advisory tier-2 recs, live publish pipeline) has
   open deferrals if you want to swing back from the product surface.
 
@@ -71,10 +79,12 @@ exploit; all fixes applied). **CI/exit-code lesson:** never pipe `npm run build`
 (the pipe masks the non-zero exit); run build standalone, check `$?`. `npm run build` runs from REPO ROOT.
 **Eval-harness/telemetry import ONLY `@wedding-planner/shared`, never `product`** (the firewall, by reachability).
 **Schema change ⇒ `npm run gen:types`**; a NEW schema file additionally bumps the manifest count test (+ title prose)
-+ the gen-script header — Phase 26 added the 19th schema (manifest now 19). **The guest responder's security boundary
++ the gen-script header — Phase 27 added the 20th schema (manifest now 20). **The guest responder's security boundary
 is `projectGuestVisibleFacts`'s allow-list** — any new guest-visible fact is added THERE. **Web-form mutations are
 CSRF-gated at the web layer ONLY** (the JSON API is Bearer-only / not CSRF-reachable); a body value placed into a
 request URL path MUST be `encodeURIComponent`'d. **The web UI's ONLY data path is `api.handle()`** (no repo/registry/
 log dep on `ProductWebUi`) — a new read page DELEGATES through a JSON route, never holds the store. **Guest/manage
 scope comes from the MINTED principal, never the request body**. **Inbound idempotency keys on `provider_message_ref`
-per tenant**; the InboundReceiptLog records only refs we REPLIED to — escalations dedup in their OWN ref-keyed log.
+per tenant**; escalations dedup in their OWN ref-keyed log; **escalation RESOLUTIONS dedup in their OWN
+escalation_id-keyed log (first-writer-wins)**. **A scoped mutation that must be oracle-free returns ONE shared frozen
+miss constant on every miss branch** (so byte-identity is structural, not test-enforced) — the Phase-27 `RESP_RESOLVE_MISS`.

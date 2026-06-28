@@ -117,7 +117,7 @@ the resolve mutation (a couple must not be able to probe another wedding's escal
   `additionalProperties:false` AND the enum/minLength floors (belt + suspenders over the body-stripping).
   **(architect)** keep `resolved_by` (cheap, real audit value, rendered on the page).
 
-- [ ] **Step 1 — The contract (20th schema) + the resolution log.** Add
+- [x] **Step 1 — The contract (20th schema) + the resolution log.** Add
   `product/schemas/escalation_resolution_schema.json` (shape above). **Confirm `resolved_at` format against the
   REAL clock-stamped value** (the same `clock.now()` the simulated adapter stamps `received_at` with; if the
   schema adds a `format`/`pattern` it MUST accept that exact value, and the log unit test must call `resolve()`
@@ -142,7 +142,7 @@ the resolve mutation (a couple must not be able to probe another wedding's escal
   `undefined → []`; tenant isolation; liveness (suspended throws). Extend `escalation_log.test.ts` for
   `getByEscalationId` (hit/miss/foreign-tenant). `npm run build && npm test && npm run lint` green.
 
-- [ ] **Step 2 — JSON mutation + extended read (`product_api.ts`).** Extend `EscalationHandlerDeps` to
+- [x] **Step 2 — JSON mutation + extended read (`product_api.ts`).** Extend `EscalationHandlerDeps` to
   `{ escalations, resolutions, authorizer }`. `dispatchEscalations`: GET → `handleEscalationList`; POST →
   `handleEscalationResolve`; else → 405. `handleEscalationList` now returns `{ escalations, resolutions }` —
   both scoped by the same `manageScope` branch (all → `.list`; wedding → `.listForWedding(scope.wedding_id)`).
@@ -168,7 +168,7 @@ the resolve mutation (a couple must not be able to probe another wedding's escal
   **(F4) the list now carries `resolutions` scoped by the same `manageScope` branch (a couple bound to A sees
   ONLY A's resolution, never a sibling wedding B's)**; cross-tenant isolation. Green.
 
-- [ ] **Step 3 — Themed resolve/dismiss forms + page + e2e + docs.** `product_web_ui.ts`: `#escalationsPage`
+- [x] **Step 3 — Themed resolve/dismiss forms + page + e2e + docs.** `product_web_ui.ts`: `#escalationsPage`
   now issues the CSRF token (mirror `#guestsPage`: `ERROR_500` if `csrf===undefined` on a 200) and reads both
   arrays (add a tolerant `readResolutions` reader). Add the web form route `POST /t/:slug/escalations/resolve`
   (4-seg, alongside `guests/{create,remove}` + `weddings/{create,update}`): **(F3) slug-mask → `GENERIC_404`

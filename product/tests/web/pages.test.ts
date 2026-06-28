@@ -1,4 +1,4 @@
-import type { Tenant, Wedding } from '@wedding-planner/shared'
+import type { EscalationResolution, GuestEscalation, Tenant, Wedding } from '@wedding-planner/shared'
 import { describe, expect, it } from 'vitest'
 
 import { NEUTRAL_COLOR } from '../../src/web/html'
@@ -175,24 +175,44 @@ describe('renderConsole / renderDetail', () => {
 })
 
 describe('generic constants', () => {
-  it('renderEscalations lists the question, who asked, and a link to the wedding edit page', () => {
-    const out = renderEscalations(SAFE_THEME, 'acme', [
-      { escalation_id: 'esc_1', tenant_id: 't1', wedding_id: 'wedding_42', from_ref: 'sms:+1555', text: 'where do I park?', received_at: '2027-05-01T00:00:00.000Z', provider_message_ref: 'pm_1' },
-    ])
+  const ESC_1: GuestEscalation = { escalation_id: 'esc_1', tenant_id: 't1', wedding_id: 'wedding_42', from_ref: 'sms:+1555', text: 'where do I park?', received_at: '2027-05-01T00:00:00.000Z', provider_message_ref: 'pm_1' }
+
+  it('renderEscalations lists an OPEN question with Resolve/Dismiss CSRF forms + a link to the wedding edit page', () => {
+    const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [], 'csrf-xyz')
     expect(out).toContain('where do I park?')
     expect(out).toContain('sms:+1555')
     expect(out).toContain('/t/acme?wedding=wedding_42')
+    // The two action forms post escalation_id + status + the CSRF token to the resolve route.
+    expect(out).toContain('action="/t/acme/escalations/resolve"')
+    expect(out).toContain('name="escalation_id" value="esc_1"')
+    expect(out).toContain('name="status" value="resolved"')
+    expect(out).toContain('name="status" value="dismissed"')
+    expect(out).toContain('value="csrf-xyz"')
   })
 
-  it('renderEscalations renders an empty-state when there are no open questions', () => {
-    const out = renderEscalations(SAFE_THEME, 'acme', [])
+  it('renderEscalations moves a HANDLED question into a Handled section (status badge, no action form)', () => {
+    const resolution: EscalationResolution = { resolution_id: 'res_1', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', status: 'dismissed', resolved_by: 'planner', resolved_at: '2027-05-02T00:00:00.000Z' }
+    const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [resolution], 'csrf-xyz')
+    expect(out).toContain('Handled')
+    expect(out).toContain('Dismissed by planner')
+    // A handled row carries NO Resolve/Dismiss form (the only form action on the page is gone when nothing is open).
+    expect(out).not.toContain('action="/t/acme/escalations/resolve"')
+    expect(out).toContain('No open questions')
+  })
+
+  it('renderEscalations renders an empty-state when there are no questions', () => {
+    const out = renderEscalations(SAFE_THEME, 'acme', [], [], 'csrf-xyz')
     expect(out).toContain('No open questions')
   })
 
   it('renderEscalations escapes an UNTRUSTED guest question (no live markup, inert escaped text)', () => {
-    const out = renderEscalations(SAFE_THEME, 'acme', [
-      { escalation_id: 'esc_1', tenant_id: 't1', wedding_id: 'w1', from_ref: '"><img src=x onerror=alert(1)>', text: '<script>alert("xss")</script>', received_at: '2027-05-01T00:00:00.000Z', provider_message_ref: 'pm_1' },
-    ])
+    const out = renderEscalations(
+      SAFE_THEME,
+      'acme',
+      [{ escalation_id: 'esc_1', tenant_id: 't1', wedding_id: 'w1', from_ref: '"><img src=x onerror=alert(1)>', text: '<script>alert("xss")</script>', received_at: '2027-05-01T00:00:00.000Z', provider_message_ref: 'pm_1' }],
+      [],
+      'csrf-xyz',
+    )
     assertNoLiveMarkup(out, 'escalation/text+from_ref')
     expect(out).toContain('&lt;script&gt;')
   })
