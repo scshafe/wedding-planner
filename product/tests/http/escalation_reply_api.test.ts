@@ -245,6 +245,32 @@ describe('escalation reply-from-the-inbox (Phase 28)', () => {
     expect(usage(w, 'alpha').message_count).toBe(0)
   })
 
+  it('Phase 29 transcript: the operator answer is PERSISTED on the resolution + read back via the scoped GET', () => {
+    const planner = login(w, 'alpha', { role: 'planner' })
+    const wedA = makeWedding(w, 'alpha', planner)
+    registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
+    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+
+    expect(reply(w, 'alpha', planner, escId, 'Parking is in lot B, by the oak tree.').body).toEqual({ replied: true })
+    const listed = w.api.handle(req('GET', `/t/alpha/escalations`, { token: planner }))
+    const resolutions = (listed.body as { resolutions: { escalation_id: string; reply_text?: string }[] }).resolutions
+    expect(resolutions.find((r) => r.escalation_id === escId)?.reply_text).toBe('Parking is in lot B, by the oak tree.')
+  })
+
+  it('Phase 29: a resolve-FORM resolution (no reply) carries NO reply_text key', () => {
+    const planner = login(w, 'alpha', { role: 'planner' })
+    const wedA = makeWedding(w, 'alpha', planner)
+    registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
+    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+
+    // Resolve via the status form (Phase 27 path), not a reply -> no send, no persisted answer.
+    expect(w.api.handle(req('POST', `/t/alpha/escalations`, { token: planner, body: { escalation_id: escId, status: 'resolved' } })).status).toBe(200)
+    const listed = w.api.handle(req('GET', `/t/alpha/escalations`, { token: planner }))
+    const r = (listed.body as { resolutions: Record<string, unknown>[] }).resolutions.find((x) => x.escalation_id === escId)!
+    expect('reply_text' in r).toBe(false)
+    expect(usage(w, 'alpha').message_count).toBe(0)
+  })
+
   it('tenant isolation: a planner cannot reply to another tenant escalation (id is absent in their partition)', () => {
     const plannerA = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', plannerA)

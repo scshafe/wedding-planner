@@ -204,6 +204,24 @@ describe('generic constants', () => {
     expect(out).toContain('No open questions')
   })
 
+  it('Phase 29: a HANDLED-by-reply row shows the operator answer as a transcript line; a resolve-form row shows none', () => {
+    const replied: EscalationResolution = { resolution_id: 'res_r', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', status: 'resolved', resolved_by: 'couple', resolved_at: '2027-05-02T00:00:00.000Z', reply_text: 'Parking is in lot B.' }
+    const withReply = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [replied], 'csrf-xyz')
+    expect(withReply).toContain('Replied:')
+    expect(withReply).toContain('Parking is in lot B.')
+
+    const formResolved: EscalationResolution = { resolution_id: 'res_f', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', status: 'resolved', resolved_by: 'planner', resolved_at: '2027-05-02T00:00:00.000Z' }
+    const noReply = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [formResolved], 'csrf-xyz')
+    expect(noReply).not.toContain('Replied:')
+  })
+
+  it('Phase 29: an XSS payload in the persisted reply_text is escaped (text-context render, no live markup)', () => {
+    const evil: EscalationResolution = { resolution_id: 'res_x', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', status: 'resolved', resolved_by: 'couple', resolved_at: '2027-05-02T00:00:00.000Z', reply_text: '<script>alert("xss")</script>' }
+    const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [evil], 'csrf-xyz')
+    assertNoLiveMarkup(out, 'resolution/reply_text')
+    expect(out).toContain('&lt;script&gt;')
+  })
+
   it('renderEscalations renders an empty-state when there are no questions', () => {
     const out = renderEscalations(SAFE_THEME, 'acme', [], [], 'csrf-xyz')
     expect(out).toContain('No open questions')

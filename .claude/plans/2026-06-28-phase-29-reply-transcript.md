@@ -77,7 +77,7 @@ decision"); it naturally extends [[reply-from-inbox]].
     2000-char boundary byte-identity test (4b).
   - Verify: `npm run build && npm test && npm run lint` green ($? checked, build standalone).
 
-- [ ] **Step 2 — Reply handler passes the text through; render the thread.**
+- [x] **Step 2 — Reply handler passes the text through; render the thread.** Done; 867 tests green (+4).
   - `handleEscalationReply` (`product_api.ts`): pass `reply_text` into `resolutions.resolve({...})`. The
     resolve-form handler and dismiss leave it absent (unchanged).
   - `pages.ts` `renderEscalations`: on the Handled row, if `r.reply_text !== undefined`, render it as the

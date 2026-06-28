@@ -306,8 +306,14 @@ export function renderEscalations(
   const handledRows = handled.map((e) => {
     const r = resolutionOf.get(e.escalation_id) as EscalationResolution
     const badge = r.status === 'resolved' ? 'Resolved' : 'Dismissed'
+    // Phase 29: when the escalation was resolved by a console reply, show the operator's answer beneath the
+    // guest's question — the question→answer transcript. reply_text is the operator's (trusted) text but is
+    // interpolated as plain TEXT content through `html` (escaped exactly like e.text), never an attribute.
+    const replyLine =
+      r.reply_text === undefined ? html`` : html`<div class="note">Replied: “${r.reply_text}”</div>`
     return html`<div class="card">
     <div><strong>“${e.text}”</strong> <span class="note">— ${badge} by ${r.resolved_by}</span></div>
+    ${replyLine}
     <div class="note">From <code>${e.from_ref}</code> · ${e.received_at}</div>
   </div>`
   })

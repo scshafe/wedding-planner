@@ -420,6 +420,8 @@ describe('composeProductSurface — Phase 27 e2e: resolving an escalation clears
     const after = ui.handle({ method: 'GET', path: '/t/demo?view=escalations', headers: { cookie } })
     expect(after.body).toContain('Resolved by couple')
     expect(after.body).not.toContain('action="/t/demo/escalations/reply"')
+    // Phase 29: the inbox now shows the question→answer transcript — the operator's persisted reply renders.
+    expect(after.body).toContain('Parking is in lot B by the chapel.')
     const detail = ui.handle({ method: 'GET', path: `/t/demo?wedding=${weddingId}`, headers: { cookie } })
     const csrf2 = /name="_csrf" value="([^"]+)"/.exec(detail.body as string)?.[1] as string
     ui.handle(form('POST', '/t/demo/escalations/reply', { _csrf: csrf2, escalation_id: escId, reply_text: 'second attempt' }, cookie))

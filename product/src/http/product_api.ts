@@ -777,12 +777,15 @@ function handleEscalationReply(
     if (error instanceof WeddingPlannerError) return RESP_REPLY_MISS
     throw error
   }
-  // Commit-after-success: the escalation is handled only because the reply went out.
+  // Commit-after-success: the escalation is handled only because the reply went out. Persist the operator's
+  // answer (Phase 29) so the Handled inbox row reads as a question→answer transcript — reply_text is already
+  // non-empty + length-capped above, so it can never fail the resolution's assertValid.
   deps.resolutions.resolve(context, {
     escalation_id,
     wedding_id: escalation.wedding_id, // copied from the live escalation, never the body
     status: 'resolved',
     resolved_by: principal.role,
+    reply_text,
   })
   return { status: 200, body: { replied: true } }
 }
