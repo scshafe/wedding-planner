@@ -24,12 +24,20 @@ import { ProductError } from '../product_error'
 export type BillingEventKind = BillingEvent['kind']
 
 /**
+ * The kinds that carry money — `amount_cents` is present iff the kind is one of these (the balance fold, the
+ * per-kind `allOf`, and the activity projection in billing_activity.ts all key off this same union, so a
+ * financial kind can never be financial in one place and a marker in another).
+ */
+export type FinancialBillingEventKind = Extract<BillingEventKind, 'charge' | 'usage_charge' | 'payment'>
+
+/**
  * The kinds that carry money (and therefore participate in the balance fold). MUST stay in lockstep with the
  * `balanceCents` fold below (which hard-codes the debit/credit direction per kind) AND the schema's per-kind
  * `allOf` — adding a financial kind to one but not all three is a silent money bug. Pinned by the round-trip
- * test in billing_ledger.test.ts.
+ * test in billing_ledger.test.ts. Exported so the activity projection (billing_activity.ts) filters off the SAME
+ * source — a new financial kind flows into the balance, the summary, AND the itemized activity together.
  */
-const FINANCIAL_KINDS: ReadonlySet<BillingEventKind> = new Set<BillingEventKind>([
+export const FINANCIAL_KINDS: ReadonlySet<BillingEventKind> = new Set<BillingEventKind>([
   'charge',
   'usage_charge',
   'payment',
