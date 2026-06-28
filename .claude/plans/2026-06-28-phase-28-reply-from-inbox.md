@@ -67,7 +67,7 @@ moves Open → Handled in one action ("resolve-by-replying"). Closes the guest�
     existence / channel honored / meter fired + billed / tenant isolation.
   - Verify green.
 
-- [ ] **Step 3 — Web reply form (CSRF) + browser e2e.**
+- [x] **Step 3 — Web reply form (CSRF) + browser e2e.** Done; 858 tests green.
   - `pages.ts` `renderEscalations`: add a Reply form (textarea `reply_text` + hidden `escalation_id` +
     `_csrf`) to each Open escalation (alongside Resolve/Dismiss).
   - `product_web_ui.ts`: 4-seg `POST /t/:slug/escalations/reply` → slug-mask 404 → CSRF verify (forged →
@@ -79,7 +79,8 @@ moves Open → Handled in one action ("resolve-by-replying"). Closes the guest�
     channel) → escalation now Handled (`resolved`) → a re-reply is a no-op (meter count unchanged).
   - Verify green.
 
-- [ ] **Step 4 — ADR 0028 + memory + handoff.** Write ADR 0028; add
+- [x] **Step 4 — ADR 0028 + memory + handoff.** ADR 0028 written; memory [[reply-from-inbox]] + indexed;
+  handoff updated. Phase 28 COMPLETE. Write ADR 0028; add
   `.claude/memory/reply-from-inbox.md` + index it; update `.claude/handoff.local.md`. Commit per step.
 
 ## Safety rails (unchanged)
