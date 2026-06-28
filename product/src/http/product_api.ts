@@ -19,6 +19,7 @@ import type { OnboardingService } from '../onboarding/onboarding_service'
 import type { GuestQaResponder } from '../messaging/guest_qa_responder'
 import { projectGuestVisibleFacts } from '../messaging/guest_qa_responder'
 import type { EscalationLog } from '../messaging/escalation_log'
+import type { EscalationResolutionLog } from '../messaging/escalation_resolution_log'
 import type { GuestRegistry } from '../messaging/guest_registry'
 import type { InboundReceiptLog } from '../messaging/inbound_receipt_log'
 import type { MessagingPort } from '../messaging/messaging_port'
@@ -81,6 +82,15 @@ const RESP_HEALTHZ: ApiResponse = deepFreeze({ status: 200, body: { status: 'ok'
  * out-of-band send, never reflected in this response.
  */
 const RESP_ACCEPTED: ApiResponse = deepFreeze({ status: 202, body: { status: 'accepted' } })
+/**
+ * The escalation-resolve MISS response (Phase 27). ONE frozen, byte-identical `{resolved:false}` returned on
+ * EVERY non-resolving branch of `POST /t/:slug/escalations` — the escalation is absent, OR a couple is
+ * resolving an escalation outside their bound wedding. Sharing a single frozen constant across both branches
+ * makes the byte-identical-miss STRUCTURAL (not test-hoped): a couple cannot distinguish "no such escalation"
+ * from "an escalation exists but in another wedding", so the resolve mutation is not a cross-wedding existence
+ * oracle (doddy F1). A successful resolve returns the distinct `{resolved:true}`.
+ */
+const RESP_RESOLVE_MISS: ApiResponse = deepFreeze({ status: 200, body: { resolved: false } })
 
 /** The dependencies the dispatch handlers may touch — DELIBERATELY excludes resolver/sessionStore. */
 export interface WeddingHandlerDeps {
@@ -132,6 +142,13 @@ export interface GuestHandlerDeps {
  */
 export interface EscalationHandlerDeps {
   readonly escalations: EscalationLog
+  /**
+   * Phase 27: the append-only handled-record log (resolved/dismissed). The read returns it alongside
+   * `escalations` (the consumer joins by `escalation_id`); the resolve mutation writes it. Keyed by
+   * `escalation_id`, scoped by the SAME `manageScope` branch as the escalations — so a couple's resolutions
+   * array never carries a sibling wedding's record.
+   */
+  readonly resolutions: EscalationResolutionLog
   readonly authorizer: GuestAuthorizer
 }
 
@@ -582,9 +599,11 @@ function dispatchGuests(
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Escalation-inbox dispatch (Phase 26) — read-only. GET returns the principal's scoped escalations; any
-// other method is a 405 (the route exists tenant-independently, so 405 is not a tenant oracle). Auth has
-// already run in the pipeline (stages 3–4 before this), so route shape is not a pre-auth oracle.
+// Escalation-inbox dispatch (Phase 26 read + Phase 27 resolve). GET returns the principal's scoped
+// escalations AND their resolutions (the consumer joins by escalation_id); POST records a resolution
+// (resolved/dismissed); any other method is a 405 (the route exists tenant-independently, so 405 is not a
+// tenant oracle). Auth has already run in the pipeline (stages 3–4 before this), so route shape — including
+// the new POST verb — is not a pre-auth oracle.
 // ---------------------------------------------------------------------------------------------------
 
 function dispatchEscalations(
@@ -594,6 +613,7 @@ function dispatchEscalations(
   deps: EscalationHandlerDeps,
 ): ApiResponse {
   if (req.method === 'GET') return handleEscalationList(context, principal, deps)
+  if (req.method === 'POST') return handleEscalationResolve(context, principal, req, deps)
   throw methodNotAllowed()
 }
 
@@ -603,13 +623,64 @@ function handleEscalationList(
   deps: EscalationHandlerDeps,
 ): ApiResponse {
   // Scope from the MINTED principal (never the body), reusing manageScope: planner -> the whole tenant
-  // partition; couple -> only their bound wedding's escalations (the log filters; an unbound couple yields []).
+  // partition; couple -> only their bound wedding (the logs filter; an unbound couple yields []). BOTH arrays
+  // are scoped by the SAME branch, so a couple's `resolutions` never carries a sibling wedding's record (F4).
   const scope = deps.authorizer.manageScope(principal)
   const escalations =
     scope.kind === 'all'
       ? deps.escalations.list(context)
       : deps.escalations.listForWedding(context, scope.wedding_id)
-  return { status: 200, body: { escalations } }
+  const resolutions =
+    scope.kind === 'all'
+      ? deps.resolutions.list(context)
+      : deps.resolutions.listForWedding(context, scope.wedding_id)
+  return { status: 200, body: { escalations, resolutions } }
+}
+
+/**
+ * POST /t/:slug/escalations — mark an escalation handled (Phase 27). Statement order is PINNED so the
+ * byte-identical miss is STRUCTURAL (doddy F1):
+ *   1. scope from the MINTED principal (manageScope);
+ *   2. parse the body; read `escalation_id` (required);
+ *   3. validate `status` to the enum FIRST — INDEPENDENT of existence (a bad/absent status is a masked 400
+ *      whether the escalation exists or not, so the 400 is no existence oracle);
+ *   4. look the escalation up by id within the tenant (getByEscalationId is tenant-scoped — never cross-tenant);
+ *   5. ABSENT -> the shared frozen RESP_RESOLVE_MISS; a COUPLE whose bound wedding != the escalation's wedding
+ *      -> the SAME RESP_RESOLVE_MISS (an unbound couple has wedding_id===undefined, and the escalation's
+ *      wedding_id is always a non-empty string, so the inequality always holds → always masked). So a couple
+ *      cannot distinguish "no such escalation" from "an escalation in another wedding" — not a cross-wedding
+ *      existence oracle. The early return precedes ANY write (F2 — a foreign-wedding probe records NOTHING).
+ *   6. else record the resolution. wedding_id is COPIED from the live escalation read in THIS request (F5 —
+ *      never the body, never scope.wedding_id), resolved_by is the principal's role, resolved_at is clock-
+ *      stamped inside the log; idempotent by escalation_id (first-writer-wins). -> { resolved: true }.
+ */
+function handleEscalationResolve(
+  context: TenantContext,
+  principal: Principal,
+  req: ApiRequest,
+  deps: EscalationHandlerDeps,
+): ApiResponse {
+  const scope = deps.authorizer.manageScope(principal)
+  const body = parseObjectBody(req.rawBody)
+  const escalation_id = requireString(body, 'escalation_id')
+  const status = body.status
+  // Inline enum check (F7) — same PRODUCT.BAD_REQUEST -> masked 400 a planner's malformed body yields; NOT a
+  // distinct code, and fires for a present AND an absent escalation_id alike (independent of existence).
+  if (status !== 'resolved' && status !== 'dismissed') {
+    throw new ProductError('PRODUCT.BAD_REQUEST', "Field 'status' must be 'resolved' or 'dismissed'.", {})
+  }
+  const escalation = deps.escalations.getByEscalationId(context, escalation_id)
+  if (escalation === undefined) return RESP_RESOLVE_MISS
+  // A couple may resolve ONLY their bound wedding's escalations; a planner ({kind:'all'}) may resolve any.
+  // Byte-identical to the absent miss, BEFORE any write (no oracle, no record for a foreign-wedding probe).
+  if (scope.kind === 'wedding' && escalation.wedding_id !== scope.wedding_id) return RESP_RESOLVE_MISS
+  deps.resolutions.resolve(context, {
+    escalation_id,
+    wedding_id: escalation.wedding_id, // F5: from the live escalation, never the body / never scope.wedding_id
+    status,
+    resolved_by: principal.role,
+  })
+  return { status: 200, body: { resolved: true } }
 }
 
 function handleGuestList(context: TenantContext, principal: Principal, deps: GuestHandlerDeps): ApiResponse {

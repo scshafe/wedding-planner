@@ -7,6 +7,7 @@ import {
   BillingLedger,
   DeterministicGuestQaResponder,
   EscalationLog,
+  EscalationResolutionLog,
   GuestRegistry,
   InboundReceiptLog,
   MessagingService,
@@ -55,6 +56,7 @@ function makeWorld(): World {
   const adapter = new SimulatedMessagingAdapter(clock, new SequentialIdGenerator('seedM'))
   // ONE log instance — the inbound capture writes it, the read surface reads it (as compose wires).
   const escalations = new EscalationLog(store, new SequentialIdGenerator('seedEsc'))
+  const resolutions = new EscalationResolutionLog(store, new SequentialIdGenerator('seedRes'), clock)
   const guestAuthorizer = new GuestAuthorizer()
   const api = new ProductApi({
     resolver,
@@ -74,7 +76,7 @@ function makeWorld(): World {
       service: new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS')),
       escalations,
     },
-    escalations: { escalations, authorizer: guestAuthorizer },
+    escalations: { escalations, resolutions, authorizer: guestAuthorizer },
   })
   return { api }
 }
@@ -181,11 +183,13 @@ describe('escalation-inbox JSON read surface', () => {
     expect(listEscalations(w, 'beta', plannerB).rows).toEqual([])
   })
 
-  it('a non-GET method is 405; an anonymous request is 401', () => {
+  it('an unsupported method is 405; an anonymous request is 401 (GET and the Phase-27 resolve POST aside)', () => {
     const planner = login(w, 'alpha', { role: 'planner' })
-    expect(w.api.handle(req('POST', '/t/alpha/escalations', { token: planner })).status).toBe(405)
     expect(w.api.handle(req('DELETE', '/t/alpha/escalations', { token: planner })).status).toBe(405)
+    expect(w.api.handle(req('PUT', '/t/alpha/escalations', { token: planner })).status).toBe(405)
+    // Auth runs BEFORE the method check, so an anonymous request on any verb is a 401 (route shape is no oracle).
     expect(w.api.handle(req('GET', '/t/alpha/escalations')).status).toBe(401)
+    expect(w.api.handle(req('POST', '/t/alpha/escalations')).status).toBe(401)
   })
 
   it('an ANSWERED question never appears in the inbox (only escalations land)', () => {

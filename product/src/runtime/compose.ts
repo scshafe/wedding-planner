@@ -8,6 +8,7 @@ import { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import { BillingLedger } from '../billing/billing_ledger'
 import { ProductApi } from '../http/product_api'
 import { EscalationLog } from '../messaging/escalation_log'
+import { EscalationResolutionLog } from '../messaging/escalation_resolution_log'
 import { DeterministicGuestQaResponder } from '../messaging/guest_qa_responder'
 import { GuestRegistry } from '../messaging/guest_registry'
 import { InboundReceiptLog } from '../messaging/inbound_receipt_log'
@@ -108,6 +109,12 @@ export interface ComposedSurface {
    * the guest->couple loop (an escalated question lands here, then a filled fact makes the next ask answerable).
    */
   readonly escalations: EscalationLog
+  /**
+   * Phase 27: the append-only escalation-resolution log (resolved/dismissed). Exposed for tests/inspection
+   * (read/written over HTTP via `GET`/`POST /t/:slug/escalations`); a compose-level e2e uses it to verify the
+   * couple can mark an escalated question handled (it moves out of the Open inbox) idempotently.
+   */
+  readonly resolutions: EscalationResolutionLog
 }
 
 /** The demo theme — an obvious offline placeholder (no real brand). Colors are lowercase 6-hex per contract. */
@@ -152,6 +159,10 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   // The escalation inbox (Phase 26): an `escalated` question is recorded here and read by the couple (their
   // wedding) / planner (whole tenant). ONE instance — the inbound capture writes it, the read surface reads it.
   const escalations = new EscalationLog(tenants, ids)
+  // The escalation-resolution log (Phase 27): the append-only handled-record (resolved/dismissed) keyed by
+  // escalation_id, scoped exactly like the escalations. ONE instance — the resolve mutation writes it, the read
+  // surface returns it alongside the escalations. Stamps resolved_at from the same injected clock.
+  const resolutions = new EscalationResolutionLog(tenants, ids, clock)
 
   const api = new ProductApi({
     resolver,
@@ -171,9 +182,10 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
       service: messaging,
       escalations,
     },
-    // The escalation inbox READ surface (Phase 26) — the SAME log instance the inbound capture writes to,
-    // read-scoped by the guest authorizer's manageScope (planner: whole tenant; couple: their wedding).
-    escalations: { escalations, authorizer: guestAuthorizer },
+    // The escalation inbox READ + RESOLVE surface (Phase 26 + 27) — the SAME log instances the inbound
+    // capture / resolve mutation write to, read-scoped by the guest authorizer's manageScope (planner: whole
+    // tenant; couple: their wedding).
+    escalations: { escalations, resolutions, authorizer: guestAuthorizer },
     ...(config.championStrategy === undefined ? {} : { championStrategy: config.championStrategy }),
   })
   const themes = new ThemeResolver(tenants)
@@ -214,5 +226,5 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     }
   }
 
-  return { ui, api, themes, operatorToken, demo, messaging, escalations }
+  return { ui, api, themes, operatorToken, demo, messaging, escalations, resolutions }
 }
