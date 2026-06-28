@@ -264,3 +264,77 @@ describe('composeProductSurface — Phase 23 e2e: a browser-set logistic reaches
     expect(messaging.usageView(tenantId).message_count).toBe(1) // escalated again -> no new metered reply
   })
 })
+
+describe('composeProductSurface — Phase 26 e2e: the guest→couple escalation loop', () => {
+  const WEBHOOK = 'compose-webhook-token-0123456789'
+
+  function form(method: string, path: string, fields: Record<string, string>, cookie?: string): ApiRequest {
+    const headers: Record<string, string | undefined> = { 'content-type': 'application/x-www-form-urlencoded' }
+    if (cookie !== undefined) headers.cookie = cookie
+    return { method, path, headers, rawBody: new URLSearchParams(fields).toString() }
+  }
+
+  function inbound(ref: string, pmr: string, text: string): ApiRequest {
+    return {
+      method: 'POST',
+      path: '/t/demo/messaging/inbound',
+      headers: { authorization: `Bearer ${WEBHOOK}` },
+      rawBody: JSON.stringify({ channel: 'sms', from_ref: ref, text, provider_message_ref: pmr }),
+    }
+  }
+
+  it('a guest asks an unanswerable question → the COUPLE sees it in the inbox → fills the fact → the next ask is answered', () => {
+    const { ui, api, messaging, demo } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+    const ref = demo?.guestRecipientRef as string
+    const tenantId = demo?.tenantId as string
+    const weddingId = demo?.weddingId as string
+
+    // A guest texts an unanswerable parking question (parking_info unset) → escalates, no meter, RECORDED.
+    expect(api.handle(inbound(ref, 'pmr_q1', 'where do I park?')).status).toBe(202)
+    expect(messaging.usageView(tenantId).message_count).toBe(0)
+
+    // The COUPLE logs in via the HTML front door and opens the escalation inbox — the question is there.
+    const loginRes = ui.handle(form('POST', '/t/demo/login', { role: 'couple', wedding_id: weddingId }))
+    const cookie = `wp_session=${/wp_session=([^;]+)/.exec(loginRes.headers['set-cookie'] ?? '')?.[1]}`
+    const inboxBefore = ui.handle({ method: 'GET', path: '/t/demo?view=escalations', headers: { cookie } })
+    expect(inboxBefore.status).toBe(200)
+    expect(inboxBefore.body).toContain('where do I park?')
+    expect(inboxBefore.body).toContain(ref) // who asked
+
+    // The couple fills parking_info via the edit form on their own wedding.
+    const detail = ui.handle({ method: 'GET', path: `/t/demo?wedding=${weddingId}`, headers: { cookie } })
+    const csrf = /name="_csrf" value="([^"]+)"/.exec(detail.body as string)?.[1] as string
+    const saved = ui.handle(
+      form(
+        'POST',
+        '/t/demo/weddings/update',
+        { _csrf: csrf, wedding_id: weddingId, couple_display_name: 'Alex & Sam', event_date: '2027-09-18', status: 'planning', parking_info: 'Lot B, free after 5pm' },
+        cookie,
+      ),
+    )
+    expect(saved.status).toBe(303)
+
+    // The SAME question (fresh provider ref) is now ANSWERED from the couple-set fact — one metered reply fires.
+    expect(api.handle(inbound(ref, 'pmr_q2', 'where do I park?')).status).toBe(202)
+    expect(messaging.usageView(tenantId).message_count).toBe(1)
+  })
+
+  it('an UNTRUSTED guest question is HTML-escaped in the rendered inbox (no stored XSS)', () => {
+    const { ui, api, demo } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+    const ref = demo?.guestRecipientRef as string
+    // A hostile question with no logistics keyword classifies as 'unknown' → escalates → recorded verbatim.
+    api.handle(inbound(ref, 'pmr_xss', '<script>alert(1)</script>'))
+
+    const loginRes = ui.handle(form('POST', '/t/demo/login', { role: 'planner' }))
+    const cookie = `wp_session=${/wp_session=([^;]+)/.exec(loginRes.headers['set-cookie'] ?? '')?.[1]}`
+    const page = ui.handle({ method: 'GET', path: '/t/demo?view=escalations', headers: { cookie } })
+    expect(page.status).toBe(200)
+    expect(page.body).toContain('&lt;script&gt;alert(1)&lt;/script&gt;') // escaped
+    expect(page.body).not.toContain('<script>alert(1)</script>') // never raw
+  })
+
+  it('the inbox masks an unknown tenant to a generic 404 (no existence oracle)', () => {
+    const { ui } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+    expect(ui.handle({ method: 'GET', path: '/t/nope?view=escalations', headers: {} }).status).toBe(404)
+  })
+})

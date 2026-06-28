@@ -149,7 +149,7 @@ route-to-couple" divergence the responder header already names).
   records; refused → zero records; re-delivery of an escalated ref → still one record; a body-smuggled
   `wedding_id`/`from_ref` is inert (record uses binding/message, not body). Green.
 
-- [ ] **Step 3 — JSON read surface (`product_api.ts`).** Add `GET /t/:slug/escalations` via a new
+- [x] **Step 3 — JSON read surface (`product_api.ts`).** Add `GET /t/:slug/escalations` via a new
   `dispatchEscalations` paralleling `dispatchGuests`, reached **only after `#authenticate`** (auth-before-method,
   so an unknown slug masks identically + method≠GET is a tenant-independent 405, not an oracle): GET →
   `handleEscalationList(context, principal, deps)` branching on `manageScope(principal)` (all →
@@ -162,7 +162,7 @@ route-to-couple" divergence the responder header already names).
   wedding's escalation never appears); a couple of wedding B cannot see wedding A's; method ≠ GET → 405;
   unauth → 401; cross-tenant isolation (tenant Z's GET never sees tenant Y's). Green.
 
-- [ ] **Step 4 — Themed `?view=escalations` page + e2e + docs.** Add `#escalationsPage` to `product_web_ui.ts`
+- [x] **Step 4 — Themed `?view=escalations` page + e2e + docs.** Add `#escalationsPage` to `product_web_ui.ts`
   **mirroring `#guestsPage` LITERALLY (F1, load-bearing):** read via `this.#api.handle(bearerGet('/t/:slug/
   escalations', token))`, render ONLY on `status===200`, and mask every non-200 with the existing non-data
   renderer (`#renderNonData`/equivalent) so unknown-slug/forbidden/suspended all mask identically. **NO

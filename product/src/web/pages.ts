@@ -1,4 +1,4 @@
-import type { Guest, Tenant, Wedding } from '@wedding-planner/shared'
+import type { Guest, GuestEscalation, Tenant, Wedding } from '@wedding-planner/shared'
 
 import type { StrategyGuidance } from '../strategy/strategy_guidance'
 import { html, render, type SafeHtml, safeColor } from './html'
@@ -190,7 +190,7 @@ export function renderConsole(
     <h2>Weddings</h2>
     <form class="inline" method="post" action="/t/${slug}/logout">${csrfField(csrfToken)}<button type="submit">Sign out</button></form>
   </div>
-  <p><a href="/t/${slug}/strategy">View the planning strategy →</a> · <a href="/t/${slug}?view=guests">Manage guests →</a></p>
+  <p><a href="/t/${slug}/strategy">View the planning strategy →</a> · <a href="/t/${slug}?view=guests">Manage guests →</a> · <a href="/t/${slug}?view=escalations">Guest questions →</a></p>
   ${body}
   <div class="card"><h3>Create a wedding</h3>${createWarning}
     <form method="post" action="/t/${slug}/weddings/create">
@@ -257,6 +257,43 @@ export function renderGuests(
   <div class="card"><h3>Register a guest</h3>${warning}${addForm}</div>
   <h3>Registered guests</h3>
   ${list}`,
+  )
+}
+
+/**
+ * The themed escalation-inbox page (Phase 26): the questions guests asked that the platform could not answer.
+ * READ-ONLY (no form, so no CSRF — mirrors the strategy page). Each row links to the matching wedding's edit
+ * page, so the couple/planner can fill the missing fact and make the next ask answerable (closing the loop).
+ * The guest's `text` is UNTRUSTED input — it flows through the `html` template (escaped text, never a
+ * `src`/`href`), so a hostile question can never inject markup. Rendered from the scoped `GET
+ * /t/:slug/escalations` (planner: whole tenant; couple: their wedding), so the page discloses only in-scope rows.
+ */
+export function renderEscalations(
+  theme: Tenant['theme'],
+  slug: string,
+  escalations: readonly GuestEscalation[],
+): string {
+  const rows = escalations.map(
+    (e) => html`<div class="card">
+    <div><strong>“${e.text}”</strong></div>
+    <div class="note">From <code>${e.from_ref}</code> · ${e.received_at}</div>
+    <div class="note">Wedding <code>${e.wedding_id}</code> · <a href="/t/${slug}?wedding=${e.wedding_id}">Set the missing details →</a></div>
+  </div>`,
+  )
+  const body =
+    escalations.length === 0
+      ? html`<p class="note">No open questions — guests haven't asked anything we couldn't answer.</p>`
+      : html`${rows}`
+  return themedShell(
+    theme,
+    slug,
+    'Guest questions',
+    html`<p><a href="/t/${slug}">← All weddings</a></p>
+  <div class="card">
+    <h2>Questions we couldn't answer</h2>
+    <p class="note">A guest texted in and we had no fact to answer from. Open the wedding to fill the detail — then the next guest who asks gets an automatic reply.</p>
+  </div>
+  ${body}`,
   )
 }
 

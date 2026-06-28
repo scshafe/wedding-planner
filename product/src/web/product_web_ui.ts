@@ -1,4 +1,4 @@
-import type { Guest, Wedding } from '@wedding-planner/shared'
+import type { Guest, GuestEscalation, Wedding } from '@wedding-planner/shared'
 
 import type { CsrfGuard } from '../auth/csrf_guard'
 import type { ApiRequest } from '../http/api_message'
@@ -12,6 +12,7 @@ import {
   GENERIC_404,
   renderConsole,
   renderDetail,
+  renderEscalations,
   renderForbidden,
   renderGuests,
   renderLanding,
@@ -152,6 +153,8 @@ export class ProductWebUi {
   #console(req: ApiRequest, slug: string): HttpResult {
     // ?view=guests — the guest-management page (Phase 21 planner; Phase 24 couple, scoped to their wedding).
     if (queryParam(req.path, 'view') === 'guests') return this.#guestsPage(req, slug)
+    // ?view=escalations — the read-only escalation inbox (Phase 26; planner whole-tenant, couple their wedding).
+    if (queryParam(req.path, 'view') === 'escalations') return this.#escalationsPage(req, slug)
 
     const weddingId = queryParam(req.path, 'wedding')
     if (weddingId !== undefined) return this.#detail(req, slug, weddingId)
@@ -222,6 +225,23 @@ export class ProductWebUi {
       invalid ? 400 : 200,
       renderGuests(theme, slug, readGuests(guestsRes.body), readWeddings(weddingsRes.body), csrf, invalid),
     )
+  }
+
+  /**
+   * GET /t/:slug?view=escalations — the READ-ONLY escalation inbox (Phase 26). ONE `api.handle()` read of the
+   * scoped JSON `GET /t/:slug/escalations` (planner: whole tenant; couple: their wedding), themed strictly by
+   * status: any non-200 takes the SAME `#renderNonData` masking as every other page (unknown/suspended/
+   * unauthenticated all mask identically). No CSRF (no form on the page — mirrors the strategy page).
+   */
+  #escalationsPage(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const apiRes = this.#api.handle(bearerGet(`/t/${slug}/escalations`, token))
+    if (apiRes.status === 200) {
+      const theme = this.#themes.resolveActiveTheme(slug)
+      if (theme === undefined) return GENERIC_404
+      return htmlResult(200, renderEscalations(theme, slug, readEscalations(apiRes.body)))
+    }
+    return this.#renderNonData(slug, apiRes.status)
   }
 
   /**
@@ -477,6 +497,13 @@ function readGuests(body: unknown): readonly Guest[] {
   if (typeof body !== 'object' || body === null) return []
   const guests = (body as { guests?: unknown }).guests
   return Array.isArray(guests) ? (guests as Guest[]) : []
+}
+
+/** Read the escalations array from a list (200) JSON body (tolerant — never throws on an odd shape). */
+function readEscalations(body: unknown): readonly GuestEscalation[] {
+  if (typeof body !== 'object' || body === null) return []
+  const escalations = (body as { escalations?: unknown }).escalations
+  return Array.isArray(escalations) ? (escalations as GuestEscalation[]) : []
 }
 
 /** Read the single wedding from a detail (200) JSON body, or undefined. */

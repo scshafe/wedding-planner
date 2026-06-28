@@ -7,6 +7,7 @@ import {
   GENERIC_404,
   renderConsole,
   renderDetail,
+  renderEscalations,
   renderLanding,
   renderLogin,
 } from '../../src/web/pages'
@@ -174,6 +175,28 @@ describe('renderConsole / renderDetail', () => {
 })
 
 describe('generic constants', () => {
+  it('renderEscalations lists the question, who asked, and a link to the wedding edit page', () => {
+    const out = renderEscalations(SAFE_THEME, 'acme', [
+      { escalation_id: 'esc_1', tenant_id: 't1', wedding_id: 'wedding_42', from_ref: 'sms:+1555', text: 'where do I park?', received_at: '2027-05-01T00:00:00.000Z', provider_message_ref: 'pm_1' },
+    ])
+    expect(out).toContain('where do I park?')
+    expect(out).toContain('sms:+1555')
+    expect(out).toContain('/t/acme?wedding=wedding_42')
+  })
+
+  it('renderEscalations renders an empty-state when there are no open questions', () => {
+    const out = renderEscalations(SAFE_THEME, 'acme', [])
+    expect(out).toContain('No open questions')
+  })
+
+  it('renderEscalations escapes an UNTRUSTED guest question (no live markup, inert escaped text)', () => {
+    const out = renderEscalations(SAFE_THEME, 'acme', [
+      { escalation_id: 'esc_1', tenant_id: 't1', wedding_id: 'w1', from_ref: '"><img src=x onerror=alert(1)>', text: '<script>alert("xss")</script>', received_at: '2027-05-01T00:00:00.000Z', provider_message_ref: 'pm_1' },
+    ])
+    assertNoLiveMarkup(out, 'escalation/text+from_ref')
+    expect(out).toContain('&lt;script&gt;')
+  })
+
   it('renderLanding is tenant-independent (no theme)', () => {
     const out = renderLanding()
     expect(out).toContain('white-label')
