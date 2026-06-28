@@ -62,6 +62,7 @@ function inputFrom(
     text: message.body,
     received_at: message.received_at,
     provider_message_ref: message.provider_message_ref,
+    channel: message.channel,
   }
 }
 

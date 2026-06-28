@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { CHANNELS, type Channel } from '../../src/index'
-import type { CommsFactAssertedPayload, GuestPersona, InboundWebhook } from '../../src/index'
+import type { CommsFactAssertedPayload, GuestEscalation, GuestPersona, InboundWebhook } from '../../src/index'
 
 /**
  * Drift guard for the single canonical `Channel`. The type is DERIVED from the `event_payloads` schema; this
@@ -34,6 +34,11 @@ describe('Channel — the single canonical comms-channel enum', () => {
 
   it('matches the inbound_webhook schema channel union (Phase 19 — not a fourth uncoordinated copy)', () => {
     const matches: Exact<Channel, InboundWebhook['channel']> = true
+    expect(matches).toBe(true)
+  })
+
+  it('matches the guest_escalation schema channel union (Phase 28 — the reply-routing snapshot, not a copy)', () => {
+    const matches: Exact<Channel, GuestEscalation['channel']> = true
     expect(matches).toBe(true)
   })
 })

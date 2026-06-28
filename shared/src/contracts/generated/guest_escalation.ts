@@ -13,6 +13,10 @@ export interface GuestEscalation {
  */
 escalation_id: string
 /**
+ * The medium the guest's question arrived on — the single canonical Channel, copied from the validated inbound message.channel at record time (Phase 28). It is the REPLY-ROUTING snapshot: a console reply-from-the-inbox (couple/planner) is metered and sent back to from_ref over THIS channel, so the escalation must remember how the guest reached us. Drift-guarded EXHAUSTIVE against shared CHANNELS (channel.ts) so this is not a sixth uncoordinated copy of the enum. NOTE: the guest CHOOSES this by how they text in, so per-channel pricing makes the reply cost guest-influenced — the MessagingService strict-margin gate bounds it (a non-positive-margin channel refuses to send), see ADR 0028.
+ */
+channel: ("email" | "sms" | "whatsapp" | "postal" | "phone")
+/**
  * The owning tenant. In the tenant-scoped repository this field is ONLY ever compared to the context's tenant_id (to veto a cross-tenant write); it never selects the partition (the context does).
  */
 tenant_id: string

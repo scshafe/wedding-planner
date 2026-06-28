@@ -834,6 +834,7 @@ function handleInbound(context: TenantContext, req: ApiRequest, deps: MessagingH
       text: message.body,
       received_at: message.received_at,
       provider_message_ref: message.provider_message_ref,
+      channel: message.channel, // Phase 28: the reply-routing snapshot — a console reply sends back over this.
     })
   }
   return RESP_ACCEPTED

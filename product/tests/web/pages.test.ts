@@ -175,7 +175,7 @@ describe('renderConsole / renderDetail', () => {
 })
 
 describe('generic constants', () => {
-  const ESC_1: GuestEscalation = { escalation_id: 'esc_1', tenant_id: 't1', wedding_id: 'wedding_42', from_ref: 'sms:+1555', text: 'where do I park?', received_at: '2027-05-01T00:00:00.000Z', provider_message_ref: 'pm_1' }
+  const ESC_1: GuestEscalation = { escalation_id: 'esc_1', tenant_id: 't1', wedding_id: 'wedding_42', from_ref: 'sms:+1555', text: 'where do I park?', received_at: '2027-05-01T00:00:00.000Z', provider_message_ref: 'pm_1', channel: 'sms' }
 
   it('renderEscalations lists an OPEN question with Resolve/Dismiss CSRF forms + a link to the wedding edit page', () => {
     const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [], 'csrf-xyz')
@@ -209,7 +209,7 @@ describe('generic constants', () => {
     const out = renderEscalations(
       SAFE_THEME,
       'acme',
-      [{ escalation_id: 'esc_1', tenant_id: 't1', wedding_id: 'w1', from_ref: '"><img src=x onerror=alert(1)>', text: '<script>alert("xss")</script>', received_at: '2027-05-01T00:00:00.000Z', provider_message_ref: 'pm_1' }],
+      [{ escalation_id: 'esc_1', tenant_id: 't1', wedding_id: 'w1', from_ref: '"><img src=x onerror=alert(1)>', text: '<script>alert("xss")</script>', received_at: '2027-05-01T00:00:00.000Z', provider_message_ref: 'pm_1', channel: 'sms' }],
       [],
       'csrf-xyz',
     )

@@ -1,4 +1,4 @@
-import { getSchemaRegistry, type GuestEscalation, type IdGenerator } from '@wedding-planner/shared'
+import { getSchemaRegistry, type Channel, type GuestEscalation, type IdGenerator } from '@wedding-planner/shared'
 
 import { type TenantContext } from '../tenant/tenant_context'
 import { TenantScopedRepository } from '../tenant/tenant_scoped_repository'
@@ -49,6 +49,9 @@ export interface RecordEscalationInput {
   readonly text: string
   readonly received_at: string
   readonly provider_message_ref: string
+  /** The channel the guest's question arrived on — copied from the validated inbound message (Phase 28),
+   * stored as the reply-routing snapshot (a console reply is sent back over THIS channel). */
+  readonly channel: Channel
 }
 
 export class EscalationLog {
