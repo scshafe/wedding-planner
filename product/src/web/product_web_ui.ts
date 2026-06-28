@@ -1,5 +1,6 @@
 import type { EscalationResolution, Guest, GuestEscalation, Wedding } from '@wedding-planner/shared'
 
+import type { BillingActivityEntry } from '../billing/billing_activity'
 import type { BillingSummary } from '../billing/billing_summary'
 import type { CsrfGuard } from '../auth/csrf_guard'
 import type { ApiRequest } from '../http/api_message'
@@ -413,13 +414,15 @@ export class ProductWebUi {
     if (apiRes.status === 200) {
       const theme = this.#themes.resolveActiveTheme(slug)
       const summary = readBilling(apiRes.body)
+      // Phase 32: the same 200 read carries the itemized activity line items (tolerant — `[]` if absent/malformed).
+      const activity = readBillingActivity(apiRes.body)
       // Phase 31: the page now carries a CSRF-gated Pay form, so it issues the per-session token (like
       // #guestsPage/#escalationsPage). A 200 means the session resolved, so its CSRF token must exist in the same
       // store; absent ⇒ invariant break ⇒ ERROR_500. theme absent on a 200 ⇒ GENERIC_404 (fail closed, like #strategy).
       const csrf = this.#csrf.issueCsrf(token)
       if (theme === undefined || summary === undefined) return GENERIC_404
       if (csrf === undefined) return ERROR_500
-      return htmlResult(200, renderBilling(theme, slug, summary, csrf))
+      return htmlResult(200, renderBilling(theme, slug, summary, activity, csrf))
     }
     return this.#renderNonData(slug, apiRes.status)
   }
@@ -638,4 +641,14 @@ function readBilling(body: unknown): BillingSummary | undefined {
   if (typeof body !== 'object' || body === null) return undefined
   const billing = (body as { billing?: unknown }).billing
   return typeof billing === 'object' && billing !== null ? (billing as BillingSummary) : undefined
+}
+
+/**
+ * Read the activity line items from a billing (200) JSON body, or `[]` (tolerant — never throws). An absent or
+ * malformed `activity` yields the empty list (the page renders "No activity yet."), never a 500 on the 200 path.
+ */
+function readBillingActivity(body: unknown): readonly BillingActivityEntry[] {
+  if (typeof body !== 'object' || body === null) return []
+  const activity = (body as { activity?: unknown }).activity
+  return Array.isArray(activity) ? (activity as BillingActivityEntry[]) : []
 }

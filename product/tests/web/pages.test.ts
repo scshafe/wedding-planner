@@ -2,6 +2,7 @@ import type { EscalationResolution, GuestEscalation, Tenant, Wedding } from '@we
 import { describe, expect, it } from 'vitest'
 
 import { NEUTRAL_COLOR } from '../../src/web/html'
+import type { BillingActivityEntry } from '../../src/billing/billing_activity'
 import type { BillingSummary } from '../../src/billing/billing_summary'
 import {
   ERROR_500,
@@ -272,9 +273,14 @@ describe('renderBilling (Phase 30)', () => {
     payments_cents: 9900,
     balance_cents: 15,
   }
+  const ACTIVITY: BillingActivityEntry[] = [
+    { kind: 'payment', amount_cents: 9900, occurred_at: '2027-03-02T00:00:00.000Z' },
+    { kind: 'usage_charge', amount_cents: 15, occurred_at: '2027-03-01T00:00:00.000Z' },
+    { kind: 'charge', amount_cents: 9900, occurred_at: '2027-03-01T00:00:00.000Z' },
+  ]
 
   it('shows the plan, monthly price, usage, and owed balance in dollars', () => {
-    const out = renderBilling(SAFE_THEME, 'acme', SUMMARY, 'csrf-tok')
+    const out = renderBilling(SAFE_THEME, 'acme', SUMMARY, ACTIVITY, 'csrf-tok')
     expect(out).toContain('studio')
     expect(out).toContain('$99.00 / month')
     expect(out).toContain('3 message(s) sent')
@@ -285,12 +291,12 @@ describe('renderBilling (Phase 30)', () => {
   })
 
   it('escapes the themed brand even on the billing page (no live markup)', () => {
-    const out = renderBilling(EVIL_THEME, 'acme', SUMMARY, 'csrf-tok')
+    const out = renderBilling(EVIL_THEME, 'acme', SUMMARY, ACTIVITY, 'csrf-tok')
     assertNoLiveMarkup(out, 'billing theme')
   })
 
   it('Phase 31: carries a CSRF-gated Pay form posting the owed amount when a balance is owed', () => {
-    const out = renderBilling(SAFE_THEME, 'acme', SUMMARY, 'csrf-tok')
+    const out = renderBilling(SAFE_THEME, 'acme', SUMMARY, ACTIVITY, 'csrf-tok')
     expect(out).toContain('action="/t/acme/billing/pay"')
     expect(out).toContain('name="_csrf" value="csrf-tok"')
     expect(out).toContain('Pay $0.15 owed (simulated)')
@@ -300,8 +306,34 @@ describe('renderBilling (Phase 30)', () => {
 
   it('Phase 31: shows a settled note and NO Pay form when nothing is owed', () => {
     const settled: BillingSummary = { ...SUMMARY, balance_cents: 0 }
-    const out = renderBilling(SAFE_THEME, 'acme', settled, 'csrf-tok')
+    const out = renderBilling(SAFE_THEME, 'acme', settled, ACTIVITY, 'csrf-tok')
     expect(out).toContain('Settled — nothing owed.')
     expect(out).not.toContain('/billing/pay')
+  })
+
+  it('Phase 32: lists each activity line with its human label, amount, and time', () => {
+    const out = renderBilling(SAFE_THEME, 'acme', SUMMARY, ACTIVITY, 'csrf-tok')
+    expect(out).toContain('<h2>Activity</h2>')
+    expect(out).toContain('Payment')
+    expect(out).toContain('Subscription charge')
+    expect(out).toContain('Messaging usage')
+    expect(out).toContain('2027-03-02T00:00:00.000Z')
+    // The newest-first order: Payment ($99.00) appears before the Subscription charge in the rendered list.
+    expect(out.indexOf('Payment')).toBeLessThan(out.indexOf('Subscription charge'))
+  })
+
+  it('Phase 32: shows a "No activity yet." note for an empty list', () => {
+    const out = renderBilling(SAFE_THEME, 'acme', SUMMARY, [], 'csrf-tok')
+    expect(out).toContain('<h2>Activity</h2>')
+    expect(out).toContain('No activity yet.')
+  })
+
+  it('Phase 32: escapes a hostile occurred_at and an unexpected kind (defense-in-depth, never throws)', () => {
+    const hostile: BillingActivityEntry[] = [
+      // A kind outside the known set falls back to the raw (escaped) kind; an injection-shaped time is escaped.
+      { kind: '<script>x</script>' as BillingActivityEntry['kind'], amount_cents: 1, occurred_at: '<img src=x>' },
+    ]
+    const out = renderBilling(SAFE_THEME, 'acme', SUMMARY, hostile, 'csrf-tok')
+    assertNoLiveMarkup(out, 'billing activity')
   })
 })

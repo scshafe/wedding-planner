@@ -242,3 +242,43 @@ describe('billing Pay form (Phase 31 — settle the owed balance)', () => {
     expect(postForm(ui, '/t/Bad_Slug!/billing/pay', { _csrf: 'x' }).status).toBe(404)
   })
 })
+
+describe('billing activity card (Phase 32 — the itemized line items)', () => {
+  it('a fresh tenant with no events shows the Activity card with a "No activity yet." note', () => {
+    const { ui } = makeWorld()
+    const cookie = loginCookie(ui, 'acme', 'planner')
+    const billing = get(ui, '/t/acme?view=billing', cookie).body as string
+    expect(billing).toContain('<h2>Activity</h2>')
+    expect(billing).toContain('No activity yet.')
+  })
+
+  it('the meter→bill→pay loop itemizes: the activity lists the messaging usage and then the payment', () => {
+    const { ui, api } = makeWorld()
+    seedEscalation(api, 'acme')
+    const cookie = loginCookie(ui, 'acme', 'planner')
+    // A metered guest reply accrues a usage_charge.
+    const inbox = get(ui, '/t/acme?view=escalations', cookie).body as string
+    postForm(ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(inbox), escalation_id: escalationIdFrom(inbox), reply_text: 'Lot B.' }, cookie)
+    const owed = get(ui, '/t/acme?view=billing', cookie).body as string
+    expect(owed).toContain('Messaging usage') // the usage line item is now itemized
+    expect(owed).not.toContain('No activity yet.')
+    // Pay it down — a payment line item now leads the list (newest-first).
+    postForm(ui, '/t/acme/billing/pay', { _csrf: csrfFrom(owed) }, cookie)
+    const settled = get(ui, '/t/acme?view=billing', cookie).body as string
+    expect(settled).toContain('Payment')
+    expect(settled).toContain('Messaging usage')
+    // Newest-first WITHIN the Activity card (the summary's "Messaging usage" heading appears earlier on the page,
+    // so scope the order check to the activity section): the Payment line leads the earlier Messaging usage line.
+    const activitySection = settled.slice(settled.indexOf('<h2>Activity</h2>'))
+    expect(activitySection.indexOf('Payment')).toBeLessThan(activitySection.indexOf('Messaging usage'))
+  })
+
+  it('a couple never sees the activity card (themed Forbidden — billing is planner-only)', () => {
+    const { ui, api } = makeWorld()
+    const weddingId = seedEscalation(api, 'acme')
+    const cookie = loginCookie(ui, 'acme', 'couple', weddingId)
+    const res = get(ui, '/t/acme?view=billing', cookie)
+    expect(res.status).toBe(403)
+    expect(res.body).not.toContain('<h2>Activity</h2>')
+  })
+})

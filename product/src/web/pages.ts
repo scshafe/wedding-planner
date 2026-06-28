@@ -1,5 +1,6 @@
 import type { EscalationResolution, Guest, GuestEscalation, Tenant, Wedding } from '@wedding-planner/shared'
 
+import type { BillingActivityEntry } from '../billing/billing_activity'
 import type { BillingSummary } from '../billing/billing_summary'
 import type { StrategyGuidance } from '../strategy/strategy_guidance'
 import { html, render, type SafeHtml, safeColor } from './html'
@@ -436,8 +437,19 @@ function dollars(cents: number): string {
  * internals. When a balance is OWED it carries a CSRF-gated Pay form (Phase 31) that settles the FULL owed amount
  * (the amount is server-derived from the trusted balance — the form sends no amount); when settled it shows a
  * "nothing owed" note and no form.
+ *
+ * Phase 32 adds the read-only Activity card: the itemized financial line items (`activity`, newest-first) behind
+ * the summary totals — each a fixed human label per kind (a FROZEN lookup with an escaped raw-`kind` fallback, so
+ * an unexpected kind from the JSON read never throws), the amount via `dollars`, and the time as escaped text.
+ * Empty list → a "No activity yet." note. Markers were already filtered out upstream (financial-only).
  */
-export function renderBilling(theme: Tenant['theme'], slug: string, summary: BillingSummary, csrfToken: string): string {
+export function renderBilling(
+  theme: Tenant['theme'],
+  slug: string,
+  summary: BillingSummary,
+  activity: readonly BillingActivityEntry[],
+  csrfToken: string,
+): string {
   // The Pay form posts to the 4-seg web route (CSRF), distinct from the 3-seg JSON route. It carries ONLY the
   // CSRF field — no amount: the JSON handler settles the trusted owed balance, so the browser cannot influence
   // the sum (a body amount is inert server-side). Shown only when something is owed; otherwise a settled note.
@@ -446,6 +458,15 @@ export function renderBilling(theme: Tenant['theme'], slug: string, summary: Bil
       ? html`<form method="post" action="/t/${slug}/billing/pay">${csrfField(csrfToken)}<button type="submit">${`Pay ${dollars(summary.balance_cents)} owed (simulated)`}</button></form>
     <p class="note">An offline demo settlement — no real money moves. This records a payment for the full owed amount.</p>`
       : html`<p class="note">Settled — nothing owed.</p>`
+  // The itemized financial line items behind the totals (Phase 32), newest-first. The label is a frozen lookup
+  // with an escaped raw-`kind` fallback (an unexpected kind from the JSON read never throws); amount via `dollars`,
+  // time as escaped text. All values flow through the `html` template.
+  const activityRows = activity.map(
+    (entry) =>
+      html`<li><span>${activityLabel(entry.kind)}</span> · <strong>${dollars(entry.amount_cents)}</strong> <span class="note">${entry.occurred_at}</span></li>`,
+  )
+  const activityBody =
+    activity.length === 0 ? html`<p class="note">No activity yet.</p>` : html`<ul class="activity">${activityRows}</ul>`
   return themedShell(
     theme,
     slug,
@@ -466,8 +487,25 @@ export function renderBilling(theme: Tenant['theme'], slug: string, summary: Bil
     <p><strong>${`${dollars(summary.balance_cents)} owed`}</strong></p>
     <p class="note">${`Subscription ${dollars(summary.subscription_charges_cents)} + messaging ${dollars(summary.messaging_spend_cents)} − payments ${dollars(summary.payments_cents)}.`}</p>
     ${settlement}
+  </div>
+  <div class="card">
+    <h2>Activity</h2>
+    <p class="note">Every charge and payment on your account, most recent first.</p>
+    ${activityBody}
   </div>`,
   )
+}
+
+/** Human labels for the financial activity kinds (Phase 32) — a frozen lookup, NOT raw enum reflection. */
+const ACTIVITY_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  charge: 'Subscription charge',
+  usage_charge: 'Messaging usage',
+  payment: 'Payment',
+})
+
+/** The display label for an activity kind; falls back to the raw (escaped) kind for an unexpected key (never throws). */
+function activityLabel(kind: string): string {
+  return ACTIVITY_LABELS[kind] ?? kind
 }
 
 /** The themed forbidden page (a capability the role lacks — a 403, not a masked resource). */
