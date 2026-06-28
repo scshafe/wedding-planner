@@ -5,6 +5,7 @@ import {
   GuestAuthorizer,
   GuestRegistry,
   type ApiRequest,
+  type BillingActivityEntry,
   type BillingSummary,
   BillingLedger,
   OnboardingService,
@@ -249,5 +250,94 @@ describe('POST /t/:slug/billing — settle the owed balance (Phase 31)', () => {
   it('unmounted-subresource 404 when billing is not wired (POST falls through to routeNotFound)', () => {
     const { api } = makeApi({ mountBilling: false })
     expect(api.handle(req('POST', '/t/alpha/billing', loginToken(api, 'alpha'))).status).toBe(404)
+  })
+})
+
+describe('GET /t/:slug/billing — the activity line items (Phase 32)', () => {
+  function activityOf(api: ProductApi, slug: string, token = loginToken(api, slug)): BillingActivityEntry[] {
+    const res = api.handle(req('GET', `/t/${slug}/billing`, token))
+    expect(res.status).toBe(200)
+    return (res.body as { activity: BillingActivityEntry[] }).activity
+  }
+
+  it('returns the financial line items NEWEST-FIRST, each a tenant-safe { kind, amount_cents, occurred_at }', () => {
+    const { api, ledger, store } = makeApi()
+    const tid = tenantId(store, 'alpha')
+    ledger.record({ tenant_id: tid, kind: 'charge', amount_cents: 9900 }) // oldest
+    ledger.record({ tenant_id: tid, kind: 'usage_charge', amount_cents: 5 })
+    ledger.record({ tenant_id: tid, kind: 'payment', amount_cents: 9900 }) // newest
+    const activity = activityOf(api, 'alpha')
+    expect(activity.map((e) => e.kind)).toEqual(['payment', 'usage_charge', 'charge'])
+    // Key-set pin: no event_id / tenant_id leaks across the wire.
+    expect(Object.keys(activity[0]!).sort()).toEqual(['amount_cents', 'kind', 'occurred_at'])
+  })
+
+  it('is FINANCIAL-only — a suspend/reactivate cycle never appears in the activity', () => {
+    const { api, ledger, store } = makeApi()
+    const tid = tenantId(store, 'alpha')
+    ledger.record({ tenant_id: tid, kind: 'provisioned' })
+    ledger.record({ tenant_id: tid, kind: 'charge', amount_cents: 9900 })
+    ledger.record({ tenant_id: tid, kind: 'suspended' })
+    ledger.record({ tenant_id: tid, kind: 'reactivated' })
+    const activity = activityOf(api, 'alpha')
+    expect(activity.map((e) => e.kind)).toEqual(['charge']) // no marker/delinquency row
+  })
+
+  it('is [] for a tenant with no events', () => {
+    const { api } = makeApi()
+    expect(activityOf(api, 'alpha')).toEqual([])
+  })
+
+  it('reconciles EXACTLY with the returned summary (the itemized log decomposes the totals)', () => {
+    const { api, ledger, store } = makeApi()
+    const tid = tenantId(store, 'alpha')
+    ledger.record({ tenant_id: tid, kind: 'charge', amount_cents: 9900 })
+    ledger.record({ tenant_id: tid, kind: 'usage_charge', amount_cents: 5 })
+    ledger.record({ tenant_id: tid, kind: 'usage_charge', amount_cents: 6 })
+    ledger.record({ tenant_id: tid, kind: 'payment', amount_cents: 9900 })
+    const res = api.handle(req('GET', '/t/alpha/billing', loginToken(api, 'alpha')))
+    const { billing, activity } = res.body as { billing: BillingSummary; activity: BillingActivityEntry[] }
+    const sumOf = (kind: string): number =>
+      activity.filter((e) => e.kind === kind).reduce((acc, e) => acc + e.amount_cents, 0)
+    expect(sumOf('charge')).toBe(billing.subscription_charges_cents)
+    expect(sumOf('usage_charge')).toBe(billing.messaging_spend_cents)
+    expect(sumOf('payment')).toBe(billing.payments_cents)
+    expect(sumOf('charge') + sumOf('usage_charge') - sumOf('payment')).toBe(billing.balance_cents)
+  })
+
+  it('reflects ONLY the caller\'s own tenant — another tenant\'s line items never appear', () => {
+    const { api, ledger, store } = makeApi()
+    ledger.record({ tenant_id: tenantId(store, 'alpha'), kind: 'usage_charge', amount_cents: 5 })
+    ledger.record({ tenant_id: tenantId(store, 'beta'), kind: 'usage_charge', amount_cents: 95 })
+    expect(activityOf(api, 'alpha').map((e) => e.amount_cents)).toEqual([5])
+    expect(activityOf(api, 'beta').map((e) => e.amount_cents)).toEqual([95])
+  })
+
+  it('a body-smuggled tenant_id is inert — the activity is keyed by the trusted context', () => {
+    const { api, ledger, store } = makeApi()
+    ledger.record({ tenant_id: tenantId(store, 'alpha'), kind: 'usage_charge', amount_cents: 5 })
+    ledger.record({ tenant_id: tenantId(store, 'beta'), kind: 'usage_charge', amount_cents: 95 })
+    const res = api.handle(req('GET', '/t/alpha/billing', loginToken(api, 'alpha'), { tenant_id: tenantId(store, 'beta') }))
+    const { activity } = res.body as { activity: BillingActivityEntry[] }
+    expect(activity.map((e) => e.amount_cents)).toEqual([5]) // alpha's, not beta's 95
+  })
+
+  it('a couple GET is 403 and the activity is never computed/leaked (the gate precedes the read)', () => {
+    const { api, ledger, store } = makeApi()
+    ledger.record({ tenant_id: tenantId(store, 'alpha'), kind: 'usage_charge', amount_cents: 7 })
+    const coupleTok = loginToken(api, 'alpha', 'couple', 'wedding_x')
+    const res = api.handle(req('GET', '/t/alpha/billing', coupleTok))
+    expect(res.status).toBe(403)
+    expect(res.body).not.toHaveProperty('activity')
+  })
+
+  it('a settle POST adds a payment line item visible on the follow-up GET', () => {
+    const { api, ledger, store } = makeApi()
+    ledger.record({ tenant_id: tenantId(store, 'alpha'), kind: 'usage_charge', amount_cents: 42 })
+    api.handle(req('POST', '/t/alpha/billing', loginToken(api, 'alpha'))) // settle
+    const activity = activityOf(api, 'alpha')
+    // Newest-first: the settlement payment is the first entry; the usage_charge follows.
+    expect(activity.map((e) => e.kind)).toEqual(['payment', 'usage_charge'])
+    expect(activity[0]!.amount_cents).toBe(42) // paid exactly the owed amount
   })
 })

@@ -15,6 +15,7 @@ import type { ProviderWebhookCredentialStore } from '../auth/provider_webhook_cr
 import type { SessionStore } from '../auth/session_store'
 import type { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import type { BillingLedger } from '../billing/billing_ledger'
+import { buildBillingActivity } from '../billing/billing_activity'
 import { buildBillingSummary } from '../billing/billing_summary'
 import type { PlanTier } from '../billing/price_book'
 import type { OnboardingService } from '../onboarding/onboarding_service'
@@ -195,7 +196,7 @@ export interface EscalationHandlerDeps {
  * resolver/sessionStore (structural handler purity); no `weddings` (billing is tenant-account, not per-wedding).
  */
 export interface BillingHandlerDeps {
-  readonly ledger: Pick<BillingLedger, 'summarize' | 'settleBalance'>
+  readonly ledger: Pick<BillingLedger, 'summarize' | 'settleBalance' | 'eventsFor'>
   readonly tenants: Pick<TenantStore, 'findById'>
   readonly authorizer: GuestAuthorizer
 }
@@ -836,9 +837,10 @@ function handleEscalationReply(
  *      probed resource, so the 403 is no existence oracle), AND the read/pay verbs cannot diverge into a
  *      couple-visible distinguisher — the no-method-oracle is STRUCTURAL, not test-hoped (one shared gate);
  *   2. GET -> the summary (the trusted `plan_tier` priced by `monthlyPriceCents` joined onto the tenant's own
- *      ledger fold, keyed by `context.tenant_id` — the minted partition key, NEVER a body/URL field, so a smuggled
- *      `tenant_id` is inert). The context was just minted from an active tenant this same request, so `findById`
- *      always resolves; the `undefined` arm is defensive-only (masked 404, never a crash/oracle);
+ *      ledger fold) PLUS the itemized `activity` list (Phase 32 — the financial line items behind the same totals,
+ *      newest-first), BOTH keyed by `context.tenant_id` — the minted partition key, NEVER a body/URL field, so a
+ *      smuggled `tenant_id` is inert. The context was just minted from an active tenant this same request, so
+ *      `findById` always resolves; the `undefined` arm is defensive-only (masked 404, never a crash/oracle);
  *   3. POST -> settle the owed balance. The handler reads NOTHING from the body (no amount/field), so a
  *      body-smuggled `amount_cents` is inert: the settled sum is sourced from the tenant's own trusted fold inside
  *      `settleBalance` (see billing_ledger.ts), never from client input -> { paid }. Else (PUT/DELETE) -> 405.
@@ -854,7 +856,10 @@ function dispatchBilling(
     const tenant = deps.tenants.findById(context.tenant_id)
     if (tenant === undefined) return RESP_NOT_FOUND // defensive: unreachable for a freshly-minted context
     const billing = buildBillingSummary(tenant.plan_tier, deps.ledger.summarize(context.tenant_id))
-    return { status: 200, body: { billing } }
+    // The itemized financial line items behind the summary totals (Phase 32), keyed by the SAME minted
+    // partition (`context.tenant_id`, never a body field) the summary uses — own tenant only, financial-only.
+    const activity = buildBillingActivity(deps.ledger.eventsFor(context.tenant_id))
+    return { status: 200, body: { billing, activity } }
   }
   if (req.method === 'POST') {
     // Settle the owed balance. The amount is sourced from the caller's OWN trusted fold inside `settleBalance`
