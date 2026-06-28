@@ -174,3 +174,71 @@ describe('billing page (?view=billing)', () => {
     expect(get(ui, '/t/ghosttenant?view=billing').status).toBe(404)
   })
 })
+
+describe('billing Pay form (Phase 31 — settle the owed balance)', () => {
+  /** Drive a metered guest reply so the tenant owes a balance; return the planner cookie. */
+  function oweBalance(ui: ProductWebUi, api: ProductApi): string {
+    seedEscalation(api, 'acme')
+    const cookie = loginCookie(ui, 'acme', 'planner')
+    const inbox = get(ui, '/t/acme?view=escalations', cookie).body as string
+    postForm(ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(inbox), escalation_id: escalationIdFrom(inbox), reply_text: 'Parking is in lot B.' }, cookie)
+    return cookie
+  }
+
+  it('the full meter→bill→customer→pay loop: a planner pays and the page then shows $0.00 owed', () => {
+    const { ui, api } = makeWorld()
+    const cookie = oweBalance(ui, api)
+    const billing = get(ui, '/t/acme?view=billing', cookie).body as string
+    expect(billing).toContain('$0.06 owed')
+    expect(billing).toContain('action="/t/acme/billing/pay"')
+    // Click Pay (the CSRF token is on the billing page).
+    const paid = postForm(ui, '/t/acme/billing/pay', { _csrf: csrfFrom(billing) }, cookie)
+    expect(paid.status).toBe(303)
+    expect(paid.headers.location).toBe('/t/acme?view=billing')
+    const settled = get(ui, '/t/acme?view=billing', cookie).body as string
+    expect(settled).toContain('$0.00 owed')
+    expect(settled).toContain('Settled — nothing owed.')
+    expect(settled).not.toContain('/billing/pay') // no Pay form once settled
+  })
+
+  it('a forged CSRF token is a masked 403 and records NO payment (the balance is unchanged)', () => {
+    const { ui, api } = makeWorld()
+    const cookie = oweBalance(ui, api)
+    const res = postForm(ui, '/t/acme/billing/pay', { _csrf: 'forged-not-the-token' }, cookie)
+    expect(res.status).toBe(403)
+    // The balance is untouched — a forged Pay never settled anything.
+    expect(get(ui, '/t/acme?view=billing', cookie).body).toContain('$0.06 owed')
+  })
+
+  it('a Pay with no balance owed is an idempotent no-op (PRG redirect, still $0.00)', () => {
+    const { ui } = makeWorld()
+    const cookie = loginCookie(ui, 'acme', 'planner')
+    const billing = get(ui, '/t/acme?view=billing', cookie).body as string
+    // Nothing owed → no form shown; a direct POST still no-ops cleanly (the JSON layer's {paid:false}).
+    expect(billing).toContain('Settled — nothing owed.')
+    const res = postForm(ui, '/t/acme/billing/pay', { _csrf: csrfFrom(get(ui, '/t/acme', cookie).body as string) }, cookie)
+    expect(res.status).toBe(303)
+    expect(get(ui, '/t/acme?view=billing', cookie).body).toContain('$0.00 owed')
+  })
+
+  it('a couple cannot reach the Pay form (themed Forbidden) and a forged-cookie POST mutates nothing', () => {
+    const { ui, api } = makeWorld()
+    const weddingId = seedEscalation(api, 'acme')
+    // The planner owes a balance.
+    const plannerCookie = loginCookie(ui, 'acme', 'planner')
+    const inbox = get(ui, '/t/acme?view=escalations', plannerCookie).body as string
+    postForm(ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(inbox), escalation_id: escalationIdFrom(inbox), reply_text: 'Lot B.' }, plannerCookie)
+    // A couple's billing page is Forbidden (no Pay form / no CSRF token).
+    const coupleCookie = loginCookie(ui, 'acme', 'couple', weddingId)
+    expect(get(ui, '/t/acme?view=billing', coupleCookie).status).toBe(403)
+    // A couple POSTing the pay route (even with a stolen CSRF token shape) is stopped at the JSON 403 → masked.
+    const res = postForm(ui, '/t/acme/billing/pay', { _csrf: csrfFrom(inbox) }, coupleCookie)
+    expect(res.status === 303 || res.status === 403).toBe(true) // PRG-or-masked; either way no settle
+    expect(get(ui, '/t/acme?view=billing', plannerCookie).body).toContain('$0.06 owed') // unchanged
+  })
+
+  it('a forged slug on the pay route masks to 404 before any cookie/CSRF read', () => {
+    const { ui } = makeWorld()
+    expect(postForm(ui, '/t/Bad_Slug!/billing/pay', { _csrf: 'x' }).status).toBe(404)
+  })
+})

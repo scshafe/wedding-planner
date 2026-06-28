@@ -153,6 +153,14 @@ export class ProductWebUi {
         return this.#escalationReply(req, slug)
       }
 
+      // /t/:slug/billing/pay (Phase 31) — the browser Pay FORM post (CSRF-protected): settle the owed balance.
+      // DISTINCT 4-seg name from the 3-seg JSON /t/:slug/billing route (GET read / POST settle), so they never
+      // collide and the JSON pay route stays NOT CSRF-reachable. Slug masked to 404 BEFORE any cookie/CSRF read.
+      if (segments.length === 4 && segments[2] === 'billing' && segments[3] === 'pay' && req.method === 'POST') {
+        if (slug === undefined) return GENERIC_404
+        return this.#billingPay(req, slug)
+      }
+
       // /t/:slug/weddings/{create,update} (Phase 23) — the browser wedding FORM posts (CSRF-protected).
       // DISTINCT names from the JSON 4-seg /t/:slug/weddings/:id route (which accepts GET/PUT only); a
       // server-minted `wedding_…` id can never equal the literal `create`/`update`, so they never collide,
@@ -405,10 +413,31 @@ export class ProductWebUi {
     if (apiRes.status === 200) {
       const theme = this.#themes.resolveActiveTheme(slug)
       const summary = readBilling(apiRes.body)
+      // Phase 31: the page now carries a CSRF-gated Pay form, so it issues the per-session token (like
+      // #guestsPage/#escalationsPage). A 200 means the session resolved, so its CSRF token must exist in the same
+      // store; absent ⇒ invariant break ⇒ ERROR_500. theme absent on a 200 ⇒ GENERIC_404 (fail closed, like #strategy).
+      const csrf = this.#csrf.issueCsrf(token)
       if (theme === undefined || summary === undefined) return GENERIC_404
-      return htmlResult(200, renderBilling(theme, slug, summary))
+      if (csrf === undefined) return ERROR_500
+      return htmlResult(200, renderBilling(theme, slug, summary, csrf))
     }
     return this.#renderNonData(slug, apiRes.status)
+  }
+
+  /**
+   * POST /t/:slug/billing/pay — the browser Pay form (Phase 31): settle the owed balance. Verify the CSRF token
+   * (forged ⇒ masked 403, NO mutation) BEFORE translating the cookie to a Bearer and forwarding to the JSON
+   * `POST /t/:slug/billing`. The forwarded body is empty — the JSON handler settles the trusted owed balance and
+   * reads nothing from the body, so the browser cannot influence the amount. Always PRG-redirect back to the
+   * billing page; a couple-403 / unknown-tenant outcome is masked on the follow-up GET, and a zero-balance POST is
+   * the JSON layer's idempotent `{paid:false}` no-op. Mirrors #escalationResolve.
+   */
+  #billingPay(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    this.#api.handle(bearerJson('POST', `/t/${slug}/billing`, token, {}))
+    return redirect(303, `/t/${slug}?view=billing`)
   }
 
   /** Map a non-200 API status to a page. 401 -> themed login (active); 403 -> forbidden; else masked 404. */

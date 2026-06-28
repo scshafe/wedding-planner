@@ -429,12 +429,23 @@ function dollars(cents: number): string {
 }
 
 /**
- * The themed "Billing & usage" page (Phase 30) — the planner's OWN account summary: plan + monthly price,
- * metered-message usage (count + spend), subscription fees, payments, and the owed balance. Every value is the
- * pure `BillingSummary` projection (the tenant's own ledger fold + the tenant-facing price); all numbers/enum
- * flow through the `html` template (escaped), and the page exposes no provider cost / margin / engine internals.
+ * The themed "Billing & usage" page (Phase 30 read + Phase 31 pay) — the planner's OWN account summary: plan +
+ * monthly price, metered-message usage (count + spend), subscription fees, payments, and the owed balance. Every
+ * value is the pure `BillingSummary` projection (the tenant's own ledger fold + the tenant-facing price); all
+ * numbers/enum flow through the `html` template (escaped), and the page exposes no provider cost / margin / engine
+ * internals. When a balance is OWED it carries a CSRF-gated Pay form (Phase 31) that settles the FULL owed amount
+ * (the amount is server-derived from the trusted balance — the form sends no amount); when settled it shows a
+ * "nothing owed" note and no form.
  */
-export function renderBilling(theme: Tenant['theme'], slug: string, summary: BillingSummary): string {
+export function renderBilling(theme: Tenant['theme'], slug: string, summary: BillingSummary, csrfToken: string): string {
+  // The Pay form posts to the 4-seg web route (CSRF), distinct from the 3-seg JSON route. It carries ONLY the
+  // CSRF field — no amount: the JSON handler settles the trusted owed balance, so the browser cannot influence
+  // the sum (a body amount is inert server-side). Shown only when something is owed; otherwise a settled note.
+  const settlement =
+    summary.balance_cents > 0
+      ? html`<form method="post" action="/t/${slug}/billing/pay">${csrfField(csrfToken)}<button type="submit">${`Pay ${dollars(summary.balance_cents)} owed (simulated)`}</button></form>
+    <p class="note">An offline demo settlement — no real money moves. This records a payment for the full owed amount.</p>`
+      : html`<p class="note">Settled — nothing owed.</p>`
   return themedShell(
     theme,
     slug,
@@ -454,6 +465,7 @@ export function renderBilling(theme: Tenant['theme'], slug: string, summary: Bil
     <h2>Account balance</h2>
     <p><strong>${`${dollars(summary.balance_cents)} owed`}</strong></p>
     <p class="note">${`Subscription ${dollars(summary.subscription_charges_cents)} + messaging ${dollars(summary.messaging_spend_cents)} − payments ${dollars(summary.payments_cents)}.`}</p>
+    ${settlement}
   </div>`,
   )
 }

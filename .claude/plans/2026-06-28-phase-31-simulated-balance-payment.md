@@ -101,7 +101,7 @@ a `payment` for **exactly the trusted owed amount**), plus a CSRF-gated **Pay** 
     POST → 404.
   - Verify; commit.
 
-- [ ] **Step 3 — The CSRF-gated Pay form on `?view=billing`.**
+- [x] **Step 3 — The CSRF-gated Pay form on `?view=billing`.**
   - `renderBilling(theme, slug, summary, csrfToken)` (new param): when `summary.balance_cents > 0`, render a
     **Pay** form posting to `/t/:slug/billing/pay` with the hidden `_csrf` field (via `csrfField`) and a clear
     "Pay the $X.XX owed (simulated)" button; when `<= 0`, render a "Settled — nothing owed" note instead (no

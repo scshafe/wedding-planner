@@ -274,7 +274,7 @@ describe('renderBilling (Phase 30)', () => {
   }
 
   it('shows the plan, monthly price, usage, and owed balance in dollars', () => {
-    const out = renderBilling(SAFE_THEME, 'acme', SUMMARY)
+    const out = renderBilling(SAFE_THEME, 'acme', SUMMARY, 'csrf-tok')
     expect(out).toContain('studio')
     expect(out).toContain('$99.00 / month')
     expect(out).toContain('3 message(s) sent')
@@ -285,7 +285,23 @@ describe('renderBilling (Phase 30)', () => {
   })
 
   it('escapes the themed brand even on the billing page (no live markup)', () => {
-    const out = renderBilling(EVIL_THEME, 'acme', SUMMARY)
+    const out = renderBilling(EVIL_THEME, 'acme', SUMMARY, 'csrf-tok')
     assertNoLiveMarkup(out, 'billing theme')
+  })
+
+  it('Phase 31: carries a CSRF-gated Pay form posting the owed amount when a balance is owed', () => {
+    const out = renderBilling(SAFE_THEME, 'acme', SUMMARY, 'csrf-tok')
+    expect(out).toContain('action="/t/acme/billing/pay"')
+    expect(out).toContain('name="_csrf" value="csrf-tok"')
+    expect(out).toContain('Pay $0.15 owed (simulated)')
+    // The form carries NO amount field — the server settles the trusted balance.
+    expect(out).not.toContain('name="amount')
+  })
+
+  it('Phase 31: shows a settled note and NO Pay form when nothing is owed', () => {
+    const settled: BillingSummary = { ...SUMMARY, balance_cents: 0 }
+    const out = renderBilling(SAFE_THEME, 'acme', settled, 'csrf-tok')
+    expect(out).toContain('Settled — nothing owed.')
+    expect(out).not.toContain('/billing/pay')
   })
 })
