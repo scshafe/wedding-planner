@@ -22,13 +22,24 @@ rendered as a themed read-only card on `?view=billing`. No new route, no mutatio
   schema (manifest stays 20). A new `billing_activity.ts` (`@canonical billing_activity`) holds
   `BillingActivityEntry` + a pure `buildBillingActivity(events)` mapper. One capability, one file (sibling to
   `billing_summary.ts`, which stays the AGGREGATE projection).
-- **Project to a tenant-SAFE shape — drop internal identity, keep only tenant-side facts.** A raw `BillingEvent`
-  carries `event_id` (internal id), `tenant_id` (the caller's own — redundant), `kind`, `amount_cents?`,
-  `occurred_at`. The projection keeps **only `kind`, `amount_cents?` (iff financial), `occurred_at`** and DROPS
-  `event_id` + `tenant_id`. Same figures already in the summary fold (what the tenant was charged/paid + when) —
-  never provider COGS / platform margin / internal ids (those stay internal to `price_book.ts` /
-  `messaging_service.ts`, exactly as the summary already guarantees). A key-set test pins the projected shape so a
-  future raw field can't silently ride along.
+- **FINANCIAL kinds ONLY — the itemized decomposition of the balance, no new lifecycle disclosure.** The activity
+  list filters to the FINANCIAL kinds (`charge` / `usage_charge` / `payment`) and DROPS the lifecycle markers
+  (`provisioned` / `suspended` / `reactivated`). This is deliberate: the aggregate summary already hides markers
+  (its fold sums only the financial kinds), so surfacing `suspended`/`reactivated` would be a NEW
+  delinquency-history disclosure — operator/admin-tier state crossing to the customer surface for the first time
+  (doddy P1-1). Filtering to financial keeps the activity a strict **decomposition of the same numbers the summary
+  aggregates** ("here's what you were charged and paid, itemized"), which also makes the summary reconciliation
+  (below) exact and total. The filter reuses the SAME `FINANCIAL_KINDS` set the balance fold uses (export it from
+  `billing_ledger.ts`) — so a future financial kind flows into the activity, the balance, and the summary in
+  lockstep, never just one.
+- **Project to a tenant-SAFE shape — explicit-pick, drop internal identity.** A raw `BillingEvent` carries
+  `event_id` (internal id), `tenant_id` (the caller's own — redundant), `kind`, `amount_cents?`, `occurred_at`. The
+  projection keeps **only `kind`, `amount_cents`, `occurred_at`** (every entry is financial ⇒ `amount_cents` is
+  always present), built by EXPLICITLY constructing the entry from named fields — NEVER by spreading the raw event
+  and deleting keys (doddy P1-4: the `BillingEvent` type permits `additionalProperties`, so a spread-rest could
+  forward a future stray key to the customer; an explicit pick makes "drops `event_id`/`tenant_id`" structural).
+  Same figures already in the summary fold (what the tenant was charged/paid + when) — never provider COGS /
+  platform margin / internal ids. A key-set test pins the projected shape so a future raw field can't ride along.
 - **Scoped by the MINTED `context.tenant_id` alone — no new oracle.** The handler reads
   `deps.ledger.eventsFor(context.tenant_id)` — the SAME partition key the summary uses; `eventsFor` already filters
   STRICTLY by tenant_id (doddy P2-1, never cross-tenant). A body-smuggled `tenant_id` is inert (the key is the
@@ -41,11 +52,12 @@ rendered as a themed read-only card on `?view=billing`. No new route, no mutatio
 - **Newest-first display order, derived from the trusted record order.** `eventsFor` returns events in record
   (chronological) order; the projection REVERSES to newest-first (the natural "recent activity" reading). The order
   is a pure function of the trusted append order — no client input, no re-sort by an untrusted field.
-- **Reconciles with the summary by construction (drift-guarded by a test).** The activity entries and the summary
-  buckets both fold the SAME `#byTenant` events, so Σ(payment activity amounts) === `summary.payments_cents`,
-  Σ(charge) === `subscription_charges_cents`, Σ(usage_charge) === `messaging_spend_cents`, and the
-  usage_charge entry count === `messages_sent`. A test pins this reconciliation so the itemized log can never
-  silently disagree with the aggregate the planner also sees.
+- **Reconciles EXACTLY with the summary (drift-guarded by a test, doddy P1-3).** Because both the activity entries
+  and the summary buckets fold the SAME financial events, the reconciliation is total: Σ(payment entries) ===
+  `summary.payments_cents`, Σ(charge) === `subscription_charges_cents`, Σ(usage_charge) ===
+  `messaging_spend_cents`, the usage_charge entry count === `messages_sent`, and Σ(debit entries) − Σ(payment
+  entries) === `balance_cents`. A test pins this so the itemized log can never silently disagree with the aggregate
+  the planner also sees — the "one money model, not three" hazard the ledger already warns about.
 - **Tolerant web read (never throws).** `#billingPage` does ONE `api.handle()` read (the only-data-path invariant);
   a new `readBillingActivity(body)` reads the `activity` array tolerantly → `[]` if absent/malformed (mirrors
   `readBilling` returning `undefined`). The activity card renders an empty-state note when the list is empty.
@@ -55,24 +67,43 @@ rendered as a themed read-only card on `?view=billing`. No new route, no mutatio
 
 ## Steps
 
-- [ ] **Step 0 — Adversarial design review.** Route through a `general-purpose` agent carrying the doddy
-  (security/no-oracle) + rigorous-architect (design) lens (the named specialists are not provisioned here). Confirm:
-  the projection discloses nothing beyond the already-visible aggregate (it itemizes the same fold); dropping
-  `event_id`/`tenant_id` leaves no internal-id surface; `eventsFor(context.tenant_id)` is the same no-cross-tenant
-  partition the summary uses; the planner-only gate already covers the read so no couple-reachable change; the
-  newest-first reorder is over trusted append order only; the summary-reconciliation test is the right drift guard.
-  Fold any P1/P2 findings before ticking.
+- [x] **Step 0 — Adversarial design review.** Routed through a `general-purpose` agent carrying the doddy
+  (security/no-oracle) + rigorous-architect (design) lens (the named specialists are not provisioned here). Verdict
+  **APPROVE-WITH-FIXES, no exploit** — no new cross-tenant/wedding leak (`eventsFor` is partition-keyed by the
+  minted `context.tenant_id`; the ledger has no wedding axis), no smuggling (GET reads no body), no method oracle
+  (shared auth-first gate), no XSS (every field routes through the `html` escaping template), no reorder oracle
+  (a `reverse()` of record order, NOT a timestamp sort). Folded fixes:
+  - **P1-1 (the one genuine new disclosure):** keeping ALL kinds would surface lifecycle markers
+    (`suspended`/`reactivated` = delinquency history) the summary deliberately hides. **FIX: filter the activity to
+    FINANCIAL kinds only** — making it a strict itemized decomposition of the balance and resolving P1-3 in the
+    same move. Markers stay operator-tier (where they already live in `billingView.events`).
+  - **P1-2:** pin a test that a couple GET (now carrying `activity`) is byte-identical 403 and the activity is never
+    computed before the gate (the gate is already the first statement; the test guards a future hoist).
+  - **P1-3:** pin the EXACT itemized↔aggregate reconciliation test (now total, given the financial-only filter).
+  - **P1-4:** build each entry by EXPLICIT pick from named fields, never spread-rest of the raw event (the
+    `BillingEvent` type permits `additionalProperties`); key-set test asserts exactly `{kind,amount_cents,occurred_at}`.
+  - **P2-2:** widen `BillingHandlerDeps.ledger` via the `Pick` (add `'eventsFor'`), not the whole `BillingLedger`.
+  - **P2-3:** tolerant web reader (→ `[]` on absent/malformed, never a 500 oracle); frozen label lookup with an
+    escaped raw-`kind` fallback for an unexpected key.
+  - **P2-4:** `buildBillingActivity` lives in a billing-domain module (`billing_activity.ts`, `@canonical`),
+    exported from `product/src/index.ts` beside `buildBillingSummary`; `pages.ts` stays render-only.
 
 - [ ] **Step 1 — `buildBillingActivity` + `BillingActivityEntry` (billing domain).**
-  - New `product/src/billing/billing_activity.ts`: `BillingActivityEntry = { kind: BillingEventKind; amount_cents?: number; occurred_at: string }` and a pure
-    `buildBillingActivity(events: readonly BillingEvent[]): BillingActivityEntry[]` that maps each event to
-    `{ kind, ...(financial ? { amount_cents } : {}), occurred_at }` and returns the list **newest-first**
-    (reverse of record order). No I/O, no clock — a deterministic function of its input (mirrors `describeStrategy`).
-    Header documents the tenant-safe projection (drops `event_id`/`tenant_id`) + the newest-first order.
-  - Tests (`product/tests/billing/billing_activity.test.ts`): maps a financial event to `{kind,amount_cents,occurred_at}`
-    and a marker to `{kind,occurred_at}` (NO `amount_cents` key — assert the key is absent, not falsy); drops
-    `event_id`/`tenant_id` (key-set pin); empty input → `[]`; preserves all events; **newest-first** order; a mixed
-    ledger (provision/charge/usage/payment) reconciles with `summarize` (Σ per-kind amounts + usage count).
+  - Export `FINANCIAL_KINDS` (and a `FinancialBillingEventKind = Extract<BillingEventKind, 'charge' | 'usage_charge' | 'payment'>`)
+    from `billing_ledger.ts` so the activity filter and the balance fold reference ONE financial-kind source.
+  - New `product/src/billing/billing_activity.ts` (`@canonical billing_activity`):
+    `BillingActivityEntry = { kind: FinancialBillingEventKind; amount_cents: number; occurred_at: string }` and a pure
+    `buildBillingActivity(events: readonly BillingEvent[]): BillingActivityEntry[]` = `[...events].reverse()`
+    (copy-then-reverse — input is `readonly`), FILTERED to `FINANCIAL_KINDS` (a type-predicate narrows `kind`), each
+    entry EXPLICITLY constructed `{ kind, amount_cents: amount ?? 0, occurred_at }` (named-field pick, never
+    spread-rest). No I/O, no clock (mirrors `describeStrategy`/`buildBillingSummary`). Export from
+    `product/src/index.ts`. Header documents financial-only (markers dropped — operator-tier), the explicit pick
+    (drops `event_id`/`tenant_id`), and the newest-first order.
+  - Tests (`product/tests/billing/billing_activity.test.ts`): maps a financial event to exactly
+    `{kind,amount_cents,occurred_at}` (key-set pin — NO `event_id`/`tenant_id`); **DROPS markers** (a
+    provisioned/suspended/reactivated event yields no entry); empty input → `[]`; **newest-first** order; a mixed
+    ledger reconciles EXACTLY with `summarize` (Σ per-kind amounts, usage count, and Σdebits−Σpayments ===
+    `balance_cents`).
   - Verify: `npm run build && npm test && npm run lint`. Commit.
 
 - [ ] **Step 2 — Wire `activity` into `GET /t/:slug/billing`.**
@@ -82,20 +113,21 @@ rendered as a themed read-only card on `?view=billing`. No new route, no mutatio
   - `dispatchBilling` GET branch: `const activity = buildBillingActivity(deps.ledger.eventsFor(context.tenant_id))`
     and return `{ status: 200, body: { billing, activity } }`. POST (settle) unchanged. Auth-first/method order
     unchanged.
-  - Tests (`product/tests/http/billing_api.test.ts` — extend): planner GET returns `activity` newest-first; an
-    unprovisioned/zero-event tenant → `activity: []`; the activity reconciles with the returned `billing` summary
-    (Σ payments etc.); a body-smuggled `tenant_id` does NOT change the activity (own tenant only); a second tenant's
-    events never appear (cross-tenant isolation); couple GET → 403 byte-identical (no `activity` leaked); after a
-    Phase-31 settle POST, the follow-up GET's activity includes the new `payment` entry.
+  - Tests (`product/tests/http/billing_api.test.ts` — extend): planner GET returns `activity` newest-first and
+    financial-only (NO marker/lifecycle entries even after a suspend/reactivate cycle); an unprovisioned/zero-event
+    tenant → `activity: []`; the activity reconciles with the returned `billing` summary (Σ payments etc.); a
+    body-smuggled `tenant_id` does NOT change the activity (own tenant only); a second tenant's events never appear
+    (cross-tenant isolation); **couple GET → 403 byte-identical, `activity` never leaked** (P1-2); after a Phase-31
+    settle POST, the follow-up GET's activity includes the new `payment` entry.
   - Verify; commit.
 
 - [ ] **Step 3 — The themed Activity card on `?view=billing`.**
   - `renderBilling(theme, slug, summary, activity, csrfToken)` (new `activity` param): add an **"Activity"** card
-    after the balance card — a list of entries, each a fixed human label per `kind` (`provisioned`→"Account
-    created", `suspended`→"Account suspended", `reactivated`→"Account reactivated", `charge`→"Subscription charge",
-    `usage_charge`→"Messaging usage", `payment`→"Payment"), the `dollars(amount_cents)` when financial, and the
-    `occurred_at` as escaped text. Empty list → a "No activity yet." note. The label lookup is a frozen const, not
-    raw enum reflection. Everything through the `html` template.
+    after the balance card — a list of entries, each a fixed human label per `kind` (`charge`→"Subscription
+    charge", `usage_charge`→"Messaging usage", `payment`→"Payment"), the `dollars(amount_cents)`, and the
+    `occurred_at` as escaped text. Empty list → a "No activity yet." note. The label lookup is a FROZEN const with
+    an escaped raw-`kind` fallback for an unexpected key (P2-3, never throws — no 500 oracle). Everything through
+    the `html` template.
   - `#billingPage` (web UI): read the activity via a new tolerant `readBillingActivity(apiRes.body)` (→ `[]` if
     absent/malformed) and pass it to `renderBilling`. The 200/CSRF/theme invariant logic is unchanged.
   - Tests: `pages.test.ts` — `renderBilling` lists each entry with its label + amount + time when present, the
@@ -118,4 +150,7 @@ rendered as a themed read-only card on `?view=billing`. No new route, no mutatio
 - **Activity for the couple** — deliberately none; billing is a planner-only capability (couple → 403), unchanged.
 - **Exposing `event_id`** — dropped from the projection (internal identity). If a future "download my statement"
   or per-entry deep-link needs a stable key, re-introduce a tenant-safe opaque ref then.
+- **Lifecycle markers in the activity** (`provisioned`/`suspended`/`reactivated`) — deliberately filtered OUT
+  (financial-only): surfacing delinquency history (`suspended`/`reactivated`) to the customer is a new disclosure
+  decision left to a human product call; they stay operator-tier in `billingView.events`.
 - **Partial / arbitrary-amount payments** — still deferred from Phase 31 (re-introduces client money input).
