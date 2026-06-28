@@ -82,7 +82,7 @@ a `payment` for **exactly the trusted owed amount**), plus a CSRF-gated **Pay** 
     only `usage_charge` owed settles to 0; the recorded payment amount === the pre-call `balanceCents`.
   - Verify: `npm run build && npm test && npm run lint`. Commit.
 
-- [ ] **Step 2 — The JSON `POST /t/:slug/billing` route.**
+- [x] **Step 2 — The JSON `POST /t/:slug/billing` route.**
   - Widen `BillingHandlerDeps.ledger` to `Pick<BillingLedger, 'summarize' | 'settleBalance'>` (still no raw
     `record` — the pay surface can only settle its own balance).
   - `dispatchBilling`: keep `authorizeBillingView` as the FIRST statement (couple → 403 any method); then

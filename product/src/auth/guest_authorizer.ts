@@ -52,13 +52,18 @@ export class GuestAuthorizer {
   }
 
   /**
-   * View the tenant's billing & usage summary (Phase 30). Planner only — billing is a TENANT-ACCOUNT capability
-   * (not a per-wedding resource), so a couple lacks it ENTIRELY (`forbidden` -> 403), exactly like
-   * {@link authorizeRegister}. Because no specific resource is being probed (the account IS the whole tenant), the
-   * 403 is no existence oracle; the handler checks it BEFORE the method branch, so a couple cannot distinguish
-   * methods either. This authorizer is the intra-tenant MANAGEMENT-capability home (it already owns
-   * `authorizeRegister` + the `manageScope` reused by the escalation inbox), so the account-level billing
-   * capability fits here rather than on the wedding-resource authorizer. Returns a decision — never throws.
+   * The tenant's BILLING-ACCOUNT capability (Phase 30 read + Phase 31 settle). Despite the `View` name (kept to
+   * avoid churning Phase 30), this gates the WHOLE billing account surface — both `GET /t/:slug/billing` (the
+   * usage summary) AND `POST /t/:slug/billing` (settle the owed balance). Planner only — billing is a
+   * TENANT-ACCOUNT capability (not a per-wedding resource), so a couple lacks it ENTIRELY (`forbidden` -> 403),
+   * exactly like {@link authorizeRegister}. Because no specific resource is being probed (the account IS the whole
+   * tenant), the 403 is no existence oracle; the handler checks it BEFORE the method branch, so a couple cannot
+   * distinguish methods either — and, crucially, ONE shared gate for read + settle makes that no-method-oracle
+   * STRUCTURAL (the two verbs can never diverge into a couple-visible distinguisher). A SEPARATE pay authorizer is
+   * deliberately deferred: it would be a behavioral no-op behind this gate until a read-only billing role exists
+   * (at which point split read vs settle here). This authorizer is the intra-tenant MANAGEMENT-capability home (it
+   * already owns `authorizeRegister` + the `manageScope` reused by the escalation inbox), so the account-level
+   * billing capability fits here rather than on the wedding-resource authorizer. Returns a decision — never throws.
    */
   authorizeBillingView(principal: Principal): AccessDecision {
     assertMintedPrincipal(principal)

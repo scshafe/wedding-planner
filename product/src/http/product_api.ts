@@ -195,7 +195,7 @@ export interface EscalationHandlerDeps {
  * resolver/sessionStore (structural handler purity); no `weddings` (billing is tenant-account, not per-wedding).
  */
 export interface BillingHandlerDeps {
-  readonly ledger: Pick<BillingLedger, 'summarize'>
+  readonly ledger: Pick<BillingLedger, 'summarize' | 'settleBalance'>
   readonly tenants: Pick<TenantStore, 'findById'>
   readonly authorizer: GuestAuthorizer
 }
@@ -828,16 +828,20 @@ function handleEscalationReply(
 }
 
 /**
- * GET /t/:slug/billing — the planner's OWN billing & usage summary (Phase 30). Statement order is PINNED:
- *   1. authorize FIRST — `authorizeBillingView` is planner-only; a couple is `forbidden` -> 403 for ANY method
- *      (the capability check precedes the method branch, so a couple can distinguish neither resource nor method;
- *      billing is the whole tenant account, not a probed resource, so the 403 is no existence oracle);
- *   2. method GET-only (only a planner reaches this) — else 405;
- *   3. read the TRUSTED tenant by `context.tenant_id` (the minted partition key, NEVER a body/URL field — a
- *      smuggled `tenant_id` is inert). The context was just minted from an active tenant this same request, so
- *      `findById` always resolves; the `undefined` arm is defensive-only (masked 404, never a crash/oracle);
- *   4. build the summary: the trusted `plan_tier` priced by `monthlyPriceCents` joined onto the tenant's own
- *      ledger fold (`summarize(context.tenant_id)`). -> { billing: summary }.
+ * /t/:slug/billing — the planner's OWN billing account: GET reads the usage summary (Phase 30); POST settles the
+ * owed balance (Phase 31 — a simulated payment). Statement order is PINNED:
+ *   1. authorize FIRST — `authorizeBillingView` is the planner-only billing-ACCOUNT capability (gates BOTH the read
+ *      and the settle); a couple is `forbidden` -> 403 for ANY method. The capability check precedes the method
+ *      branch, so a couple can distinguish neither resource nor method (billing is the whole tenant account, not a
+ *      probed resource, so the 403 is no existence oracle), AND the read/pay verbs cannot diverge into a
+ *      couple-visible distinguisher — the no-method-oracle is STRUCTURAL, not test-hoped (one shared gate);
+ *   2. GET -> the summary (the trusted `plan_tier` priced by `monthlyPriceCents` joined onto the tenant's own
+ *      ledger fold, keyed by `context.tenant_id` — the minted partition key, NEVER a body/URL field, so a smuggled
+ *      `tenant_id` is inert). The context was just minted from an active tenant this same request, so `findById`
+ *      always resolves; the `undefined` arm is defensive-only (masked 404, never a crash/oracle);
+ *   3. POST -> settle the owed balance. The handler reads NOTHING from the body (no amount/field), so a
+ *      body-smuggled `amount_cents` is inert: the settled sum is sourced from the tenant's own trusted fold inside
+ *      `settleBalance` (see billing_ledger.ts), never from client input -> { paid }. Else (PUT/DELETE) -> 405.
  */
 function dispatchBilling(
   context: TenantContext,
@@ -846,11 +850,20 @@ function dispatchBilling(
   deps: BillingHandlerDeps,
 ): ApiResponse {
   if (deps.authorizer.authorizeBillingView(principal) === 'forbidden') throw forbidden()
-  if (req.method !== 'GET') throw methodNotAllowed()
-  const tenant = deps.tenants.findById(context.tenant_id)
-  if (tenant === undefined) return RESP_NOT_FOUND // defensive: unreachable for a freshly-minted context
-  const billing = buildBillingSummary(tenant.plan_tier, deps.ledger.summarize(context.tenant_id))
-  return { status: 200, body: { billing } }
+  if (req.method === 'GET') {
+    const tenant = deps.tenants.findById(context.tenant_id)
+    if (tenant === undefined) return RESP_NOT_FOUND // defensive: unreachable for a freshly-minted context
+    const billing = buildBillingSummary(tenant.plan_tier, deps.ledger.summarize(context.tenant_id))
+    return { status: 200, body: { billing } }
+  }
+  if (req.method === 'POST') {
+    // Settle the owed balance. The amount is sourced from the caller's OWN trusted fold inside `settleBalance`
+    // keyed by `context.tenant_id` — the body is never read here, so there is nothing to smuggle. Repeat POST is a
+    // no-op (the balance floor), so a double-submit never double-pays. -> { paid: true } once owed, else { paid: false }.
+    const { paid } = deps.ledger.settleBalance(context.tenant_id)
+    return { status: 200, body: { paid } }
+  }
+  throw methodNotAllowed()
 }
 
 function handleGuestList(context: TenantContext, principal: Principal, deps: GuestHandlerDeps): ApiResponse {

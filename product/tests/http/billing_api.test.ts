@@ -140,9 +140,10 @@ describe('GET /t/:slug/billing — the planner billing & usage summary', () => {
     expect(api.handle(req('POST', '/t/alpha/billing')).status).toBe(401)
   })
 
-  it('405 for a non-GET method once authenticated as a planner', () => {
+  it('405 for a non-GET/POST method once authenticated as a planner (PUT/DELETE)', () => {
     const { api } = makeApi()
-    expect(api.handle(req('POST', '/t/alpha/billing', loginToken(api, 'alpha'))).status).toBe(405)
+    expect(api.handle(req('PUT', '/t/alpha/billing', loginToken(api, 'alpha'))).status).toBe(405)
+    expect(api.handle(req('DELETE', '/t/alpha/billing', loginToken(api, 'alpha'))).status).toBe(405)
   })
 
   it('masked 404 for an unknown or suspended tenant — regardless of auth header', () => {
@@ -162,5 +163,91 @@ describe('GET /t/:slug/billing — the planner billing & usage summary', () => {
     // identical for an authenticated planner and an unauthenticated probe (a valid tenant, no such sub-resource).
     expect(api.handle(req('GET', '/t/alpha/billing', loginToken(api, 'alpha'))).status).toBe(404)
     expect(api.handle(req('GET', '/t/alpha/billing')).status).toBe(404)
+  })
+})
+
+describe('POST /t/:slug/billing — settle the owed balance (Phase 31)', () => {
+  function balanceOf(api: ProductApi, slug: string): number {
+    const res = api.handle(req('GET', `/t/${slug}/billing`, loginToken(api, slug)))
+    return (res.body as { billing: BillingSummary }).billing.balance_cents
+  }
+
+  it('a planner settles the owed balance (200 {paid:true}); a follow-up GET shows balance 0', () => {
+    const { api, ledger, store } = makeApi()
+    const tid = tenantId(store, 'alpha')
+    ledger.record({ tenant_id: tid, kind: 'usage_charge', amount_cents: 5 })
+    ledger.record({ tenant_id: tid, kind: 'usage_charge', amount_cents: 6 })
+    expect(balanceOf(api, 'alpha')).toBe(11)
+    const res = api.handle(req('POST', '/t/alpha/billing', loginToken(api, 'alpha')))
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ paid: true })
+    expect(balanceOf(api, 'alpha')).toBe(0) // settled
+  })
+
+  it('a second POST is a no-op {paid:false} (the balance floor — no double-pay)', () => {
+    const { api, ledger, store } = makeApi()
+    ledger.record({ tenant_id: tenantId(store, 'alpha'), kind: 'usage_charge', amount_cents: 42 })
+    expect(api.handle(req('POST', '/t/alpha/billing', loginToken(api, 'alpha'))).body).toEqual({ paid: true })
+    expect(api.handle(req('POST', '/t/alpha/billing', loginToken(api, 'alpha'))).body).toEqual({ paid: false })
+    expect(balanceOf(api, 'alpha')).toBe(0)
+  })
+
+  it('POST with nothing owed is {paid:false} (no negative/credit balance)', () => {
+    const { api } = makeApi() // no events recorded → balance 0
+    expect(api.handle(req('POST', '/t/alpha/billing', loginToken(api, 'alpha'))).body).toEqual({ paid: false })
+    expect(balanceOf(api, 'alpha')).toBe(0)
+  })
+
+  it('a body-smuggled amount_cents is INERT — the settled amount comes from the trusted fold, never the body', () => {
+    const { api, ledger, store } = makeApi()
+    ledger.record({ tenant_id: tenantId(store, 'alpha'), kind: 'usage_charge', amount_cents: 11 })
+    // Hostile body: a huge over-pay and a negative credit — both ignored. The balance settles to exactly 0,
+    // never beyond (no negative/credit balance can be minted from client input).
+    const res = api.handle(req('POST', '/t/alpha/billing', loginToken(api, 'alpha'), { amount_cents: -999999999 }))
+    expect(res.body).toEqual({ paid: true })
+    expect(balanceOf(api, 'alpha')).toBe(0)
+    // And a second smuggled over-pay still no-ops at 0 (cannot drive it negative).
+    const res2 = api.handle(req('POST', '/t/alpha/billing', loginToken(api, 'alpha'), { amount_cents: 999999999 }))
+    expect(res2.body).toEqual({ paid: false })
+    expect(balanceOf(api, 'alpha')).toBe(0)
+  })
+
+  it('settles ONLY the caller\'s own tenant (another tenant\'s owed balance is untouched)', () => {
+    const { api, ledger, store } = makeApi()
+    ledger.record({ tenant_id: tenantId(store, 'alpha'), kind: 'usage_charge', amount_cents: 5 })
+    ledger.record({ tenant_id: tenantId(store, 'beta'), kind: 'usage_charge', amount_cents: 9 })
+    api.handle(req('POST', '/t/alpha/billing', loginToken(api, 'alpha')))
+    expect(balanceOf(api, 'alpha')).toBe(0)
+    expect(balanceOf(api, 'beta')).toBe(9) // untouched
+  })
+
+  it('a couple POST is 403 (byte-identical to the couple GET — the capability they lack, no settle)', () => {
+    const { api, ledger, store } = makeApi()
+    ledger.record({ tenant_id: tenantId(store, 'alpha'), kind: 'usage_charge', amount_cents: 7 })
+    const coupleTok = loginToken(api, 'alpha', 'couple', 'wedding_x')
+    expect(api.handle(req('POST', '/t/alpha/billing', coupleTok)).status).toBe(403)
+    // The forbidden POST settled nothing — the planner still sees the owed balance.
+    expect(balanceOf(api, 'alpha')).toBe(7)
+  })
+
+  it('401 for an unauthenticated POST (route shape is not a pre-auth oracle)', () => {
+    const { api } = makeApi()
+    expect(api.handle(req('POST', '/t/alpha/billing')).status).toBe(401)
+  })
+
+  it('401 for a cross-tenant session POST (a token minted for beta presented on alpha)', () => {
+    const { api } = makeApi()
+    expect(api.handle(req('POST', '/t/alpha/billing', loginToken(api, 'beta'))).status).toBe(401)
+  })
+
+  it('masked 404 for an unknown or suspended tenant POST', () => {
+    const { api } = makeApi()
+    expect(api.handle(req('POST', '/t/ghost/billing')).status).toBe(404)
+    expect(api.handle(req('POST', '/t/sleepy/billing')).status).toBe(404)
+  })
+
+  it('unmounted-subresource 404 when billing is not wired (POST falls through to routeNotFound)', () => {
+    const { api } = makeApi({ mountBilling: false })
+    expect(api.handle(req('POST', '/t/alpha/billing', loginToken(api, 'alpha'))).status).toBe(404)
   })
 })
