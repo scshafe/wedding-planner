@@ -6,6 +6,12 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["resolution_id", "tenant_id", "escalation_id", "wedding_id", "status", "resolved_by", "resolved_at"],
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "dismissed" } } },
+      "then": { "not": { "required": ["reply_text"] } }
+    }
+  ],
   "properties": {
     "resolution_id": { "type": "string", "minLength": 1, "description": "The platform-minted public surrogate id for this record (ids.next('resolution')). NEVER the storage key — the (tenant_id, escalation_id) pair is; this is the audit/display id." },
     "tenant_id": { "type": "string", "minLength": 1, "description": "The owning tenant. In the tenant-scoped repository this field is ONLY ever compared to the context's tenant_id (to veto a cross-tenant write); it never selects the partition (the context does)." },
@@ -13,6 +19,7 @@
     "wedding_id": { "type": "string", "minLength": 1, "description": "The wedding the handled escalation belongs to — the couple-scope filter key (a couple reads only the resolutions whose wedding_id matches their bound wedding). ALWAYS copied from the live escalation read in the same request, NEVER a request-body field." },
     "status": { "enum": ["resolved", "dismissed"], "description": "The terminal handled state. `resolved` = dealt with (typically the missing fact was filled); `dismissed` = not actionable (spam/irrelevant/duplicate). Both hide the escalation from the Open inbox. Not re-openable; first-writer-wins." },
     "resolved_by": { "enum": ["planner", "couple"], "description": "The role of the principal who handled it (principal.role, from the minted session — never the body). Audit metadata; never read for a decision." },
-    "resolved_at": { "type": "string", "minLength": 1, "description": "ISO 8601 UTC time the escalation was handled, from the injected clock (never ambient; platform-stamped, not guest-controlled). minLength:1 with NO format/pattern (matches guest_escalation.received_at) so the real clock.now() value can never fail validation here (no 500 oracle)." }
+    "resolved_at": { "type": "string", "minLength": 1, "description": "ISO 8601 UTC time the escalation was handled, from the injected clock (never ambient; platform-stamped, not guest-controlled). minLength:1 with NO format/pattern (matches guest_escalation.received_at) so the real clock.now() value can never fail validation here (no 500 oracle)." },
+    "reply_text": { "type": "string", "minLength": 1, "maxLength": 2000, "description": "OPTIONAL (Phase 29): the operator's answer text, present ONLY when the escalation was resolved by a console reply-from-the-inbox (absent on the resolve-form and dismiss paths — and the allOf forbids it entirely when status is `dismissed`). TRUSTED couple/planner input; returned in the scoped `GET /t/:slug/escalations` JSON body AND HTML-escaped when rendered on the Handled inbox row — never reflected back to the guest (the guest send used the operator's freshly-typed text; this persisted copy is read only by the same scope that wrote it). maxLength:2000 MATCHES the handler's REPLY_TEXT_MAX_LENGTH and minLength:1 matches requireString's non-empty guarantee, so a reply that passed the handler can never fail validation here (no 500 oracle); the two `2000`s are drift-guarded by a test." }
   }
 }

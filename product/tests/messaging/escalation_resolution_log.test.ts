@@ -1,8 +1,12 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 import { ManualClock, SequentialIdGenerator, type Tenant } from '@wedding-planner/shared'
 import { describe, expect, it } from 'vitest'
 
 import {
   EscalationResolutionLog,
+  REPLY_TEXT_MAX_LENGTH,
   type TenantContext,
   TenantContextResolver,
   TenantStore,
@@ -119,6 +123,65 @@ describe('EscalationResolutionLog', () => {
     w.log.resolve(w.ctxA, { escalation_id: 'e1', wedding_id: 'wed_1', status: 'resolved', resolved_by: 'couple' })
     expect(w.log.list(w.ctxB)).toEqual([])
     expect(w.log.listForWedding(w.ctxB, 'wed_1')).toEqual([])
+  })
+
+  it('persists an OPTIONAL reply_text when supplied (the reply path) and reads it back', () => {
+    const w = makeWorld()
+    const rec = w.log.resolve(w.ctxA, {
+      escalation_id: 'escalation_reply',
+      wedding_id: 'wed_1',
+      status: 'resolved',
+      resolved_by: 'couple',
+      reply_text: 'The ceremony starts at 4pm — see you there!',
+    })
+    expect(rec.reply_text).toBe('The ceremony starts at 4pm — see you there!')
+    expect(w.log.list(w.ctxA)[0]?.reply_text).toBe('The ceremony starts at 4pm — see you there!')
+  })
+
+  it('OMITS the reply_text KEY entirely when absent (resolve-form/dismiss) — never a `reply_text: undefined`', () => {
+    const w = makeWorld()
+    const resolved = w.log.resolve(w.ctxA, { escalation_id: 'e_noreply', wedding_id: 'wed_1', status: 'resolved', resolved_by: 'planner' })
+    const dismissed = w.log.resolve(w.ctxA, { escalation_id: 'e_dismiss', wedding_id: 'wed_1', status: 'dismissed', resolved_by: 'planner' })
+    // The key must be ABSENT (additionalProperties:false would reject a serialized `reply_text: undefined`).
+    expect('reply_text' in resolved).toBe(false)
+    expect('reply_text' in dismissed).toBe(false)
+  })
+
+  it('first-writer-wins keeps the FIRST reply_text: a (gated-out) re-reply never overwrites it', () => {
+    const w = makeWorld()
+    const first = w.log.resolve(w.ctxA, { escalation_id: 'e_fww', wedding_id: 'wed_1', status: 'resolved', resolved_by: 'couple', reply_text: 'first answer' })
+    const second = w.log.resolve(w.ctxA, { escalation_id: 'e_fww', wedding_id: 'wed_1', status: 'resolved', resolved_by: 'planner', reply_text: 'second answer' })
+    expect(second).toEqual(first)
+    expect(second.reply_text).toBe('first answer')
+  })
+
+  it('the schema FORBIDS reply_text on a dismissed record (allOf) — a dismissed-with-reply input fails validation', () => {
+    const w = makeWorld()
+    // A nonsensical "dismissed but also replied" record must not validate (contract-enforced "reply ⇒ resolved").
+    expect(
+      codeOfThrow(() =>
+        w.log.resolve(w.ctxA, {
+          escalation_id: 'e_bad',
+          wedding_id: 'wed_1',
+          status: 'dismissed',
+          resolved_by: 'planner',
+          reply_text: 'should not be allowed on a dismissal',
+        }),
+      ),
+    ).not.toBe('NO_THROW')
+  })
+
+  it('no-500-oracle drift guard: the handler cap EQUALS the schema maxLength, and a max-length reply validates', () => {
+    // The two `2000`s (REPLY_TEXT_MAX_LENGTH and the schema maxLength) are separately edited — pin them equal,
+    // else a future bump to one re-opens the oracle the byte-identity argument closes.
+    const schemaPath = fileURLToPath(new URL('../../schemas/escalation_resolution_schema.json', import.meta.url))
+    const schema = JSON.parse(readFileSync(schemaPath, 'utf8')) as { properties: { reply_text: { maxLength: number } } }
+    expect(schema.properties.reply_text.maxLength).toBe(REPLY_TEXT_MAX_LENGTH)
+    // Behavioral boundary: a reply at exactly the handler cap passes resolve()'s assertValid (no 500).
+    const w = makeWorld()
+    const atCap = 'x'.repeat(REPLY_TEXT_MAX_LENGTH)
+    const rec = w.log.resolve(w.ctxA, { escalation_id: 'e_cap', wedding_id: 'wed_1', status: 'resolved', resolved_by: 'couple', reply_text: atCap })
+    expect(rec.reply_text).toHaveLength(REPLY_TEXT_MAX_LENGTH)
   })
 
   it('fails closed on a suspended tenant: every op runs the inherited liveness guard', () => {

@@ -108,8 +108,13 @@ const RESP_REPLY_MISS: ApiResponse = deepFreeze({ status: 200, body: { replied: 
  * The hygiene cap on a console reply body (Phase 28). reply_text is TRUSTED operator input (an authenticated
  * planner/couple), so this is bounds-checking, not a security gate — it keeps a single metered reply sane and
  * fires as a masked 400 BEFORE the escalation lookup (independent of existence, so not an oracle).
+ *
+ * EXPORTED so the Phase-29 drift guard can pin it EQUAL to the `escalation_resolution` schema's `reply_text`
+ * `maxLength`: the no-500-oracle argument (a reply that passes this handler can never fail `resolve()`'s
+ * assertValid) holds ONLY while the two `2000`s match. A test asserts the equality so a future bump to one
+ * can't silently re-open the oracle.
  */
-const REPLY_TEXT_MAX_LENGTH = 2000
+export const REPLY_TEXT_MAX_LENGTH = 2000
 
 /** The dependencies the dispatch handlers may touch — DELIBERATELY excludes resolver/sessionStore. */
 export interface WeddingHandlerDeps {

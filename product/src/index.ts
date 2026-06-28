@@ -95,6 +95,7 @@ export {
   type AdminHandlerDeps,
   type MessagingHandlerDeps,
   type EscalationHandlerDeps,
+  REPLY_TEXT_MAX_LENGTH,
 } from './http/product_api'
 export { createProductApiServer, MAX_BODY_BYTES } from './http/node_server'
 
