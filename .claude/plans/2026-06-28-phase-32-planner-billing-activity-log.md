@@ -137,10 +137,11 @@ rendered as a themed read-only card on `?view=billing`. No new route, no mutatio
     Forbidden). Keep the existing Pay-form/CSRF assertions green (the new `activity` param is additive).
   - Verify; commit.
 
-- [ ] **Step 4 — ADR 0032 + memory + handoff.** Write `docs/adr/0032-planner-billing-activity-log.md` (the
-  decisions above), add `.claude/memory/planner-billing-activity-log.md` (+ index line in `MEMORY.md`, linking
-  `[[planner-billing-view]]` and `[[simulated-balance-payment]]`), and update `.claude/handoff.local.md` (where
-  things stand + the next ranked lever). Verify; commit.
+- [x] **Step 4 — ADR 0032 + memory + handoff.** Wrote `docs/adr/0032-planner-billing-activity-log.md` (the
+  decisions above), added `.claude/memory/planner-billing-activity-log.md` (+ index line in `MEMORY.md`, linking
+  `[[planner-billing-view]]` and `[[simulated-balance-payment]]`), and updated `.claude/handoff.local.md`. A SECOND
+  **built-code** adversarial review (general-purpose, doddy lens) of the committed read path returned **APPROVE — no
+  constructible exploit**, all 6 claimed properties verified at file:line, no P1/P2.
 
 ## Out of scope (deferred, name them)
 - **Per-period statements / invoices** — the activity is a flat lifetime-to-date list, not grouped into billing

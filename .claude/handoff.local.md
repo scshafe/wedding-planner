@@ -1,68 +1,75 @@
 # Handoff
 
-## Where things stand — Phase 31 (simulated balance payment) is COMPLETE ✅
-`.claude/plans/2026-06-28-phase-31-simulated-balance-payment.md` is **complete — Step 0 design review + Steps 1–4
-ticked**, on branch **`build/phase-31-simulated-balance-payment`** (off `build/phase-3-generalize-search`, the open
-review artifact for `main`; the loop's merge-keeper advances `main` when green). Working tree clean.
-`npm run build && npm test && npm run lint` all green (**914 tests**, up from 891 at the start of this run).
+## Where things stand — Phase 32 (planner billing activity log) is COMPLETE ✅
+`.claude/plans/2026-06-28-phase-32-planner-billing-activity-log.md` is **complete — Step 0 design review + Steps
+1–4 ticked**, on branch **`build/phase-32-planner-billing-activity-log`** (off `build/phase-31-simulated-balance-payment`,
+the open review-artifact stack toward `main`; the loop's merge-keeper advances `main` when green). Working tree
+clean. `npm run build && npm test && npm run lint` all green (**934 tests**, up from 914 at the start of this run).
 
-This rung makes the Phase-30 billing page **interactive**: the planner can now **pay down their owed balance** from
-`?view=billing` — the FIRST mutation on the billing surface. A metered guest reply raises the balance (Phase 30);
-the planner clicks **Pay** and the page shows `$0.00 owed`. Closes the meter→bill→customer→**pay** loop end-to-end,
-demoable. Offline-first (no real money — recorded as the existing `payment` kind; no new schema, manifest stays 20).
-doddy+architect design review APPROVE-WITH-FIXES (no exploit; P1-A/P1-B folded); a SECOND built-code review of the
-committed money path APPROVE (no constructible exploit). ADR 0031, memory [[simulated-balance-payment]].
+This rung makes the Phase-30/31 billing surface **itemized**: the planner now sees every **financial line item**
+behind their account totals — each `charge` / `usage_charge` / `payment`, newest-first — as a read-only `activity`
+list on `GET /t/:slug/billing` and a themed **Activity** card on `?view=billing`. The customer-facing analogue of
+the operator's raw `billingView.events`, scoped to the planner's OWN tenant. Closes the
+meter→bill→pay→**see-the-receipt** loop, demoable (a metered guest reply shows as a "Messaging usage" line; paying
+it down adds a "Payment" line at the top). Offline-first, no new schema (render-time projection, manifest stays 20).
+doddy+architect design review APPROVE-WITH-FIXES (the one genuine finding reshaped the design — see below), and a
+SECOND **built-code** review APPROVE (no constructible exploit, all 6 properties verified at file:line). ADR 0032,
+memory [[planner-billing-activity-log]].
 
 ## What changed this phase
-- **`BillingLedger.settleBalance(tenant_id): { paid, amount_cents, balance_cents }`** — reads `balanceCents`
-  internally and records a `payment` for EXACTLY the owed amount when `> 0`, else no-ops. The amount is from the
-  TRUSTED fold, never a caller input. Read+record is ONE synchronous critical section (the balance floor is the
-  double-submit guard). Non-lifecycle ledger writer (follows `MessagingService.usage_charge`'s precedent).
-- **`product_api.ts`** — `BillingHandlerDeps.ledger` widened to `Pick<…,'summarize'|'settleBalance'>`;
-  `dispatchBilling` now: authorize FIRST (`authorizeBillingView`, couple→403 any method) → `GET` summary / `POST`
-  settle (`{ paid }`, body NEVER read — no `parseObjectBody`) / else 405.
-- **`guest_authorizer.ts`** — `authorizeBillingView` doc updated: it is the billing-ACCOUNT capability gating BOTH
-  read and settle (name kept to avoid Phase-30 churn; separate pay authorizer deferred until a read-only billing
-  role exists).
-- **`product_web_ui.ts`** — `#billingPay` (CSRF-verify → forward empty-body `POST /t/:slug/billing` → PRG redirect),
-  the 4-seg `/t/:slug/billing/pay` route (slug masked before cookie/CSRF read), and `#billingPage` now issues the
-  per-session CSRF token. **`pages.ts`** — `renderBilling(theme, slug, summary, csrfToken)`: Pay form when
-  `balance_cents > 0` (only the `_csrf` field, NO amount input), else a "Settled — nothing owed" note.
-- **Tests** — `billing.test.ts` +6 (`settleBalance`: pays exact balance / no-op at 0 / unknown tenant / idempotent
-  double / partitioned); `billing_api.test.ts` +10, −1 reworked (planner pays→0 / second {paid:false} / zero-balance
-  / **body-smuggled amount_cents inert** / settles own tenant only / couple 403 byte-identical / 401 / 405 PUT&DELETE
-  / cross-tenant / unmounted 404); `pages.test.ts` +2 (Pay form+CSRF when owed / settled note when not); `billing_web.test.ts`
-  +5 (full meter→bill→customer→pay e2e / forged CSRF 403 no-mutation / no-balance no-op / couple no-form / forged-slug 404).
-- `compose.ts` needed NO change (the `billing.ledger` is the full `BillingLedger`, so `settleBalance` is in scope
-  through the widened `Pick`).
+- **`billing_activity.ts`** (new, `@canonical billing_activity`) — `BillingActivityEntry = { kind, amount_cents,
+  occurred_at }` + pure `buildBillingActivity(events)`: filters to FINANCIAL kinds, EXPLICIT-pick each entry (never
+  spread-rest), returns NEWEST-FIRST (`[...events].reverse()`). Exported from `product/src/index.ts` beside
+  `buildBillingSummary`.
+- **`billing_ledger.ts`** — `FINANCIAL_KINDS` (was module-private) and `FinancialBillingEventKind` now EXPORTED, so
+  the activity filter and the balance fold reference ONE financial-kind source (a new financial kind flows into
+  balance + summary + activity together).
+- **`product_api.ts`** — `BillingHandlerDeps.ledger` widened via the `Pick` to add `'eventsFor'` (still no `record`
+  — read-only); `dispatchBilling` GET now returns `{ billing, activity }`. POST (settle) unchanged; auth-first/method
+  order unchanged.
+- **`pages.ts`** — `renderBilling(theme, slug, summary, activity, csrfToken)` (new `activity` param) renders an
+  Activity card after the balance: each line a frozen `ACTIVITY_LABELS` label (escaped raw-`kind` fallback, never
+  throws) + `dollars(amount_cents)` + escaped `occurred_at`; empty → "No activity yet."
+- **`product_web_ui.ts`** — `readBillingActivity` (tolerant → `[]` on absent/malformed, no 500 oracle) + passed to
+  `renderBilling`.
+- **Tests** — `billing_activity.test.ts` +6 (key-set pin, markers dropped, newest-first, empty, no-mutate, EXACT
+  `summarize` reconciliation); `billing_api.test.ts` +9 (newest-first/key-set, financial-only across a suspend
+  cycle, `[]` empty, exact summary reconciliation, own-tenant-only, smuggled tenant_id inert, couple-403-no-leak,
+  settle adds a payment line); `pages.test.ts` +3 (list/empty/hostile-escape); `billing_web.test.ts` +3 (empty card,
+  meter→bill→pay itemized newest-first, couple sees no card).
 
-## The load-bearing insight (carry forward) — see [[simulated-balance-payment]] for the full set
-- **A money mutation that must be un-gameable derives its amount from TRUSTED STATE, not the body** — and proves it
-  by reading nothing from the body (no `parseObjectBody`); `settleBalance` takes only `tenant_id`. Balance is
-  structurally ≥ 0, so no over/under-pay, no negative/credit.
-- **The balance floor (`record only when > 0`) IS the double-submit guard** — repeat = `{paid:false}` no-op, no
-  idempotency key; depends on the read+record staying ONE synchronous section (noted in the header).
-- **ONE shared planner-only gate for read + settle makes the no-method-oracle STRUCTURAL** (the two verbs can't
-  diverge into a couple-visible distinguisher); capability checked FIRST, before the method branch.
-- **CSRF at exactly one layer; the JSON mutation route is Bearer-only / not CSRF-reachable** (the missing-Bearer
-  401 stops a cross-site form). 4-seg web route ≠ 3-seg JSON route (no collision; JSON POST falls through).
+## The load-bearing insight (carry forward) — see [[planner-billing-activity-log]] for the full set
+- **The activity is the itemized DECOMPOSITION of the balance — FINANCIAL kinds ONLY.** The design review's one
+  genuine finding (P1-1): the aggregate summary already hides lifecycle markers, so projecting EVERY event would
+  newly disclose `suspended`/`reactivated` — **delinquency history** — to the customer (operator-tier state crossing
+  by omission). Filtering to `charge`/`usage_charge`/`payment` both avoids that NEW disclosure AND makes the list a
+  strict decomposition of the same numbers the summary aggregates → the summary-reconciliation invariant is exact and
+  total. Surfacing delinquency history to the customer is a deliberate human product call (stays operator-tier).
+- **A tenant-safe projection is built by EXPLICIT pick, never spread-rest** — `BillingEvent` permits
+  `additionalProperties`, so a `{ event_id, tenant_id, ...rest }` style omit could forward a future stray key (or an
+  internal id) to the customer. Naming the three kept fields makes "drops event_id/tenant_id" STRUCTURAL.
+- **Reuse the EXPORTED `FINANCIAL_KINDS` set** so the activity filter, the balance fold, and the summary share one
+  financial-kind source (extends the Phase-18 lockstep: schema enum + allOf + FINANCIAL_KINDS + balanceCents).
+- **No new oracle on a read extension:** same minted-`context.tenant_id` partition (`eventsFor`), same planner-only
+  gate already FIRST (couple 403, activity never computed — pinned against a future hoist). The activity discloses
+  nothing beyond the already-visible aggregate; newest-first is `reverse()` of trusted append order, not a sort.
 
 ## Next action — your call. Pick the next high-value lever (ranked)
-- **Planner billing ACTIVITY LOG** — the smaller, natural follow-up: surface the tenant's own event history
-  (provision / charge / payment / usage / **the new settlement payment**) as a themed list — the customer-facing
-  analogue of the operator's raw `billingView.events`, scoped to `context.tenant_id`. Now that payments are
-  planner-initiated, a "here's what you were charged and paid" ledger is the obvious transparency rung. Bounded;
-  reuses `eventsFor` scoped to the minted context. **Recommended next.**
 - **Multi-turn reply thread** — the still-open inbox extension: a per-escalation message log so an operator can send
   follow-ups after the first reply (and a guest reply lands in the thread), decoupling reply from auto-resolve.
   `escalation_resolution.reply_text` becomes the legacy "first reply". Medium-large; the guest-reply-into-thread
   piece needs conversation correlation the provider-agnostic port doesn't carry (a real design sub-problem).
+  **Recommended next** — the billing surface is now well-developed (read → pay → itemized history); the inbox is the
+  other half of the guest loop and has the most-cited open thread.
 - **A couple-REGISTER design rung** — resolve the deferred Phase-24 oracle (per-wedding `recipient_ref` namespacing
   OR masked-conflict semantics). The most-cited open product-authz deferral. Medium; needs a real design pass on the
   tenant-global-key collision.
 - **Unify `product/price_book.ts` onto the shared cost basis** (retail = COGS × margin over `MESSAGE_COST_CENTS`) —
   the clean Phase-20 follow-up; tidies the two-cents-tables seam. Smaller.
-- **Partial / arbitrary-amount payments** — the deferred extension of THIS phase: a planner pays a chosen amount
+- **Per-period billing windows / statements** — the deferred extension of THIS phase: group the activity into
+  billing periods / invoices (needs a period model the ledger doesn't carry yet). Medium; defer until a product
+  reason (the flat lifetime list covers the demo).
+- **Partial / arbitrary-amount payments** — the deferred Phase-31 extension: a planner pays a chosen amount
   (`0 < amount ≤ balance`). Re-introduces client-supplied money input → needs its own bounds/no-fraud pass. Defer
   until there's a product reason (full-settle covers the demo loop).
 - **Return-to-the-engine threads** — the self-improvement loop (advisory tier-2 recs, live publish pipeline) has open
@@ -79,13 +86,16 @@ when gating with `&&` (the pipe masks the non-zero exit; `$?` after a pipe is th
 `${PIPESTATUS[0]}`); run them standalone and check the exit. `npm run build` runs from REPO ROOT. **Eval-harness/
 telemetry import ONLY `@wedding-planner/shared`, never `product`** (the firewall, by reachability). **Schema change ⇒
 `npm run gen:types`**; a NEW schema file additionally bumps the manifest count test (+ title prose) + the gen-script
-header — **Phases 30 & 31 added NO schema** (render-time projection / an existing `payment` kind), so the manifest
-stays 20. **The guest responder's security boundary is `projectGuestVisibleFacts`'s allow-list.** **Web-form
+header — **Phases 30, 31 & 32 added NO schema** (render-time projections / an existing `payment` kind), so the
+manifest stays 20. **The guest responder's security boundary is `projectGuestVisibleFacts`'s allow-list.** **Web-form
 mutations are CSRF-gated at the web layer ONLY** (the JSON API is Bearer-only / not CSRF-reachable). **The web UI's
 ONLY data path is `api.handle()`.** **Guest/manage/billing scope comes from the MINTED principal/context, never the
 request body.** **A capability the role lacks entirely (couple→register, couple→billing-account incl. pay) is a 403
 checked FIRST, before the method/body branch — not a masked 404; ONE shared gate for read+mutation keeps the
 no-method-oracle structural.** **A money mutation derives its amount from trusted state and reads NOTHING from the
-body (no `parseObjectBody`); the balance floor is the double-submit guard.** **A coupled validation/price/balance
-constant MUST be drift-guarded by a test** (Phase 30 `summarize` vs canonical `balanceCents`; Phase 29
-`REPLY_TEXT_MAX_LENGTH`; Phase 28 `channel`).
+body (no `parseObjectBody`); the balance floor is the double-submit guard.** **A customer-facing projection of a
+trusted record (billing summary/activity) is FINANCIAL-only + EXPLICIT-pick — it must not newly disclose
+operator-tier state (lifecycle markers) the aggregate hid, and must drop internal ids structurally (no spread-rest).**
+**A coupled validation/price/balance constant MUST be drift-guarded by a test** (Phase 32 activity↔summary
+reconciliation; Phase 30 `summarize` vs canonical `balanceCents`; Phase 29 `REPLY_TEXT_MAX_LENGTH`; Phase 28
+`channel`).
