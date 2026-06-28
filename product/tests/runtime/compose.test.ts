@@ -84,6 +84,19 @@ describe('composeProductSurface — the wired surface boots demoable', () => {
     expect(weddings.map((w) => w.wedding_id)).toContain(demo?.weddingId)
   })
 
+  it('the demo planner can read their billing summary through the wired surface (Phase 30 — billing IS wired)', () => {
+    const { api } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+    const login = api.handle(req('POST', '/t/demo/sessions', { body: { role: 'planner' } }))
+    const token = (login.body as { token: string }).token
+    // If compose ever forgets to wire `billing`, this route 404s — so this pins reachability (the F4 safety net).
+    const res = api.handle(req('GET', '/t/demo/billing', { token }))
+    expect(res.status).toBe(200)
+    const billing = (res.body as { billing: { plan_tier: string; monthly_price_cents: number } }).billing
+    // The demo tenant was provisioned + activated through the real lifecycle, so its plan + monthly charge show.
+    expect(billing.plan_tier).toBe('studio')
+    expect(billing.monthly_price_cents).toBeGreaterThan(0)
+  })
+
   it('a couple logs in via the public edge and lists + removes THEIR wedding\'s seeded guest (Phase 24)', () => {
     const { api, demo } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
     const login = api.handle(req('POST', '/t/demo/sessions', { body: { role: 'couple', wedding_id: demo?.weddingId } }))

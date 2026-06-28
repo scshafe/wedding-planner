@@ -1,5 +1,6 @@
 import type { EscalationResolution, Guest, GuestEscalation, Wedding } from '@wedding-planner/shared'
 
+import type { BillingSummary } from '../billing/billing_summary'
 import type { CsrfGuard } from '../auth/csrf_guard'
 import type { ApiRequest } from '../http/api_message'
 import { splitPath } from '../http/path'
@@ -10,6 +11,7 @@ import { normalizeSlugForRoute } from './html'
 import {
   ERROR_500,
   GENERIC_404,
+  renderBilling,
   renderConsole,
   renderDetail,
   renderEscalations,
@@ -172,6 +174,8 @@ export class ProductWebUi {
     if (queryParam(req.path, 'view') === 'guests') return this.#guestsPage(req, slug)
     // ?view=escalations — the read-only escalation inbox (Phase 26; planner whole-tenant, couple their wedding).
     if (queryParam(req.path, 'view') === 'escalations') return this.#escalationsPage(req, slug)
+    // ?view=billing — the planner billing & usage summary (Phase 30; planner-only, a couple is themed Forbidden).
+    if (queryParam(req.path, 'view') === 'billing') return this.#billingPage(req, slug)
 
     const weddingId = queryParam(req.path, 'wedding')
     if (weddingId !== undefined) return this.#detail(req, slug, weddingId)
@@ -387,6 +391,26 @@ export class ProductWebUi {
     return this.#renderNonData(slug, apiRes.status)
   }
 
+  /**
+   * GET /t/:slug?view=billing — the planner billing & usage summary (Phase 30). ONE `api.handle()` read of the
+   * planner-only JSON `GET /t/:slug/billing`, themed strictly by status (mirrors `#strategy`): 200 → the summary
+   * page; a couple's 403 → themed Forbidden; 401 → themed login; everything else → the masked 404. The page makes
+   * NO independent existence/authz decision — it renders exactly what the JSON layer returned (read-only, no CSRF
+   * token needed, no body). `theme===undefined` on a 200 is an invariant break (a 200 means an active tenant
+   * resolved) → GENERIC_404 (fail closed, consistent with `#strategy`).
+   */
+  #billingPage(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const apiRes = this.#api.handle(bearerGet(`/t/${slug}/billing`, token))
+    if (apiRes.status === 200) {
+      const theme = this.#themes.resolveActiveTheme(slug)
+      const summary = readBilling(apiRes.body)
+      if (theme === undefined || summary === undefined) return GENERIC_404
+      return htmlResult(200, renderBilling(theme, slug, summary))
+    }
+    return this.#renderNonData(slug, apiRes.status)
+  }
+
   /** Map a non-200 API status to a page. 401 -> themed login (active); 403 -> forbidden; else masked 404. */
   #renderNonData(slug: string, status: number): HttpResult {
     if (status === 401) {
@@ -578,4 +602,11 @@ function readStrategy(body: unknown): StrategyGuidance | undefined {
   if (typeof body !== 'object' || body === null) return undefined
   const strategy = (body as { strategy?: unknown }).strategy
   return typeof strategy === 'object' && strategy !== null ? (strategy as StrategyGuidance) : undefined
+}
+
+/** Read the billing summary from a billing (200) JSON body, or undefined (tolerant — never throws). */
+function readBilling(body: unknown): BillingSummary | undefined {
+  if (typeof body !== 'object' || body === null) return undefined
+  const billing = (body as { billing?: unknown }).billing
+  return typeof billing === 'object' && billing !== null ? (billing as BillingSummary) : undefined
 }

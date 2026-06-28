@@ -77,7 +77,7 @@ contract (render-time projection, like `StrategyGuidance`/Phase 17 — **manifes
     trusted price (== `monthlyPriceCents`).
   - Verify: `npm run build && npm test && npm run lint`. Commit.
 
-- [ ] **Step 2 — The JSON route + authorizer capability.**
+- [x] **Step 2 — The JSON route + authorizer capability.**
   - `WeddingAuthorizer.authorizeBillingView(principal): AccessDecision` — planner `allow`, couple `forbidden`
     (asserts the minted brand; mirrors `authorizeCreate`).
   - `BillingHandlerDeps { ledger: Pick<BillingLedger,'summarize'>; tenants: Pick<TenantStore,'findById'>;

@@ -2,9 +2,11 @@ import type { EscalationResolution, GuestEscalation, Tenant, Wedding } from '@we
 import { describe, expect, it } from 'vitest'
 
 import { NEUTRAL_COLOR } from '../../src/web/html'
+import type { BillingSummary } from '../../src/billing/billing_summary'
 import {
   ERROR_500,
   GENERIC_404,
+  renderBilling,
   renderConsole,
   renderDetail,
   renderEscalations,
@@ -257,5 +259,33 @@ describe('generic constants', () => {
     expect(ERROR_500.status).toBe(500)
     expect(ERROR_500.body).not.toMatch(/PRODUCT\./)
     expect(ERROR_500.body).not.toContain('stack')
+  })
+})
+
+describe('renderBilling (Phase 30)', () => {
+  const SUMMARY: BillingSummary = {
+    plan_tier: 'studio',
+    monthly_price_cents: 9900,
+    messages_sent: 3,
+    messaging_spend_cents: 15,
+    subscription_charges_cents: 9900,
+    payments_cents: 9900,
+    balance_cents: 15,
+  }
+
+  it('shows the plan, monthly price, usage, and owed balance in dollars', () => {
+    const out = renderBilling(SAFE_THEME, 'acme', SUMMARY)
+    expect(out).toContain('studio')
+    expect(out).toContain('$99.00 / month')
+    expect(out).toContain('3 message(s) sent')
+    expect(out).toContain('$0.15 in metered messaging')
+    expect(out).toContain('$0.15 owed')
+    // The reconciliation note makes the balance transparent (subscription + messaging − payments).
+    expect(out).toContain('Subscription $99.00 + messaging $0.15 − payments $99.00')
+  })
+
+  it('escapes the themed brand even on the billing page (no live markup)', () => {
+    const out = renderBilling(EVIL_THEME, 'acme', SUMMARY)
+    assertNoLiveMarkup(out, 'billing theme')
   })
 })
