@@ -88,7 +88,8 @@ decision"); it naturally extends [[reply-from-inbox]].
     shows the reply text (and an XSS reply payload is escaped); a resolve-form handled row shows no reply line.
   - Verify green.
 
-- [ ] **Step 3 — ADR 0029 + memory + handoff.** Write `docs/adr/0029-*.md`; add
+- [x] **Step 3 — ADR 0029 + memory + handoff.** Done. ADR 0029 written; memory [[reply-transcript]] + indexed;
+  handoff updated. Phase 29 COMPLETE. Write `docs/adr/0029-*.md`; add
   `.claude/memory/reply-transcript.md` (link [[reply-from-inbox]], [[clear-to-absent-logistics-sentinel]] for
   the conditional-spread pattern) + index it in `MEMORY.md`; update `.claude/handoff.local.md`. Commit per
   step. Record the multi-turn-thread deferral.
