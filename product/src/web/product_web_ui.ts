@@ -143,6 +143,14 @@ export class ProductWebUi {
         return this.#escalationResolve(req, slug)
       }
 
+      // /t/:slug/escalations/reply (Phase 28) — the browser Reply FORM post (CSRF-protected): answer the guest
+      // directly (a metered send that auto-resolves). DISTINCT 4-seg name from the resolve form and the 3-seg
+      // JSON route; slug masked to 404 BEFORE any cookie read / CSRF verdict, exactly like the resolve form.
+      if (segments.length === 4 && segments[2] === 'escalations' && segments[3] === 'reply' && req.method === 'POST') {
+        if (slug === undefined) return GENERIC_404
+        return this.#escalationReply(req, slug)
+      }
+
       // /t/:slug/weddings/{create,update} (Phase 23) — the browser wedding FORM posts (CSRF-protected).
       // DISTINCT names from the JSON 4-seg /t/:slug/weddings/:id route (which accepts GET/PUT only); a
       // server-minted `wedding_…` id can never equal the literal `create`/`update`, so they never collide,
@@ -268,6 +276,23 @@ export class ProductWebUi {
     const form = parseForm(req.rawBody)
     if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
     const body = { escalation_id: form.get('escalation_id') ?? '', status: form.get('status') ?? '' }
+    this.#api.handle(bearerJson('POST', `/t/${slug}/escalations`, token, body))
+    return redirect(303, `/t/${slug}?view=escalations`)
+  }
+
+  /**
+   * POST /t/:slug/escalations/reply — the browser Reply form (Phase 28): answer the guest directly (a metered
+   * send that auto-resolves). Verify the CSRF token (forged ⇒ masked 403, NO send) BEFORE translating the
+   * cookie to a Bearer and forwarding to the JSON `POST /t/:slug/escalations` (which discriminates the
+   * `reply_text` body to the reply handler). Always PRG-redirect back to the inbox; a foreign/absent/handled
+   * escalation is the JSON layer's idempotent `{replied:false}` no-op. Only escalation_id + reply_text are
+   * forwarded; channel/recipient come from the live escalation server-side (a smuggled field is inert).
+   */
+  #escalationReply(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    const body = { escalation_id: form.get('escalation_id') ?? '', reply_text: form.get('reply_text') ?? '' }
     this.#api.handle(bearerJson('POST', `/t/${slug}/escalations`, token, body))
     return redirect(303, `/t/${slug}?view=escalations`)
   }

@@ -263,9 +263,10 @@ export function renderGuests(
 /**
  * The themed escalation-inbox page (Phase 26 read + Phase 27 resolve): the questions guests asked that the
  * platform could not answer, split into OPEN (still to handle) and HANDLED (resolved/dismissed). Each OPEN row
- * carries a CSRF-protected Resolve and Dismiss form (Phase 27 — the inbox's first mutation, reusing the
- * Phase-21 seam; the page therefore now issues a CSRF token, unlike the read-only strategy page) plus a link to
- * the matching wedding's edit page (fill the missing fact → the next ask is answered). The guest's `text` is
+ * carries a CSRF-protected Reply form (Phase 28 — a metered send back to the guest that auto-resolves) plus
+ * Resolve and Dismiss forms (Phase 27 — the inbox's first mutation, reusing the Phase-21 seam; the page
+ * therefore issues a CSRF token, unlike the read-only strategy page) plus a link to the matching wedding's edit
+ * page (fill the missing fact → the next ask is answered). The guest's `text` is
  * UNTRUSTED input — it (and every other value, incl. the hidden `escalation_id`/`status`) flows through the
  * `html` template (escaped text, never a `src`/`href`), so a hostile question can never inject markup. Rendered
  * from the scoped `GET /t/:slug/escalations` (planner: whole tenant; couple: their wedding) so the page
@@ -287,11 +288,18 @@ export function renderEscalations(
   const actionForm = (escalationId: string, status: 'resolved' | 'dismissed', label: string): SafeHtml =>
     html`<form class="inline" method="post" action="/t/${slug}/escalations/resolve">${csrfField(csrfToken)}<input type="hidden" name="escalation_id" value="${escalationId}"><input type="hidden" name="status" value="${status}"><button type="submit">${label}</button></form>`
 
+  // Phase 28: a Reply form on each OPEN row — answer the guest directly (a metered send over the channel they
+  // asked on), which AUTO-resolves the escalation. Posts to the 4-seg web route (CSRF), distinct from the
+  // resolve form. reply_text is the operator's (trusted) body; it flows through `html` like every other value.
+  const replyForm = (escalationId: string): SafeHtml =>
+    html`<form method="post" action="/t/${slug}/escalations/reply">${csrfField(csrfToken)}<input type="hidden" name="escalation_id" value="${escalationId}"><textarea name="reply_text" rows="2" placeholder="Reply to the guest…" required></textarea><button type="submit">Send reply</button></form>`
+
   const openRows = open.map(
     (e) => html`<div class="card">
     <div><strong>“${e.text}”</strong></div>
-    <div class="note">From <code>${e.from_ref}</code> · ${e.received_at}</div>
+    <div class="note">From <code>${e.from_ref}</code> · ${e.received_at} · via ${e.channel}</div>
     <div class="note">Wedding <code>${e.wedding_id}</code> · <a href="/t/${slug}?wedding=${e.wedding_id}">Set the missing details →</a></div>
+    ${replyForm(e.escalation_id)}
     <div class="inline">${actionForm(e.escalation_id, 'resolved', 'Mark resolved')} ${actionForm(e.escalation_id, 'dismissed', 'Dismiss')}</div>
   </div>`,
   )

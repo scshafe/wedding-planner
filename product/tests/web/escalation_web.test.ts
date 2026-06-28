@@ -45,6 +45,8 @@ const WH = 'wh-secret'
 interface World {
   ui: ProductWebUi
   api: ProductApi
+  messaging: MessagingService
+  store: TenantStore
 }
 
 function makeWorld(): World {
@@ -80,7 +82,7 @@ function makeWorld(): World {
     },
     escalations: { escalations, resolutions, authorizer: guestAuthorizer, service: messaging },
   })
-  return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store), csrf: sessions }), api }
+  return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store), csrf: sessions }), api, messaging, store }
 }
 
 function get(ui: ProductWebUi, path: string, cookie?: string): HttpResult {
@@ -212,5 +214,54 @@ describe('escalation inbox web page (?view=escalations) + resolve flow', () => {
       rawBody: JSON.stringify({ escalation_id: 'esc_x', status: 'resolved' }),
     })
     expect(res.status).toBe(401)
+  })
+})
+
+describe('escalation inbox web page — reply-from-the-inbox (Phase 28)', () => {
+  const usageCount = (w: World): number => w.messaging.usageView(w.store.findBySlug('acme')!.tenant_id).message_count
+
+  it('an Open question carries a Reply form (textarea reply_text) posting to the 4-seg reply route', () => {
+    const w = makeWorld()
+    seedEscalation(w.api, 'acme')
+    const cookie = loginCookie(w.ui, 'acme', 'planner')
+    const res = get(w.ui, '/t/acme?view=escalations', cookie)
+    expect(res.body).toContain('action="/t/acme/escalations/reply"')
+    expect(res.body).toContain('name="reply_text"')
+  })
+
+  it('a valid CSRF reply sends a metered message + moves the question to Handled (PRG redirect → 303)', () => {
+    const w = makeWorld()
+    seedEscalation(w.api, 'acme')
+    const cookie = loginCookie(w.ui, 'acme', 'planner')
+    const page = get(w.ui, '/t/acme?view=escalations', cookie).body as string
+    const sent = postForm(
+      w.ui,
+      '/t/acme/escalations/reply',
+      { _csrf: csrfFrom(page), escalation_id: escalationIdFrom(page), reply_text: 'Parking is in lot B.' },
+      cookie,
+    )
+    expect(sent.status).toBe(303)
+    expect(usageCount(w)).toBe(1)
+    const after = get(w.ui, '/t/acme?view=escalations', cookie).body as string
+    expect(after).toContain('Resolved by planner')
+    expect(after).not.toContain('action="/t/acme/escalations/reply"') // no Open rows left
+  })
+
+  it('a forged CSRF reply is masked 403 and sends NOTHING (stays Open)', () => {
+    const w = makeWorld()
+    seedEscalation(w.api, 'acme')
+    const cookie = loginCookie(w.ui, 'acme', 'planner')
+    const escId = escalationIdFrom(get(w.ui, '/t/acme?view=escalations', cookie).body as string)
+    const res = postForm(w.ui, '/t/acme/escalations/reply', { _csrf: 'forged', escalation_id: escId, reply_text: 'hi' }, cookie)
+    expect(res.status).toBe(403)
+    expect(usageCount(w)).toBe(0)
+    expect(get(w.ui, '/t/acme?view=escalations', cookie).body).toContain('action="/t/acme/escalations/reply"')
+  })
+
+  it('a reply on an UNKNOWN tenant slug masks to GENERIC_404 BEFORE the CSRF verdict (no oracle)', () => {
+    const { ui } = makeWorld()
+    const res = postForm(ui, '/t/ghosttenant/escalations/reply', { _csrf: 'forged', escalation_id: 'esc_x', reply_text: 'hi' })
+    expect(res.status).toBe(404)
+    expect(res.body).toContain('does not exist')
   })
 })

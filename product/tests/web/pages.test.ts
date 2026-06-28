@@ -188,6 +188,10 @@ describe('generic constants', () => {
     expect(out).toContain('name="status" value="resolved"')
     expect(out).toContain('name="status" value="dismissed"')
     expect(out).toContain('value="csrf-xyz"')
+    // Phase 28: the OPEN row also carries a Reply form (textarea) posting to the 4-seg reply route.
+    expect(out).toContain('action="/t/acme/escalations/reply"')
+    expect(out).toContain('name="reply_text"')
+    expect(out).toContain('via sms') // the channel is shown so the operator knows how the reply goes out
   })
 
   it('renderEscalations moves a HANDLED question into a Handled section (status badge, no action form)', () => {

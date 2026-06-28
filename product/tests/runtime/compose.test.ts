@@ -389,4 +389,40 @@ describe('composeProductSurface — Phase 27 e2e: resolving an escalation clears
     expect(final.body).toContain('Resolved by couple') // the first status stuck
     expect(final.body).not.toContain('Dismissed by couple')
   })
+
+  it('Phase 28: the couple REPLIES to an escalated guest via the browser form → a metered send goes out + it moves to Handled', () => {
+    const { ui, api, demo, messaging } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+    const ref = demo?.guestRecipientRef as string
+    const weddingId = demo?.weddingId as string
+    const tenantId = demo?.tenantId as string
+
+    // A guest texts an unanswerable parking question → escalated, recorded in the inbox.
+    expect(api.handle(inbound(ref, 'pmr_reply_1', 'where do I park?')).status).toBe(202)
+    expect(messaging.usageView(tenantId).message_count).toBe(0) // nothing answered/sent yet
+
+    // The couple logs in, opens the inbox — the question is Open with a Reply form.
+    const loginRes = ui.handle(form('POST', '/t/demo/login', { role: 'couple', wedding_id: weddingId }))
+    const cookie = `wp_session=${/wp_session=([^;]+)/.exec(loginRes.headers['set-cookie'] ?? '')?.[1]}`
+    const open = ui.handle({ method: 'GET', path: '/t/demo?view=escalations', headers: { cookie } })
+    expect(open.body).toContain('action="/t/demo/escalations/reply"')
+    const csrf = /name="_csrf" value="([^"]+)"/.exec(open.body as string)?.[1] as string
+    const escId = /name="escalation_id" value="([^"]+)"/.exec(open.body as string)?.[1] as string
+
+    // Reply via the form (CSRF-protected) → PRG redirect; a metered send went out to the guest.
+    const sent = ui.handle(form('POST', '/t/demo/escalations/reply', { _csrf: csrf, escalation_id: escId, reply_text: 'Parking is in lot B by the chapel.' }, cookie))
+    expect(sent.status).toBe(303)
+    const usage = messaging.usageView(tenantId)
+    expect(usage.message_count).toBe(1)
+    expect(usage.records[0]).toMatchObject({ recipient_ref: ref, channel: 'sms' })
+    expect(usage.billed_total_cents).toBeGreaterThan(0)
+
+    // The escalation is now Handled (resolved-by-replying), and a re-reply is a no-op (no second send).
+    const after = ui.handle({ method: 'GET', path: '/t/demo?view=escalations', headers: { cookie } })
+    expect(after.body).toContain('Resolved by couple')
+    expect(after.body).not.toContain('action="/t/demo/escalations/reply"')
+    const detail = ui.handle({ method: 'GET', path: `/t/demo?wedding=${weddingId}`, headers: { cookie } })
+    const csrf2 = /name="_csrf" value="([^"]+)"/.exec(detail.body as string)?.[1] as string
+    ui.handle(form('POST', '/t/demo/escalations/reply', { _csrf: csrf2, escalation_id: escId, reply_text: 'second attempt' }, cookie))
+    expect(messaging.usageView(tenantId).message_count).toBe(1) // single send — the deterministic key + handled-gate
+  })
 })

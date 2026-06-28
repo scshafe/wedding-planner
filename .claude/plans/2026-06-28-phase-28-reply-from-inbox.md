@@ -51,7 +51,7 @@ moves Open → Handled in one action ("resolve-by-replying"). Closes the guest�
   - Update escalation fixtures/tests that construct a `GuestEscalation` to include `channel`.
   - Verify: `npm run build && npm test && npm run lint` green.
 
-- [ ] **Step 2 — Reply handler (JSON): send + auto-resolve.**
+- [x] **Step 2 — Reply handler (JSON): send + auto-resolve.** Done; 853 tests green (+8 reply-API).
   - `EscalationHandlerDeps` gains `service: MessagingService`.
   - `dispatchEscalations` POST: parse body once, discriminate `reply_text !== undefined` → reply, else
     → resolve (refactor both handlers to take the parsed `body`).
