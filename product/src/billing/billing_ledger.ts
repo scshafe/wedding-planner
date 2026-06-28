@@ -35,6 +35,26 @@ const FINANCIAL_KINDS: ReadonlySet<BillingEventKind> = new Set<BillingEventKind>
   'payment',
 ])
 
+/**
+ * The aggregate view of one tenant's ledger (Phase 30 — the planner-facing billing summary). A per-kind fold of
+ * the tenant's events: how many metered messages were sent and what they cost, the subscription fees charged, the
+ * payments settled, and the resulting owed `balance_cents`. Markers (provisioned/suspended/reactivated) contribute
+ * nothing. This is what the planner sees about THEIR OWN account; the price-book join (plan_tier → monthly price)
+ * is layered on top in billing_summary.ts, never here (the ledger knows events, not pricing).
+ */
+export interface LedgerSummary {
+  /** Count of `usage_charge` events — i.e. metered messages billed to this tenant. */
+  readonly messages_sent: number
+  /** Σ of `usage_charge` amounts — the metered-messaging spend (exactly what was billed, never a re-priced figure). */
+  readonly messaging_spend_cents: number
+  /** Σ of `charge` amounts — the plan/subscription fees accrued. */
+  readonly subscription_charges_cents: number
+  /** Σ of `payment` amounts — money settled in. */
+  readonly payments_cents: number
+  /** The owed balance (positive = owed), IDENTICAL to {@link BillingLedger.balanceCents}. */
+  readonly balance_cents: number
+}
+
 /** What a caller supplies to record an event. event_id + occurred_at are owned by the ledger. */
 export interface RecordBillingEventInput {
   readonly tenant_id: string
@@ -109,5 +129,39 @@ export class BillingLedger {
       else if (event.kind === 'payment') balance -= event.amount_cents ?? 0
     }
     return balance
+  }
+
+  /**
+   * The per-kind aggregate of a tenant's own ledger (Phase 30 — the planner billing summary). One pass over the
+   * tenant's events, bucketed by the SAME per-kind money rule as {@link balanceCents} (the debit/credit direction
+   * here MUST stay in lockstep with that fold and the schema's per-kind `allOf` — they are one money model, not
+   * three). `balance_cents` is DERIVED from the same buckets (`subscription + messaging_spend − payments`); a test
+   * pins it equal to the canonical `balanceCents`, so the breakdown can never silently disagree with the owed
+   * balance. An unknown tenant (no events) folds to all zeros. Tenant-scoped by `tenant_id` alone (the partition),
+   * exactly like `eventsFor`/`balanceCents` — never reaches another tenant's events.
+   */
+  summarize(tenant_id: string): LedgerSummary {
+    const events = this.#byTenant.get(tenant_id) ?? []
+    let messages_sent = 0
+    let messaging_spend_cents = 0
+    let subscription_charges_cents = 0
+    let payments_cents = 0
+    for (const event of events) {
+      if (event.kind === 'usage_charge') {
+        messages_sent += 1
+        messaging_spend_cents += event.amount_cents ?? 0
+      } else if (event.kind === 'charge') {
+        subscription_charges_cents += event.amount_cents ?? 0
+      } else if (event.kind === 'payment') {
+        payments_cents += event.amount_cents ?? 0
+      }
+    }
+    return {
+      messages_sent,
+      messaging_spend_cents,
+      subscription_charges_cents,
+      payments_cents,
+      balance_cents: subscription_charges_cents + messaging_spend_cents - payments_cents,
+    }
   }
 }

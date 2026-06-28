@@ -5,6 +5,7 @@ import { CHANNELS, type Channel, MESSAGE_COST_CENTS } from '@wedding-planner/sha
 
 import {
   BillingLedger,
+  buildBillingSummary,
   MESSAGE_PRICE_CENTS,
   MONTHLY_PRICE_CENTS,
   messagePriceCents,
@@ -165,5 +166,88 @@ describe('BillingLedger', () => {
     const copy = ledger.eventsFor('tnt_1') as unknown[]
     copy.push({ forged: true })
     expect(ledger.eventsFor('tnt_1')).toHaveLength(1)
+  })
+
+  describe('summarize (Phase 30 — the planner usage fold)', () => {
+    it('folds an empty tenant to all zeros', () => {
+      const ledger = newLedger()
+      expect(ledger.summarize('tnt_unknown')).toEqual({
+        messages_sent: 0,
+        messaging_spend_cents: 0,
+        subscription_charges_cents: 0,
+        payments_cents: 0,
+        balance_cents: 0,
+      })
+    })
+
+    it('counts usage_charge events, sums each financial kind, and excludes markers', () => {
+      const ledger = newLedger()
+      ledger.record({ tenant_id: 'tnt_1', kind: 'provisioned' }) // marker — contributes nothing
+      ledger.record({ tenant_id: 'tnt_1', kind: 'charge', amount_cents: 9900 })
+      ledger.record({ tenant_id: 'tnt_1', kind: 'payment', amount_cents: 9900 })
+      ledger.record({ tenant_id: 'tnt_1', kind: 'usage_charge', amount_cents: 5 })
+      ledger.record({ tenant_id: 'tnt_1', kind: 'usage_charge', amount_cents: 6 })
+      ledger.record({ tenant_id: 'tnt_1', kind: 'suspended' }) // marker — contributes nothing
+      expect(ledger.summarize('tnt_1')).toEqual({
+        messages_sent: 2,
+        messaging_spend_cents: 11,
+        subscription_charges_cents: 9900,
+        payments_cents: 9900,
+        balance_cents: 11, // 9900 + 11 − 9900
+      })
+    })
+
+    it('DRIFT GUARD: the breakdown reconciles to the untouched canonical balanceCents fold', () => {
+      const ledger = newLedger()
+      ledger.record({ tenant_id: 'tnt_1', kind: 'charge', amount_cents: 29900 })
+      ledger.record({ tenant_id: 'tnt_1', kind: 'usage_charge', amount_cents: 4 })
+      ledger.record({ tenant_id: 'tnt_1', kind: 'usage_charge', amount_cents: 4 })
+      ledger.record({ tenant_id: 'tnt_1', kind: 'payment', amount_cents: 29900 })
+      const s = ledger.summarize('tnt_1')
+      // RHS is the canonical fold (the single source of truth) — catches any future divergence in summarize.
+      expect(s.subscription_charges_cents + s.messaging_spend_cents - s.payments_cents).toBe(
+        ledger.balanceCents('tnt_1'),
+      )
+      expect(s.balance_cents).toBe(ledger.balanceCents('tnt_1'))
+    })
+
+    it('partitions strictly by tenant (never folds another tenant\'s events)', () => {
+      const ledger = newLedger()
+      ledger.record({ tenant_id: 'tnt_a', kind: 'usage_charge', amount_cents: 6 })
+      ledger.record({ tenant_id: 'tnt_b', kind: 'usage_charge', amount_cents: 95 })
+      expect(ledger.summarize('tnt_a').messaging_spend_cents).toBe(6)
+      expect(ledger.summarize('tnt_a').messages_sent).toBe(1)
+      expect(ledger.summarize('tnt_b').messaging_spend_cents).toBe(95)
+    })
+  })
+
+  describe('buildBillingSummary (Phase 30 — the price-book join)', () => {
+    it('joins the trusted plan tier (priced by the SAME monthlyPriceCents) onto a ledger fold', () => {
+      const ledger = newLedger()
+      ledger.record({ tenant_id: 'tnt_1', kind: 'charge', amount_cents: 9900 })
+      ledger.record({ tenant_id: 'tnt_1', kind: 'usage_charge', amount_cents: 5 })
+      const summary = buildBillingSummary('studio', ledger.summarize('tnt_1'))
+      expect(summary.plan_tier).toBe('studio')
+      expect(summary.monthly_price_cents).toBe(monthlyPriceCents('studio'))
+      expect(summary.messages_sent).toBe(1)
+      expect(summary.messaging_spend_cents).toBe(5)
+      expect(summary.balance_cents).toBe(ledger.balanceCents('tnt_1'))
+    })
+
+    it('exposes NO provider COGS / per-message price / margin term', () => {
+      const summary = buildBillingSummary('solo', newLedger().summarize('tnt_x'))
+      const keys = Object.keys(summary).sort()
+      expect(keys).toEqual(
+        [
+          'balance_cents',
+          'messages_sent',
+          'messaging_spend_cents',
+          'monthly_price_cents',
+          'payments_cents',
+          'plan_tier',
+          'subscription_charges_cents',
+        ].sort(),
+      )
+    })
   })
 })

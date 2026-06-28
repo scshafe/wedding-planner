@@ -50,8 +50,12 @@ export {
 export {
   BillingLedger,
   type BillingEventKind,
+  type LedgerSummary,
   type RecordBillingEventInput,
 } from './billing/billing_ledger'
+// The planner-facing billing & usage projection (Phase 30): the tenant's own account summary (plan + usage +
+// balance), a pure render-time view layering the price book onto a LedgerSummary. No schema.
+export { type BillingSummary, buildBillingSummary } from './billing/billing_summary'
 
 // The operator-driven onboarding + lifecycle driver (Phase 15): the only path that moves a tenant through
 // its simulated lifecycle (∅ → onboarding → active → suspended → active), recording billing events.
