@@ -97,4 +97,5 @@ export type {
   InboundWebhook,
   Guest,
   GuestEscalation,
+  EscalationResolution,
 } from './contracts/contract_types'

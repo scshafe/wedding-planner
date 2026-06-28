@@ -86,6 +86,19 @@ export class EscalationLog {
   }
 
   /**
+   * Look up a single escalation by its public `escalation_id` within the context's tenant (Phase 27 — the
+   * resolution path needs the escalation's `wedding_id` to enforce the couple's scope before recording a
+   * resolution). The backing repo is keyed by `provider_message_ref`, so this is a partition SCAN
+   * (`list().find`) — acceptable at the offline single-tenant scale; a future store swap that needs an index
+   * would add a secondary map without changing this signature. It is tenant-scoped by construction: `list`
+   * only ever returns the context tenant's records, so this can never reach another tenant's escalation. A
+   * missing/foreign id returns `undefined` (no oracle — the caller masks absent and out-of-scope identically).
+   */
+  getByEscalationId(context: TenantContext, escalation_id: string): GuestEscalation | undefined {
+    return this.#repo.list(context).find((escalation) => escalation.escalation_id === escalation_id)
+  }
+
+  /**
    * The couple-facing slice: only the escalations whose `wedding_id` matches, within the context's tenant. A
    * partition FILTER (the response carries ONLY matching records — nothing about other weddings), NOT a probe.
    * An `undefined` wedding_id (a couple with no bound wedding) yields `[]` — the collapse lives HERE so the

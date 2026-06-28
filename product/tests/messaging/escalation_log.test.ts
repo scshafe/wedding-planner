@@ -117,6 +117,17 @@ describe('EscalationLog', () => {
     expect(w.log.listForWedding(w.ctxA, undefined)).toEqual([])
   })
 
+  it('getByEscalationId finds the escalation by its public id within the tenant; miss/foreign-tenant → undefined', () => {
+    const w = makeWorld()
+    const rec = w.log.record(w.ctxA, inputFrom(w.port, 'wed_1', 'pm_1'))
+    // Hit: the minted escalation_id resolves to the record (the resolution path uses this to read wedding_id).
+    expect(w.log.getByEscalationId(w.ctxA, rec.escalation_id)).toEqual(rec)
+    // Miss: an unknown id → undefined.
+    expect(w.log.getByEscalationId(w.ctxA, 'escalation_nope')).toBeUndefined()
+    // Tenant-scoped: tenant B cannot reach tenant A's escalation by id (the scan is over B's empty partition).
+    expect(w.log.getByEscalationId(w.ctxB, rec.escalation_id)).toBeUndefined()
+  })
+
   it('is tenant-isolated: tenant B never sees tenant A escalations (no cross-tenant read)', () => {
     const w = makeWorld()
     w.log.record(w.ctxA, inputFrom(w.port, 'wed_1', 'pm_1'))

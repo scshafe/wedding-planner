@@ -56,3 +56,6 @@ export type { Guest } from './generated/guest'
 // keyed (tenant_id, provider_message_ref), read by the couple (their wedding) / planner (whole tenant). Only
 // `escalated` is recorded, never `refused`. See escalation_log.ts and ADR 0026.
 export type { GuestEscalation } from './generated/guest_escalation'
+// A handled-escalation record (Phase 27): the SEPARATE append-only resolution keyed (tenant_id, escalation_id)
+// that marks a guest_escalation resolved/dismissed WITHOUT mutating it (ADR 0026 F6 / ADR 0027). First-writer-wins.
+export type { EscalationResolution } from './generated/escalation_resolution'
