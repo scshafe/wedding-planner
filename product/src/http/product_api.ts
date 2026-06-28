@@ -92,6 +92,25 @@ const RESP_ACCEPTED: ApiResponse = deepFreeze({ status: 202, body: { status: 'ac
  */
 const RESP_RESOLVE_MISS: ApiResponse = deepFreeze({ status: 200, body: { resolved: false } })
 
+/**
+ * The escalation-REPLY miss response (Phase 28). ONE frozen, byte-identical `{replied:false}` returned on
+ * EVERY non-sending branch of a reply POST — the escalation is absent, a couple is replying outside their
+ * bound wedding, the escalation is ALREADY handled (resolved/dismissed → no second send/charge, and a
+ * `dismissed` escalation never dispatches a billed reply), OR the metered send raised a structured failure
+ * (margin/cost — the escalation stays Open + retryable). Sharing ONE constant across these branches makes the
+ * no-oracle STRUCTURAL: a couple cannot distinguish "no such escalation" from "an escalation in another
+ * wedding", and no foreign-wedding probe sends, bills, or records anything. A successful reply returns the
+ * distinct `{replied:true}`. Separate from RESP_RESOLVE_MISS (different body key) by design.
+ */
+const RESP_REPLY_MISS: ApiResponse = deepFreeze({ status: 200, body: { replied: false } })
+
+/**
+ * The hygiene cap on a console reply body (Phase 28). reply_text is TRUSTED operator input (an authenticated
+ * planner/couple), so this is bounds-checking, not a security gate — it keeps a single metered reply sane and
+ * fires as a masked 400 BEFORE the escalation lookup (independent of existence, so not an oracle).
+ */
+const REPLY_TEXT_MAX_LENGTH = 2000
+
 /** The dependencies the dispatch handlers may touch — DELIBERATELY excludes resolver/sessionStore. */
 export interface WeddingHandlerDeps {
   readonly weddings: WeddingRepository
@@ -135,21 +154,29 @@ export interface GuestHandlerDeps {
 }
 
 /**
- * The narrow bag handed to the escalation-inbox read handler (Phase 26) — read-only, so MINIMAL: just the
- * `escalations` log + the `authorizer` (reused for `manageScope` — escalation-visibility scope == guest-
- * management scope = the wedding partition). NO `weddings` (no referential-integrity read here, unlike
- * GuestHandlerDeps's register path); no resolver/sessionStore (structural handler purity).
+ * The bag handed to the escalation-inbox handlers. Read (Phase 26) + resolve (Phase 27) + reply (Phase 28),
+ * so it is now READ-WRITE: `escalations` + `resolutions` + the `authorizer` (reused for `manageScope` —
+ * escalation-visibility scope == guest-management scope = the wedding partition) + the metered `service` (the
+ * reply path's send). Still NO `weddings` (no referential-integrity read here, unlike GuestHandlerDeps's
+ * register path); no resolver/sessionStore (structural handler purity).
  */
 export interface EscalationHandlerDeps {
   readonly escalations: EscalationLog
   /**
    * Phase 27: the append-only handled-record log (resolved/dismissed). The read returns it alongside
-   * `escalations` (the consumer joins by `escalation_id`); the resolve mutation writes it. Keyed by
-   * `escalation_id`, scoped by the SAME `manageScope` branch as the escalations — so a couple's resolutions
+   * `escalations` (the consumer joins by `escalation_id`); the resolve AND the reply mutations write it. Keyed
+   * by `escalation_id`, scoped by the SAME `manageScope` branch as the escalations — so a couple's resolutions
    * array never carries a sibling wedding's record.
    */
   readonly resolutions: EscalationResolutionLog
   readonly authorizer: GuestAuthorizer
+  /**
+   * Phase 28: the metered send path for reply-from-the-inbox. The SAME `MessagingService` instance the inbound
+   * webhook uses (wired at compose), so a console reply and a guest reply meter/bill through one ledger. The
+   * reply is billed from OUR record (the Phase-18 firewall), never the provider; channel/recipient come from
+   * the LIVE escalation (never the request body), and the meter key is the deterministic `reply:${id}`.
+   */
+  readonly service: MessagingService
 }
 
 /** Everything the pipeline needs. resolver/sessionStore/operators live ONLY here, never in a handler. */
@@ -599,11 +626,14 @@ function dispatchGuests(
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Escalation-inbox dispatch (Phase 26 read + Phase 27 resolve). GET returns the principal's scoped
-// escalations AND their resolutions (the consumer joins by escalation_id); POST records a resolution
-// (resolved/dismissed); any other method is a 405 (the route exists tenant-independently, so 405 is not a
-// tenant oracle). Auth has already run in the pipeline (stages 3–4 before this), so route shape — including
-// the new POST verb — is not a pre-auth oracle.
+// Escalation-inbox dispatch (Phase 26 read + Phase 27 resolve + Phase 28 reply). GET returns the principal's
+// scoped escalations AND their resolutions (the consumer joins by escalation_id); POST is BOTH the resolve
+// and the reply mutation, discriminated by BODY SHAPE (house style — the verb is in the body, not the URL;
+// like guests' recipient_ref-in-the-body): a `reply_text` present -> reply (send + auto-resolve), else ->
+// resolve (status-based). The discrimination is on PRESENCE only and runs BEFORE either handler's field
+// validation, so a malformed reply and a malformed resolve both yield the SAME masked 400 independent of
+// escalation existence (no oracle). Any other method is a 405 (route exists tenant-independently, not a
+// tenant oracle). Auth has already run in the pipeline (stages 3–4), so route shape is not a pre-auth oracle.
 // ---------------------------------------------------------------------------------------------------
 
 function dispatchEscalations(
@@ -613,7 +643,12 @@ function dispatchEscalations(
   deps: EscalationHandlerDeps,
 ): ApiResponse {
   if (req.method === 'GET') return handleEscalationList(context, principal, deps)
-  if (req.method === 'POST') return handleEscalationResolve(context, principal, req, deps)
+  if (req.method === 'POST') {
+    const body = parseObjectBody(req.rawBody)
+    return body.reply_text !== undefined
+      ? handleEscalationReply(context, principal, body, deps)
+      : handleEscalationResolve(context, principal, body, deps)
+  }
   throw methodNotAllowed()
 }
 
@@ -657,11 +692,10 @@ function handleEscalationList(
 function handleEscalationResolve(
   context: TenantContext,
   principal: Principal,
-  req: ApiRequest,
+  body: Record<string, unknown>,
   deps: EscalationHandlerDeps,
 ): ApiResponse {
   const scope = deps.authorizer.manageScope(principal)
-  const body = parseObjectBody(req.rawBody)
   const escalation_id = requireString(body, 'escalation_id')
   const status = body.status
   // Inline enum check (F7) — same PRODUCT.BAD_REQUEST -> masked 400 a planner's malformed body yields; NOT a
@@ -681,6 +715,71 @@ function handleEscalationResolve(
     resolved_by: principal.role,
   })
   return { status: 200, body: { resolved: true } }
+}
+
+/**
+ * POST /t/:slug/escalations with a `reply_text` — reply to an escalated guest from the inbox (Phase 28): a
+ * console-initiated METERED send back to the guest, which AUTO-resolves the escalation (resolve-by-replying).
+ * The FIRST time MessagingService.send fires from a console action rather than the inbound webhook. Statement
+ * order is PINNED so the byte-identical miss is STRUCTURAL and NOTHING is sent/billed/recorded on a probe:
+ *   1. scope from the MINTED principal (manageScope);
+ *   2. read `escalation_id` + `reply_text` (required, non-empty) and bound the body length — these 400s fire
+ *      BEFORE the lookup, INDEPENDENT of existence (no oracle). ONLY these two fields are read from the body;
+ *      channel/recipient/wedding_id all come from the live escalation (a smuggled body field is inert);
+ *   3. look the escalation up by id within the tenant (getByEscalationId — tenant-scoped, never cross-tenant);
+ *   4. ABSENT -> RESP_REPLY_MISS; a COUPLE whose bound wedding != the escalation's -> the SAME RESP_REPLY_MISS
+ *      (BEFORE any send — a foreign-wedding probe dispatches/charges/records NOTHING; same no-oracle argument
+ *      as resolve);
+ *   5. ALREADY HANDLED (a resolution exists — resolved OR dismissed) -> RESP_REPLY_MISS, no send: a dismissed
+ *      escalation can never dispatch a billed guest message, and a double-submit is a single send (doddy F1/F2).
+ *      Reached only after the scope gate, so this read is not an oracle for a couple;
+ *   6. send the reply over the LIVE escalation's channel to its from_ref, billed from OUR record (the Phase-18
+ *      firewall), with the DETERMINISTIC per-escalation key `reply:${id}` (defense-in-depth single-charge). A
+ *      structured send failure (margin/cost) -> RESP_REPLY_MISS: the escalation stays Open + retryable (no
+ *      resolution recorded), not swallowed for an oracle (the caller is authed) but kept actionable; a genuine
+ *      bug still surfaces as 500;
+ *   7. COMMIT-AFTER-SUCCESS: only after the send succeeds, record a `resolved` resolution (wedding_id COPIED
+ *      from the live escalation, resolved_by the principal's role; first-writer-wins). -> { replied: true }.
+ */
+function handleEscalationReply(
+  context: TenantContext,
+  principal: Principal,
+  body: Record<string, unknown>,
+  deps: EscalationHandlerDeps,
+): ApiResponse {
+  const scope = deps.authorizer.manageScope(principal)
+  const escalation_id = requireString(body, 'escalation_id')
+  const reply_text = requireString(body, 'reply_text')
+  if (reply_text.length > REPLY_TEXT_MAX_LENGTH) {
+    throw new ProductError('PRODUCT.BAD_REQUEST', `Field 'reply_text' exceeds the ${REPLY_TEXT_MAX_LENGTH}-character limit.`, {})
+  }
+  const escalation = deps.escalations.getByEscalationId(context, escalation_id)
+  if (escalation === undefined) return RESP_REPLY_MISS
+  // A couple may reply ONLY to their bound wedding's escalations; a planner ({kind:'all'}) may reply to any.
+  if (scope.kind === 'wedding' && escalation.wedding_id !== scope.wedding_id) return RESP_REPLY_MISS
+  // Already handled (resolved/dismissed) -> no second send/charge, no billed reply to a dismissed escalation.
+  if (deps.resolutions.getByEscalationId(context, escalation_id) !== undefined) return RESP_REPLY_MISS
+  try {
+    deps.service.send(context.tenant_id, {
+      channel: escalation.channel, // from the LIVE escalation, never the body
+      recipient_ref: escalation.from_ref, // ditto — a smuggled recipient can't redirect the send
+      body: reply_text,
+      idempotency_key: `reply:${escalation_id}`, // deterministic: a re-submit meters/dispatches once
+    })
+  } catch (error) {
+    // A structured send failure leaves the escalation OPEN + retryable (no resolution recorded); byte-identical
+    // to the miss. A genuine (non-structured) bug still surfaces as a 500 at the edge.
+    if (error instanceof WeddingPlannerError) return RESP_REPLY_MISS
+    throw error
+  }
+  // Commit-after-success: the escalation is handled only because the reply went out.
+  deps.resolutions.resolve(context, {
+    escalation_id,
+    wedding_id: escalation.wedding_id, // copied from the live escalation, never the body
+    status: 'resolved',
+    resolved_by: principal.role,
+  })
+  return { status: 200, body: { replied: true } }
 }
 
 function handleGuestList(context: TenantContext, principal: Principal, deps: GuestHandlerDeps): ApiResponse {

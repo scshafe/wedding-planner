@@ -41,7 +41,7 @@ moves Open → Handled in one action ("resolve-by-replying"). Closes the guest�
   deterministic-key single-charge claim, commit-after-success ordering, the channel-on-escalation
   disclosure (does storing/using channel leak anything to the guest?). Apply findings before coding.
 
-- [ ] **Step 1 — `channel` on `guest_escalation` (schema + capture).**
+- [x] **Step 1 — `channel` on `guest_escalation` (schema + capture).** Done; 845 tests green.
   - Add required `channel` (enum, canonical `Channel`, drift-guard description) to
     `guest_escalation_schema.json`; `npm run gen:types` (GuestEscalation gains channel). Manifest count
     stays 20 (modification, not a new schema file).

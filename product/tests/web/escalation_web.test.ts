@@ -58,6 +58,7 @@ function makeWorld(): World {
   const adapter = new SimulatedMessagingAdapter(clock, new SequentialIdGenerator('seedM'))
   const escalations = new EscalationLog(store, new SequentialIdGenerator('seedEsc'))
   const resolutions = new EscalationResolutionLog(store, new SequentialIdGenerator('seedRes'), clock)
+  const messaging = new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS'))
   const guestAuthorizer = new GuestAuthorizer()
   const api = new ProductApi({
     resolver: new TenantContextResolver(store),
@@ -74,10 +75,10 @@ function makeWorld(): World {
       registry,
       weddings,
       responder: new DeterministicGuestQaResponder(),
-      service: new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS')),
+      service: messaging,
       escalations,
     },
-    escalations: { escalations, resolutions, authorizer: guestAuthorizer },
+    escalations: { escalations, resolutions, authorizer: guestAuthorizer, service: messaging },
   })
   return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store), csrf: sessions }), api }
 }

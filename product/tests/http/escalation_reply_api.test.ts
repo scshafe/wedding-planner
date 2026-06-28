@@ -1,4 +1,4 @@
-import { ManualClock, SequentialIdGenerator, type EscalationResolution, type GuestEscalation, type Tenant, type Wedding } from '@wedding-planner/shared'
+import { ManualClock, SequentialIdGenerator, type GuestEscalation, type Tenant, type Wedding } from '@wedding-planner/shared'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -25,12 +25,13 @@ import {
 } from '@wedding-planner/product'
 
 /**
- * Phase 27 — `POST /t/:slug/escalations` marks an escalation handled (resolved/dismissed) into a SEPARATE
- * append-only log (the guest_escalation is never mutated). The mutation is SCOPED like guest-remove and is
- * provably oracle-free for a couple: an absent escalation_id and a couple's foreign-wedding escalation_id BOTH
- * return the byte-identical `{resolved:false}` (the shared frozen RESP_RESOLVE_MISS) with NO record written. A
- * planner resolves any tenant escalation. Idempotent by escalation_id (first-writer-wins). The list returns the
- * resolutions scoped by the SAME manageScope branch as the escalations.
+ * Phase 28 — `POST /t/:slug/escalations` with a `reply_text` REPLIES to an escalated guest from the inbox: a
+ * console-initiated METERED send (through the SAME MessagingService the inbound webhook uses) that AUTO-records
+ * a `resolved` resolution. It is SCOPED like resolve and provably oracle-free for a couple: an absent
+ * escalation_id, a couple's foreign-wedding escalation_id, and an already-handled escalation ALL return the
+ * byte-identical `{replied:false}` (RESP_REPLY_MISS) with NO send, NO charge, NO record. channel + recipient
+ * come from the LIVE escalation (a smuggled body field is inert); the meter key is the deterministic
+ * `reply:${id}` so a double-submit meters/dispatches exactly once.
  */
 
 const THEME: Tenant['theme'] = {
@@ -43,6 +44,8 @@ const WH = 'wh-secret'
 
 interface World {
   api: ProductApi
+  messaging: MessagingService
+  resolver: TenantContextResolver
 }
 
 function makeWorld(): World {
@@ -80,7 +83,7 @@ function makeWorld(): World {
     },
     escalations: { escalations, resolutions, authorizer: guestAuthorizer, service: messaging },
   })
-  return { api }
+  return { api, messaging, resolver }
 }
 
 function req(method: string, path: string, opts: { token?: string; body?: unknown } = {}): ApiRequest {
@@ -108,65 +111,80 @@ function registerGuest(w: World, slug: string, plannerToken: string, ref: string
   expect(res.status).toBe(201)
 }
 
-/** Drive an UNANSWERABLE inbound (a parking question, no parking_info) -> records an escalation; return its id. */
-function escalate(w: World, slug: string, plannerToken: string, ref: string, providerRef: string): string {
+/** Drive an UNANSWERABLE inbound -> records an escalation; return its server-minted id. */
+function escalate(w: World, slug: string, plannerToken: string, ref: string, providerRef: string, channel = 'sms'): string {
   const res = w.api.handle({
     method: 'POST',
     path: `/t/${slug}/messaging/inbound`,
     headers: { authorization: `Bearer ${WH}` },
-    rawBody: JSON.stringify({ channel: 'sms', from_ref: ref, text: 'where do I park?', provider_message_ref: providerRef }),
+    rawBody: JSON.stringify({ channel, from_ref: ref, text: 'where do I park?', provider_message_ref: providerRef }),
   })
   expect(res.status).toBe(202)
-  // Read the escalation back (as a planner) to learn its server-minted escalation_id.
   const listed = w.api.handle(req('GET', `/t/${slug}/escalations`, { token: plannerToken }))
   const row = (listed.body as { escalations: GuestEscalation[] }).escalations.find((e) => e.provider_message_ref === providerRef)
   expect(row).toBeDefined()
   return row!.escalation_id
 }
 
-function resolve(w: World, slug: string, token: string, escalation_id: string, status = 'resolved'): ApiResponse {
-  return w.api.handle(req('POST', `/t/${slug}/escalations`, { token, body: { escalation_id, status } }))
+function reply(w: World, slug: string, token: string, escalation_id: string, reply_text = 'Parking is in lot B.'): ApiResponse {
+  return w.api.handle(req('POST', `/t/${slug}/escalations`, { token, body: { escalation_id, reply_text } }))
 }
 
-function listResolutions(w: World, slug: string, token: string): EscalationResolution[] {
-  const res = w.api.handle(req('GET', `/t/${slug}/escalations`, { token }))
-  expect(res.status).toBe(200)
-  return (res.body as { resolutions: EscalationResolution[] }).resolutions
+function usage(w: World, slug: string): ReturnType<MessagingService['usageView']> {
+  return w.messaging.usageView(w.resolver.resolveBySlug(slug).tenant_id)
 }
 
-describe('escalation resolve/dismiss mutation', () => {
+describe('escalation reply-from-the-inbox (Phase 28)', () => {
   let w: World
   beforeEach(() => {
     w = makeWorld()
   })
 
-  it('a planner resolves any tenant escalation; the resolution appears in the list scoped to it', () => {
+  it('a planner replies to any tenant escalation: a metered send goes out + the escalation is auto-resolved', () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
     const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
 
-    const res = resolve(w, 'alpha', planner, escId, 'dismissed')
+    const res = reply(w, 'alpha', planner, escId)
     expect(res.status).toBe(200)
-    expect(res.body).toEqual({ resolved: true })
+    expect(res.body).toEqual({ replied: true })
 
-    const resolutions = listResolutions(w, 'alpha', planner)
-    expect(resolutions).toHaveLength(1)
-    expect(resolutions[0]).toMatchObject({ escalation_id: escId, wedding_id: wedA, status: 'dismissed', resolved_by: 'planner' })
+    // The meter fired: ONE send to the guest's from_ref over the ask channel.
+    const u = usage(w, 'alpha')
+    expect(u.message_count).toBe(1)
+    expect(u.records[0]).toMatchObject({ recipient_ref: 'sms:+1', channel: 'sms' })
+    expect(u.billed_total_cents).toBeGreaterThan(0)
+
+    // Auto-resolved: it moves to the Handled set with status `resolved`, resolved_by the planner.
+    const listed = w.api.handle(req('GET', `/t/alpha/escalations`, { token: planner }))
+    const resolutions = (listed.body as { resolutions: { escalation_id: string; status: string; resolved_by: string }[] }).resolutions
+    expect(resolutions).toEqual([{ ...resolutions[0], escalation_id: escId, status: 'resolved', resolved_by: 'planner' }])
   })
 
-  it('a couple resolves ONLY their bound wedding escalation', () => {
+  it('a couple replies ONLY to their bound wedding escalation (resolved_by: couple)', () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
     const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
 
     const coupleA = login(w, 'alpha', { role: 'couple', wedding_id: wedA })
-    expect(resolve(w, 'alpha', coupleA, escId).body).toEqual({ resolved: true })
-    expect(listResolutions(w, 'alpha', coupleA)[0]).toMatchObject({ escalation_id: escId, resolved_by: 'couple' })
+    expect(reply(w, 'alpha', coupleA, escId).body).toEqual({ replied: true })
+    expect(usage(w, 'alpha').message_count).toBe(1)
+    const listed = w.api.handle(req('GET', `/t/alpha/escalations`, { token: coupleA }))
+    expect((listed.body as { resolutions: { resolved_by: string }[] }).resolutions[0]).toMatchObject({ resolved_by: 'couple' })
   })
 
-  it('F1: a couple resolving an ABSENT id and a SIBLING-WEDDING id get the BYTE-IDENTICAL {resolved:false}', () => {
+  it('the reply channel is the GUEST-chosen inbound channel (whatsapp asked -> whatsapp reply)', () => {
+    const planner = login(w, 'alpha', { role: 'planner' })
+    const wedA = makeWedding(w, 'alpha', planner)
+    registerGuest(w, 'alpha', planner, 'wa:+1', wedA)
+    const escId = escalate(w, 'alpha', planner, 'wa:+1', 'pm_w', 'whatsapp')
+    expect(reply(w, 'alpha', planner, escId).body).toEqual({ replied: true })
+    expect(usage(w, 'alpha').records[0]).toMatchObject({ recipient_ref: 'wa:+1', channel: 'whatsapp' })
+  })
+
+  it('NO-ORACLE: a couple replying to an ABSENT id and a SIBLING-WEDDING id get the BYTE-IDENTICAL {replied:false}, NO send', () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     const wedB = makeWedding(w, 'alpha', planner)
@@ -175,95 +193,67 @@ describe('escalation resolve/dismiss mutation', () => {
     const escB = escalate(w, 'alpha', planner, 'sms:+2', 'pm_B') // an escalation in wedding B
 
     const coupleA = login(w, 'alpha', { role: 'couple', wedding_id: wedA })
-    const absent = resolve(w, 'alpha', coupleA, 'escalation_does_not_exist')
-    const foreign = resolve(w, 'alpha', coupleA, escB) // a real id, but in a wedding the couple isn't bound to
-    // Same status AND byte-identical body — the resolve mutation is no cross-wedding existence oracle.
+    const absent = reply(w, 'alpha', coupleA, 'escalation_does_not_exist')
+    const foreign = reply(w, 'alpha', coupleA, escB)
     expect(absent.status).toBe(200)
     expect(foreign.status).toBe(200)
     expect(JSON.stringify(absent.body)).toBe(JSON.stringify(foreign.body))
-    expect(foreign.body).toEqual({ resolved: false })
+    expect(foreign.body).toEqual({ replied: false })
+    // The foreign-wedding probe sent/charged/recorded NOTHING.
+    expect(usage(w, 'alpha').message_count).toBe(0)
+    expect((w.api.handle(req('GET', `/t/alpha/escalations`, { token: planner })).body as { resolutions: unknown[] }).resolutions).toHaveLength(0)
   })
 
-  it('F2: a couple resolving a SIBLING-WEDDING escalation writes NO record', () => {
-    const planner = login(w, 'alpha', { role: 'planner' })
-    const wedA = makeWedding(w, 'alpha', planner)
-    const wedB = makeWedding(w, 'alpha', planner)
-    registerGuest(w, 'alpha', planner, 'sms:+2', wedB)
-    const escB = escalate(w, 'alpha', planner, 'sms:+2', 'pm_B')
-
-    const coupleA = login(w, 'alpha', { role: 'couple', wedding_id: wedA })
-    resolve(w, 'alpha', coupleA, escB)
-    // The planner (whole-tenant scope) sees NO resolution for escB — the foreign-wedding probe recorded nothing.
-    expect(listResolutions(w, 'alpha', planner)).toEqual([])
-  })
-
-  it('a body-smuggled wedding_id/resolved_by is inert — the record uses the escalation + the principal', () => {
+  it('single-charge: a double-submit of the SAME reply meters + dispatches exactly ONCE (deterministic key)', () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
     const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
 
-    const coupleA = login(w, 'alpha', { role: 'couple', wedding_id: wedA })
-    const res = w.api.handle(
-      req('POST', '/t/alpha/escalations', {
-        token: coupleA,
-        body: { escalation_id: escId, status: 'resolved', wedding_id: 'wed_HACK', resolved_by: 'planner', tenant_id: 'hack', resolution_id: 'res_HACK' },
-      }),
-    )
-    expect(res.body).toEqual({ resolved: true })
-    const stored = listResolutions(w, 'alpha', planner)[0]
-    expect(stored).toMatchObject({ escalation_id: escId, wedding_id: wedA, resolved_by: 'couple' }) // from trusted state, not the body
+    expect(reply(w, 'alpha', planner, escId).body).toEqual({ replied: true })
+    // The second submit finds the escalation already handled -> RESP_REPLY_MISS, no second send.
+    const second = reply(w, 'alpha', planner, escId, 'a different correction')
+    expect(second.body).toEqual({ replied: false })
+    expect(usage(w, 'alpha').message_count).toBe(1)
   })
 
-  it('is idempotent by escalation_id (first-writer-wins): a re-resolve/dismiss keeps the original record + status', () => {
+  it('an already-DISMISSED escalation cannot be replied to (no billed message to an ignored guest)', () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
     const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
-
-    expect(resolve(w, 'alpha', planner, escId, 'resolved').body).toEqual({ resolved: true })
-    // A later DISMISS is a no-op return-existing → still {resolved:true}, one record, original status sticks.
-    expect(resolve(w, 'alpha', planner, escId, 'dismissed').body).toEqual({ resolved: true })
-    const resolutions = listResolutions(w, 'alpha', planner)
-    expect(resolutions).toHaveLength(1)
-    expect(resolutions[0]!.status).toBe('resolved')
+    // Dismiss it first (status-based resolve), then attempt a reply.
+    expect(w.api.handle(req('POST', `/t/alpha/escalations`, { token: planner, body: { escalation_id: escId, status: 'dismissed' } })).body).toEqual({ resolved: true })
+    expect(reply(w, 'alpha', planner, escId).body).toEqual({ replied: false })
+    expect(usage(w, 'alpha').message_count).toBe(0)
+    // The recorded status is still `dismissed` (the reply did not override it).
+    const resolutions = (w.api.handle(req('GET', `/t/alpha/escalations`, { token: planner })).body as { resolutions: { status: string }[] }).resolutions
+    expect(resolutions[0]).toMatchObject({ status: 'dismissed' })
   })
 
-  it('a bad/absent status is a masked 400 — for a PRESENT and an ABSENT escalation_id alike (no existence oracle)', () => {
+  it('a malformed reply (missing/empty reply_text) is a masked 400 INDEPENDENT of existence (no oracle)', () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
     const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
-
-    expect(w.api.handle(req('POST', '/t/alpha/escalations', { token: planner, body: { escalation_id: escId, status: 'nope' } })).status).toBe(400)
-    expect(w.api.handle(req('POST', '/t/alpha/escalations', { token: planner, body: { escalation_id: 'absent', status: 'nope' } })).status).toBe(400)
-    expect(w.api.handle(req('POST', '/t/alpha/escalations', { token: planner, body: { escalation_id: escId } })).status).toBe(400)
+    // Present escalation, empty reply_text -> 400. Absent escalation, empty reply_text -> the SAME 400.
+    const present = w.api.handle(req('POST', `/t/alpha/escalations`, { token: planner, body: { escalation_id: escId, reply_text: '' } }))
+    const absent = w.api.handle(req('POST', `/t/alpha/escalations`, { token: planner, body: { escalation_id: 'nope', reply_text: '' } }))
+    expect(present.status).toBe(400)
+    expect(absent.status).toBe(400)
+    expect(JSON.stringify(present.body)).toBe(JSON.stringify(absent.body))
+    expect(usage(w, 'alpha').message_count).toBe(0)
   })
 
-  it('F4: a couple bound to wedding A never sees wedding B resolution in the resolutions array', () => {
-    const planner = login(w, 'alpha', { role: 'planner' })
-    const wedA = makeWedding(w, 'alpha', planner)
-    const wedB = makeWedding(w, 'alpha', planner)
-    registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    registerGuest(w, 'alpha', planner, 'sms:+2', wedB)
-    const escA = escalate(w, 'alpha', planner, 'sms:+1', 'pm_A')
-    const escB = escalate(w, 'alpha', planner, 'sms:+2', 'pm_B')
-    resolve(w, 'alpha', planner, escA)
-    resolve(w, 'alpha', planner, escB)
-
-    const coupleA = login(w, 'alpha', { role: 'couple', wedding_id: wedA })
-    const seen = listResolutions(w, 'alpha', coupleA)
-    expect(seen.map((r) => r.escalation_id)).toEqual([escA]) // only A's, never B's
-  })
-
-  it('is tenant-isolated: a beta planner cannot resolve an alpha escalation (absent in beta) → {resolved:false}', () => {
+  it('tenant isolation: a planner cannot reply to another tenant escalation (id is absent in their partition)', () => {
     const plannerA = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', plannerA)
     registerGuest(w, 'alpha', plannerA, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', plannerA, 'sms:+1', 'pm_1')
+    const escA = escalate(w, 'alpha', plannerA, 'sms:+1', 'pm_1')
 
     const plannerB = login(w, 'beta', { role: 'planner' })
-    expect(resolve(w, 'beta', plannerB, escId).body).toEqual({ resolved: false })
-    expect(listResolutions(w, 'beta', plannerB)).toEqual([])
+    expect(reply(w, 'beta', plannerB, escA).body).toEqual({ replied: false })
+    expect(usage(w, 'beta').message_count).toBe(0)
+    expect(usage(w, 'alpha').message_count).toBe(0)
   })
 })

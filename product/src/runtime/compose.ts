@@ -182,10 +182,11 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
       service: messaging,
       escalations,
     },
-    // The escalation inbox READ + RESOLVE surface (Phase 26 + 27) — the SAME log instances the inbound
-    // capture / resolve mutation write to, read-scoped by the guest authorizer's manageScope (planner: whole
-    // tenant; couple: their wedding).
-    escalations: { escalations, resolutions, authorizer: guestAuthorizer },
+    // The escalation inbox READ + RESOLVE + REPLY surface (Phase 26 + 27 + 28) — the SAME log instances the
+    // inbound capture / resolve / reply mutations write to, read-scoped by the guest authorizer's manageScope
+    // (planner: whole tenant; couple: their wedding). `service` is the SAME MessagingService the inbound path
+    // uses, so a console reply and a guest reply meter/bill through ONE ledger (Phase 28).
+    escalations: { escalations, resolutions, authorizer: guestAuthorizer, service: messaging },
     ...(config.championStrategy === undefined ? {} : { championStrategy: config.championStrategy }),
   })
   const themes = new ThemeResolver(tenants)

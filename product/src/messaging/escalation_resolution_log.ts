@@ -84,6 +84,19 @@ export class EscalationResolutionLog {
   }
 
   /**
+   * Whether this escalation has ALREADY been handled within the context's tenant — a direct, O(1) read of
+   * the (tenant_id, escalation_id)-keyed partition (the repo is keyed by escalation_id). Phase 28 uses it as
+   * the reply gate: a reply-from-the-inbox sends/bills NOTHING for an already-resolved OR already-dismissed
+   * escalation (so a `dismissed` escalation can never dispatch a billed guest message, and a double-submit is
+   * a single send). Tenant-scoped by construction; a foreign/absent id returns `undefined` (the caller masks
+   * absent and already-handled identically, so this is no existence oracle for a couple — it is reached ONLY
+   * after the couple's own-wedding scope gate passes).
+   */
+  getByEscalationId(context: TenantContext, escalation_id: string): EscalationResolution | undefined {
+    return this.#repo.read(context, escalation_id)
+  }
+
+  /**
    * The couple-facing slice: only the resolutions whose `wedding_id` matches, within the context's tenant. A
    * partition FILTER (mirrors escalation_log.ts / guest_registry.ts), NOT a probe. An `undefined` wedding_id (a
    * couple with no bound wedding) yields `[]` — the collapse lives HERE so the handler stays a pure scope-`kind`
