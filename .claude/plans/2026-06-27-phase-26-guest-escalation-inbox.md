@@ -136,7 +136,7 @@ route-to-couple" divergence the responder header already names).
   `listForWedding` scoping incl. `undefined → []`; tenant isolation (foreign context can't read); liveness
   (suspended tenant throws on every method). `npm run build && npm test && npm run lint` green.
 
-- [ ] **Step 2 — Capture at the inbound edge (`product_api.ts`).** Add `escalations: EscalationLog` to
+- [x] **Step 2 — Capture at the inbound edge (`product_api.ts`).** Add `escalations: EscalationLog` to
   `MessagingHandlerDeps`. In `handleInbound`, after the responder call, on `outcome.action === 'escalated'`
   call `deps.escalations.record(context, { wedding_id: binding.wedding_id, from_ref: message.sender_ref,
   text: message.body, received_at: message.received_at, provider_message_ref: message.provider_message_ref })`

@@ -102,6 +102,12 @@ export interface ComposedSurface {
    * how a compose-level test exercises `send` through the wired graph.
    */
   readonly messaging: MessagingService
+  /**
+   * Phase 26: the escalation inbox — the log of guest questions the platform could not answer. Exposed for
+   * tests/inspection (read over HTTP via `GET /t/:slug/escalations`); a compose-level e2e uses it to verify
+   * the guest->couple loop (an escalated question lands here, then a filled fact makes the next ask answerable).
+   */
+  readonly escalations: EscalationLog
 }
 
 /** The demo theme — an obvious offline placeholder (no real brand). Colors are lowercase 6-hex per contract. */
@@ -165,6 +171,9 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
       service: messaging,
       escalations,
     },
+    // The escalation inbox READ surface (Phase 26) — the SAME log instance the inbound capture writes to,
+    // read-scoped by the guest authorizer's manageScope (planner: whole tenant; couple: their wedding).
+    escalations: { escalations, authorizer: guestAuthorizer },
     ...(config.championStrategy === undefined ? {} : { championStrategy: config.championStrategy }),
   })
   const themes = new ThemeResolver(tenants)
@@ -205,5 +214,5 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     }
   }
 
-  return { ui, api, themes, operatorToken, demo, messaging }
+  return { ui, api, themes, operatorToken, demo, messaging, escalations }
 }

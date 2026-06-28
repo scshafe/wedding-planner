@@ -94,6 +94,7 @@ export {
   type GuestHandlerDeps,
   type AdminHandlerDeps,
   type MessagingHandlerDeps,
+  type EscalationHandlerDeps,
 } from './http/product_api'
 export { createProductApiServer, MAX_BODY_BYTES } from './http/node_server'
 

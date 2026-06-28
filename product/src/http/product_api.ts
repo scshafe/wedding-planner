@@ -124,6 +124,17 @@ export interface GuestHandlerDeps {
   readonly authorizer: GuestAuthorizer
 }
 
+/**
+ * The narrow bag handed to the escalation-inbox read handler (Phase 26) — read-only, so MINIMAL: just the
+ * `escalations` log + the `authorizer` (reused for `manageScope` — escalation-visibility scope == guest-
+ * management scope = the wedding partition). NO `weddings` (no referential-integrity read here, unlike
+ * GuestHandlerDeps's register path); no resolver/sessionStore (structural handler purity).
+ */
+export interface EscalationHandlerDeps {
+  readonly escalations: EscalationLog
+  readonly authorizer: GuestAuthorizer
+}
+
 /** Everything the pipeline needs. resolver/sessionStore/operators live ONLY here, never in a handler. */
 export interface ProductApiDeps {
   readonly resolver: TenantContextResolver
@@ -152,6 +163,13 @@ export interface ProductApiDeps {
    */
   readonly messaging?: MessagingHandlerDeps
   /**
+   * Phase 26: the couple/planner-facing escalation inbox read surface. Optional — like `messaging`, mounted
+   * only when wired; when absent `GET /t/:slug/escalations` is an unmounted-subresource 404. The SAME
+   * EscalationLog instance the inbound capture (`messaging.escalations`) writes to; `composeProductSurface`
+   * always wires both.
+   */
+  readonly escalations?: EscalationHandlerDeps
+  /**
    * Phase 17: the loop's champion strategy genome (injected — a `@wedding-planner/shared` value; the surface
    * never imports the loop). Projected ONCE to guidance in the constructor; absent ⇒ the strategy route 404s.
    */
@@ -167,6 +185,8 @@ export class ProductApi {
   readonly #webhookCredentials: ProviderWebhookCredentialStore
   /** The inbound reply-path collaborators (Phase 19), or undefined when the messaging channel is not wired. */
   readonly #messaging: MessagingHandlerDeps | undefined
+  /** The escalation-inbox read deps (Phase 26), or undefined when the inbox read surface is not wired. */
+  readonly #escalations: EscalationHandlerDeps | undefined
   /** The narrow bag handed to every wedding dispatch handler — no resolver/sessionStore. */
   readonly #handlerDeps: WeddingHandlerDeps
   /** The narrow bag handed to every guest-management handler (Phase 21) — no resolver/sessionStore. */
@@ -188,6 +208,7 @@ export class ProductApi {
     this.#operators = deps.operators
     this.#webhookCredentials = deps.webhookCredentials
     this.#messaging = deps.messaging
+    this.#escalations = deps.escalations
     this.#handlerDeps = { weddings: deps.weddings, authorizer: deps.authorizer }
     this.#guests = deps.guests
     this.#adminDeps = { onboarding: deps.onboarding }
@@ -250,6 +271,14 @@ export class ProductApi {
       if (segments.length === 3 && segments[2] === 'guests') {
         const principal = this.#authenticate(req, context)
         return dispatchGuests(context, principal, req, this.#guests)
+      }
+
+      // /t/:slug/escalations — PROTECTED read-only inbox (Phase 26): the guest questions the platform could not
+      // answer, scoped planner=whole-tenant / couple=their-wedding (manageScope). Stages 3–4 run BEFORE the
+      // method check (route shape is not a pre-auth oracle), exactly like `guests`. Mounted only when wired.
+      if (this.#escalations !== undefined && segments.length === 3 && segments[2] === 'escalations') {
+        const principal = this.#authenticate(req, context)
+        return dispatchEscalations(context, principal, req, this.#escalations)
       }
 
       // /t/:slug/messaging/... — the PROVIDER-WEBHOOK surface (Phase 19): an inbound guest message.
@@ -550,6 +579,37 @@ function dispatchGuests(
   if (req.method === 'POST') return handleGuestRegister(context, principal, req, deps)
   if (req.method === 'DELETE') return handleGuestRemove(context, principal, req, deps)
   throw methodNotAllowed()
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Escalation-inbox dispatch (Phase 26) — read-only. GET returns the principal's scoped escalations; any
+// other method is a 405 (the route exists tenant-independently, so 405 is not a tenant oracle). Auth has
+// already run in the pipeline (stages 3–4 before this), so route shape is not a pre-auth oracle.
+// ---------------------------------------------------------------------------------------------------
+
+function dispatchEscalations(
+  context: TenantContext,
+  principal: Principal,
+  req: ApiRequest,
+  deps: EscalationHandlerDeps,
+): ApiResponse {
+  if (req.method === 'GET') return handleEscalationList(context, principal, deps)
+  throw methodNotAllowed()
+}
+
+function handleEscalationList(
+  context: TenantContext,
+  principal: Principal,
+  deps: EscalationHandlerDeps,
+): ApiResponse {
+  // Scope from the MINTED principal (never the body), reusing manageScope: planner -> the whole tenant
+  // partition; couple -> only their bound wedding's escalations (the log filters; an unbound couple yields []).
+  const scope = deps.authorizer.manageScope(principal)
+  const escalations =
+    scope.kind === 'all'
+      ? deps.escalations.list(context)
+      : deps.escalations.listForWedding(context, scope.wedding_id)
+  return { status: 200, body: { escalations } }
 }
 
 function handleGuestList(context: TenantContext, principal: Principal, deps: GuestHandlerDeps): ApiResponse {
