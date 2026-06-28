@@ -164,4 +164,26 @@ export class BillingLedger {
       balance_cents: subscription_charges_cents + messaging_spend_cents - payments_cents,
     }
   }
+
+  /**
+   * Settle the tenant's owed balance (Phase 31 — the planner-facing "pay my balance" mutation): if the tenant
+   * owes money, record a SINGLE `payment` for EXACTLY the owed amount and report the settlement; otherwise record
+   * nothing. The amount is sourced from the tenant's OWN trusted fold ({@link balanceCents}) — there is NO caller-
+   * supplied amount, so the settled sum can never be smuggled, over-paid, or driven negative (a planner cannot
+   * mint a credit balance). `payment` is the existing credit kind (in lockstep with `FINANCIAL_KINDS` /
+   * `balanceCents` / the schema's per-kind `allOf` — this just records one, it changes neither the fold nor the
+   * contract), so the recorded amount is a strictly-positive integer and `record`'s assertValid always passes.
+   *
+   * ATOMICITY: the `balanceCents` read and the `record` append are ONE synchronous critical section (no
+   * `await`/yield between them). The `balance > 0` floor is the ONLY double-submit guard — a repeat call sees a
+   * zero balance and is a no-op (no second payment) — and that guard depends on this section staying synchronous;
+   * a future async split would re-open a double-pay, so keep it synchronous. (The offline sim is single-threaded.)
+   * Tenant-scoped by `tenant_id` alone (the partition), exactly like `balanceCents`/`summarize`.
+   */
+  settleBalance(tenant_id: string): { paid: boolean; amount_cents: number; balance_cents: number } {
+    const balance = this.balanceCents(tenant_id)
+    if (balance <= 0) return { paid: false, amount_cents: 0, balance_cents: balance }
+    this.record({ tenant_id, kind: 'payment', amount_cents: balance })
+    return { paid: true, amount_cents: balance, balance_cents: 0 }
+  }
 }

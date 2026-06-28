@@ -53,13 +53,24 @@ a `payment` for **exactly the trusted owed amount**), plus a CSRF-gated **Pay** 
 
 ## Steps
 
-- [ ] **Step 0 — Adversarial design review.** Route through a `general-purpose` agent carrying the doddy
-  (security/trust-boundary) + rigorous-architect (design) lens (the named specialists are not provisioned here).
-  Focus: (a) is the amount-from-trusted-balance construction genuinely un-smugglable; (b) double-submit / negative
-  balance safety; (c) the single-gate no-method-oracle claim; (d) the non-lifecycle ledger-writer concern; (e) the
-  CSRF/no-oracle parity with prior mutations. Fold any must-fix findings into the steps below before building.
+- [x] **Step 0 — Adversarial design review.** Routed through a `general-purpose` agent (doddy + rigorous-architect
+  lens; the named specialists are not provisioned here). Verdict **APPROVE-WITH-FIXES, no exploit** — the
+  amount-from-trusted-balance construction is genuinely un-smugglable (balance is structurally ≥ 0; `settleBalance`
+  takes only `tenant_id` and the POST handler reads nothing from the body), no new oracle, no cross-tenant/wedding
+  leak, the single-gate no-method-oracle is structural, and the non-lifecycle ledger writer follows the
+  `MessagingService.usage_charge` precedent without breaking the lockstep. Folded fixes:
+  - **P1-A (should):** make `settleBalance`'s read-then-record an explicit **synchronous critical section** in the
+    header (the balance floor is the only double-submit guard and depends on no `await`/yield between
+    `balanceCents` and `record`); the idempotent-double-call test is the pin.
+  - **P1-B (should):** `authorizeBillingView` now gates a **mutation** too — update its doc to state it is the
+    **billing-account capability** gating BOTH the read and the settle (planner-only), and that a separate pay
+    authorizer is deferred until a read-only billing role exists. Keep the name (renaming churns Phase 30); doc-only.
+  - **P2-A (nit):** reference the `payment`/`FINANCIAL_KINDS`/`balanceCents` lockstep in the `settleBalance` header
+    so the credit-direction dependency is discoverable from the new writer.
+  - **P2-B/C (nit):** `renderBilling` keeps the "(simulated)" label (offline-first honesty); the JSON test pins the
+    body-smuggled-`amount_cents`-is-inert regression.
 
-- [ ] **Step 1 — `settleBalance` on the ledger (billing domain).**
+- [x] **Step 1 — `settleBalance` on the ledger (billing domain).**
   - `BillingLedger.settleBalance(tenant_id): { paid: boolean; amount_cents: number; balance_cents: number }` —
     read `balanceCents(tenant_id)`; if `> 0`, `record({ tenant_id, kind: 'payment', amount_cents: balance })` and
     return `{ paid: true, amount_cents: balance, balance_cents: 0 }`; else return

@@ -221,6 +221,66 @@ describe('BillingLedger', () => {
     })
   })
 
+  describe('settleBalance (Phase 31 — pay the owed balance)', () => {
+    it('records a single payment for EXACTLY the owed balance and zeroes it', () => {
+      const ledger = newLedger()
+      ledger.record({ tenant_id: 'tnt_1', kind: 'usage_charge', amount_cents: 5 })
+      ledger.record({ tenant_id: 'tnt_1', kind: 'usage_charge', amount_cents: 6 })
+      expect(ledger.balanceCents('tnt_1')).toBe(11) // owed
+      const result = ledger.settleBalance('tnt_1')
+      expect(result).toEqual({ paid: true, amount_cents: 11, balance_cents: 0 })
+      expect(ledger.balanceCents('tnt_1')).toBe(0) // settled
+      // The recorded event is a payment of exactly the pre-call balance — the amount is from the trusted fold.
+      const events = ledger.eventsFor('tnt_1')
+      const last = events[events.length - 1]
+      expect(last?.kind).toBe('payment')
+      expect(last?.amount_cents).toBe(11)
+    })
+
+    it('settles a subscription charge + accrued usage together (the whole owed amount)', () => {
+      const ledger = newLedger()
+      ledger.record({ tenant_id: 'tnt_1', kind: 'charge', amount_cents: 9900 })
+      ledger.record({ tenant_id: 'tnt_1', kind: 'usage_charge', amount_cents: 7 })
+      expect(ledger.settleBalance('tnt_1')).toEqual({ paid: true, amount_cents: 9907, balance_cents: 0 })
+      expect(ledger.balanceCents('tnt_1')).toBe(0)
+    })
+
+    it('is a no-op when nothing is owed (records no event)', () => {
+      const ledger = newLedger()
+      ledger.record({ tenant_id: 'tnt_1', kind: 'charge', amount_cents: 9900 })
+      ledger.record({ tenant_id: 'tnt_1', kind: 'payment', amount_cents: 9900 }) // already settled
+      const before = ledger.eventsFor('tnt_1').length
+      expect(ledger.settleBalance('tnt_1')).toEqual({ paid: false, amount_cents: 0, balance_cents: 0 })
+      expect(ledger.eventsFor('tnt_1')).toHaveLength(before) // no payment appended
+    })
+
+    it('is a no-op for an unknown tenant (zero balance, nothing recorded)', () => {
+      const ledger = newLedger()
+      expect(ledger.settleBalance('tnt_unknown')).toEqual({ paid: false, amount_cents: 0, balance_cents: 0 })
+      expect(ledger.eventsFor('tnt_unknown')).toEqual([])
+    })
+
+    it('idempotent under double-submit — the balance floor guards the second call (no double-pay)', () => {
+      const ledger = newLedger()
+      ledger.record({ tenant_id: 'tnt_1', kind: 'usage_charge', amount_cents: 42 })
+      expect(ledger.settleBalance('tnt_1').paid).toBe(true)
+      const afterFirst = ledger.eventsFor('tnt_1').length
+      // The second call sees a zero balance and records nothing — no negative/credit balance.
+      expect(ledger.settleBalance('tnt_1')).toEqual({ paid: false, amount_cents: 0, balance_cents: 0 })
+      expect(ledger.eventsFor('tnt_1')).toHaveLength(afterFirst)
+      expect(ledger.balanceCents('tnt_1')).toBe(0)
+    })
+
+    it('settles only the named tenant (partitioned — never touches another tenant\'s balance)', () => {
+      const ledger = newLedger()
+      ledger.record({ tenant_id: 'tnt_a', kind: 'usage_charge', amount_cents: 5 })
+      ledger.record({ tenant_id: 'tnt_b', kind: 'usage_charge', amount_cents: 9 })
+      ledger.settleBalance('tnt_a')
+      expect(ledger.balanceCents('tnt_a')).toBe(0)
+      expect(ledger.balanceCents('tnt_b')).toBe(9) // untouched
+    })
+  })
+
   describe('buildBillingSummary (Phase 30 — the price-book join)', () => {
     it('joins the trusted plan tier (priced by the SAME monthlyPriceCents) onto a ledger fold', () => {
       const ledger = newLedger()
