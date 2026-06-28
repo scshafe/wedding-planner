@@ -113,7 +113,7 @@ route-to-couple" divergence the responder header already names).
   (decided: a SEPARATE append-only resolution record keyed by `escalation_id`, preserving the escalation record's
   immutability — NOT a mutation of `guest_escalation`).
 
-- [ ] **Step 1 — The contract (19th schema) + the log.** Add `product/schemas/guest_escalation_schema.json`
+- [x] **Step 1 — The contract (19th schema) + the log.** Add `product/schemas/guest_escalation_schema.json`
   (shape above). **F2: confirm the `received_at` format against the REAL port-stamped value** — check what the
   simulated adapter's `clock.now()` emits and what existing timestamp schemas (`wedding.created_at`,
   `billing_event.occurred_at`) declare; if the schema adds a `format`/`pattern` it MUST accept that exact value,

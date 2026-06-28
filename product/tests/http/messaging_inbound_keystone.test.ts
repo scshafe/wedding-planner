@@ -7,6 +7,7 @@ import {
   type ApiResponse,
   BillingLedger,
   DeterministicGuestQaResponder,
+  EscalationLog,
   GuestRegistry,
   InboundReceiptLog,
   MessagingService,
@@ -46,6 +47,7 @@ interface World {
   api: ProductApi
   service: MessagingService
   registry: GuestRegistry
+  escalations: EscalationLog
   resolver: TenantContextResolver
   weddings: WeddingRepository
   tenantAId: string
@@ -65,6 +67,7 @@ function makeWorld(): World {
   const adapter = new SimulatedMessagingAdapter(clock, new SequentialIdGenerator('seedAdpt'))
   const service = new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS'))
   const registry = new GuestRegistry(store)
+  const escalations = new EscalationLog(store, new SequentialIdGenerator('seedEsc'))
   const api = new ProductApi({
     resolver,
     sessionStore: new SessionStore(new SequentialIdGenerator('seedS')),
@@ -81,12 +84,14 @@ function makeWorld(): World {
       weddings,
       responder: new DeterministicGuestQaResponder(),
       service,
+      escalations,
     },
   })
   return {
     api,
     service,
     registry,
+    escalations,
     resolver,
     weddings,
     tenantAId: a.tenant_id,
@@ -217,5 +222,50 @@ describe('the guest inbound edge — keystone', () => {
     // Even though the schema blocks it, this proves the binding can never come from the body.
     expect(w.api.handle(inbound('alpha', payload({ wedding_id: 'wed_other' }))).status).toBe(400)
     expect(w.service.usageView(w.tenantAId).message_count).toBe(0)
+  })
+
+  // -------------------------------------------------------------------------------------------------
+  // Phase 26 — the escalation inbox. An `escalated` question is RECORDED (couple/planner read it); an
+  // `answered` or `refused` question records NOTHING. The wire stays the uniform 202 throughout.
+  // -------------------------------------------------------------------------------------------------
+
+  it('Phase 26 — an ESCALATED question records exactly one escalation, sourced from trusted state', () => {
+    const w = makeWorld()
+    const weddingId = seedGuestOnAlpha(w) // bare wedding: no parking_info -> a parking question escalates
+    expect(w.api.handle(inbound('alpha', payload({ text: 'where do I park?', provider_message_ref: 'pm_esc' })))).toEqual(ACCEPTED)
+    const recorded = w.escalations.list(w.ctxA)
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0]).toMatchObject({
+      tenant_id: w.tenantAId,
+      wedding_id: weddingId, // from the BINDING, never the body
+      from_ref: REF, // the message sender_ref (the guest's identity)
+      text: 'where do I park?',
+      provider_message_ref: 'pm_esc',
+    })
+  })
+
+  it('Phase 26 — an ANSWERED question records NO escalation (only unanswerable ones land in the inbox)', () => {
+    const w = makeWorld()
+    seedGuestOnAlpha(w)
+    expect(w.api.handle(inbound('alpha', payload({ text: 'when is the wedding?' })))).toEqual(ACCEPTED)
+    expect(w.service.usageView(w.tenantAId).message_count).toBe(1) // answered + metered
+    expect(w.escalations.list(w.ctxA)).toHaveLength(0)
+  })
+
+  it('Phase 26 — a REFUSED surprise probe records NO escalation (fact-independent; never persisted)', () => {
+    const w = makeWorld()
+    const wedding = w.weddings.create(w.ctxA, { couple_display_name: 'Alex & Sam', event_date: '2027-09-18', dress_code: 'Black tie' })
+    w.registry.register(w.ctxA, { recipient_ref: REF, wedding_id: wedding.wedding_id, guest_id: 'guest_1' })
+    expect(w.api.handle(inbound('alpha', payload({ text: 'what is the surprise?' })))).toEqual(ACCEPTED)
+    expect(w.escalations.list(w.ctxA)).toHaveLength(0) // refused is NOT recorded
+  })
+
+  it('Phase 26 — re-delivery of an escalated ref records exactly one escalation (idempotent by ref)', () => {
+    const w = makeWorld()
+    seedGuestOnAlpha(w)
+    const req = inbound('alpha', payload({ text: 'where do I park?', provider_message_ref: 'pm_dup' }))
+    expect(w.api.handle(req)).toEqual(ACCEPTED)
+    expect(w.api.handle(req)).toEqual(ACCEPTED) // same ref again
+    expect(w.escalations.list(w.ctxA)).toHaveLength(1)
   })
 })

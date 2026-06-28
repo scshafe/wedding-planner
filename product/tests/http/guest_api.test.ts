@@ -6,6 +6,7 @@ import {
   type ApiRequest,
   BillingLedger,
   DeterministicGuestQaResponder,
+  EscalationLog,
   GuestRegistry,
   InboundReceiptLog,
   MessagingService,
@@ -70,6 +71,7 @@ function makeWorld(): World {
       weddings,
       responder: new DeterministicGuestQaResponder(),
       service: new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS')),
+      escalations: new EscalationLog(store, new SequentialIdGenerator('seedEsc')),
     },
   })
   return { api }

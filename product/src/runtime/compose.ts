@@ -7,6 +7,7 @@ import { SessionStore } from '../auth/session_store'
 import { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import { BillingLedger } from '../billing/billing_ledger'
 import { ProductApi } from '../http/product_api'
+import { EscalationLog } from '../messaging/escalation_log'
 import { DeterministicGuestQaResponder } from '../messaging/guest_qa_responder'
 import { GuestRegistry } from '../messaging/guest_registry'
 import { InboundReceiptLog } from '../messaging/inbound_receipt_log'
@@ -142,6 +143,9 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const guestAuthorizer = new GuestAuthorizer()
   const inboundReceipts = new InboundReceiptLog(tenants, ids)
   const guestResponder = new DeterministicGuestQaResponder()
+  // The escalation inbox (Phase 26): an `escalated` question is recorded here and read by the couple (their
+  // wedding) / planner (whole tenant). ONE instance — the inbound capture writes it, the read surface reads it.
+  const escalations = new EscalationLog(tenants, ids)
 
   const api = new ProductApi({
     resolver,
@@ -159,6 +163,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
       weddings,
       responder: guestResponder,
       service: messaging,
+      escalations,
     },
     ...(config.championStrategy === undefined ? {} : { championStrategy: config.championStrategy }),
   })

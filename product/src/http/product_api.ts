@@ -18,6 +18,7 @@ import type { PlanTier } from '../billing/price_book'
 import type { OnboardingService } from '../onboarding/onboarding_service'
 import type { GuestQaResponder } from '../messaging/guest_qa_responder'
 import { projectGuestVisibleFacts } from '../messaging/guest_qa_responder'
+import type { EscalationLog } from '../messaging/escalation_log'
 import type { GuestRegistry } from '../messaging/guest_registry'
 import type { InboundReceiptLog } from '../messaging/inbound_receipt_log'
 import type { MessagingPort } from '../messaging/messaging_port'
@@ -97,7 +98,9 @@ export interface AdminHandlerDeps {
  * credential store (auth already passed in the pipeline). It carries exactly the collaborators the inbound
  * reply path orchestrates: the provider `port` (untrusted→domain normalize), the per-tenant inbound dedupe
  * `receipts`, the guest `registry` (segmentation), the tenant-scoped `weddings` (the bound facts), the
- * deterministic `responder`, and the metered `service` (the only path that bills).
+ * deterministic `responder`, the metered `service` (the only path that bills), and the `escalations` inbox
+ * (Phase 26 — an `escalated` question is recorded here so the couple/planner can read it; `refused`/`answered`
+ * are never recorded).
  */
 export interface MessagingHandlerDeps {
   readonly port: MessagingPort
@@ -106,6 +109,7 @@ export interface MessagingHandlerDeps {
   readonly weddings: WeddingRepository
   readonly responder: GuestQaResponder
   readonly service: MessagingService
+  readonly escalations: EscalationLog
 }
 
 /**
@@ -640,6 +644,10 @@ function dispatchMessaging(
  *   4. Decide from ONLY the guest-visible projection; on `answered`, send the reply through the METER with a
  *      PLATFORM-MINTED idempotency_key (never the untrusted provider ref), then mark the ref replied AFTER the
  *      send succeeds (doddy P1: commit-after-success — a send failure stays retryable and the ack stays 202).
+ *      On `escalated` (a question we could not answer), record it in the `escalations` inbox so the couple/
+ *      planner can read it (Phase 26) — idempotent by provider_message_ref, so a re-delivery records exactly
+ *      one. `refused` records NOTHING (the fact-independent surprise outcome; recording it would persist
+ *      surprise-probe content — see escalation_log.ts). EVERY branch still returns the SAME uniform 202.
  * Identity is sourced from trusted state ONLY — the registry's stored recipient_ref + the bound wedding_id,
  * never a body field — so a body-smuggled guest_id/wedding_id is inert.
  */
@@ -682,6 +690,20 @@ function handleInbound(context: TenantContext, req: ApiRequest, deps: MessagingH
     }
     // Commit-after-success: only now is the ref a no-op for future re-deliveries.
     deps.receipts.markReplied(context, message.provider_message_ref, replyId)
+  } else if (outcome.action === 'escalated') {
+    // Record the unanswerable question for the couple/planner inbox (Phase 26). Idempotent by
+    // provider_message_ref, so a re-delivery records exactly one. Sourced from TRUSTED state + the
+    // already-validated message ONLY (binding.wedding_id, message.sender_ref/body/received_at/ref), never the
+    // raw body. NOT swallowed to 202: record() cannot be provoked to throw by guest input that passed the
+    // inbound edge (its `text` constraint matches inbound_webhook.text), so a throw here is a genuine bug, not
+    // a guest-reachable oracle. `refused` records nothing (the fact-independent surprise outcome).
+    deps.escalations.record(context, {
+      wedding_id: binding.wedding_id,
+      from_ref: message.sender_ref,
+      text: message.body,
+      received_at: message.received_at,
+      provider_message_ref: message.provider_message_ref,
+    })
   }
   return RESP_ACCEPTED
 }
