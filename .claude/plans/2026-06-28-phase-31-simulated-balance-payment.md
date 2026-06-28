@@ -124,7 +124,7 @@ a `payment` for **exactly the trusted owed amount**), plus a CSRF-gated **Pay** 
     loop, demoable end-to-end).
   - Verify; commit.
 
-- [ ] **Step 4 — ADR 0031 + memory + handoff.** Write `docs/adr/0031-simulated-balance-payment.md` (the decisions
+- [x] **Step 4 — ADR 0031 + memory + handoff.** Write `docs/adr/0031-simulated-balance-payment.md` (the decisions
   above), add `.claude/memory/simulated-balance-payment.md` (+ index line in `MEMORY.md`, linking
   `[[planner-billing-view]]`), and update `.claude/handoff.local.md` (where things stand + the next ranked lever).
   Verify; commit.
