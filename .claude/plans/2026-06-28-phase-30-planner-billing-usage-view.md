@@ -63,7 +63,7 @@ contract (render-time projection, like `StrategyGuidance`/Phase 17 — **manifes
     the tenant-facing `monthly_price_cents`. `messaging_spend_cents` is `Σ usage_charge amounts` straight from the
     ledger (what was actually billed), never a `messagePriceCents` recomputation.
 
-- [ ] **Step 1 — The pure summary projection (billing domain).**
+- [x] **Step 1 — The pure summary projection (billing domain).**
   - `BillingLedger.summarize(tenant_id): LedgerSummary` — a single pass over the tenant's events:
     `messages_sent` (count of `usage_charge`), `messaging_spend_cents` (Σ `usage_charge`),
     `subscription_charges_cents` (Σ `charge`), `payments_cents` (Σ `payment`), and `balance_cents` (from the

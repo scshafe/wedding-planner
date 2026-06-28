@@ -187,6 +187,10 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     // (planner: whole tenant; couple: their wedding). `service` is the SAME MessagingService the inbound path
     // uses, so a console reply and a guest reply meter/bill through ONE ledger (Phase 28).
     escalations: { escalations, resolutions, authorizer: guestAuthorizer, service: messaging },
+    // The planner billing & usage summary (Phase 30): the ledger NARROWED to its read fold (`summarize`), the
+    // tenant store narrowed to `findById` (the trusted plan_tier of the caller's own tenant), and the
+    // management-capability authorizer for the planner-only gate. Always wired (a compose e2e pins reachability).
+    billing: { ledger: billing, tenants, authorizer: guestAuthorizer },
     ...(config.championStrategy === undefined ? {} : { championStrategy: config.championStrategy }),
   })
   const themes = new ThemeResolver(tenants)

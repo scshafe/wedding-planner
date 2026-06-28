@@ -14,6 +14,8 @@ import type { Principal } from '../auth/principal'
 import type { ProviderWebhookCredentialStore } from '../auth/provider_webhook_credential'
 import type { SessionStore } from '../auth/session_store'
 import type { WeddingAuthorizer } from '../auth/wedding_authorizer'
+import type { BillingLedger } from '../billing/billing_ledger'
+import { buildBillingSummary } from '../billing/billing_summary'
 import type { PlanTier } from '../billing/price_book'
 import type { OnboardingService } from '../onboarding/onboarding_service'
 import type { GuestQaResponder } from '../messaging/guest_qa_responder'
@@ -27,6 +29,7 @@ import type { MessagingService } from '../messaging/messaging_service'
 import { ProductError } from '../product_error'
 import { describeStrategy, type StrategyGuidance } from '../strategy/strategy_guidance'
 import type { TenantContext, TenantContextResolver } from '../tenant/tenant_context'
+import type { TenantStore } from '../tenant/tenant_store'
 import type { CreateWeddingInput, WeddingLogisticsField, WeddingRepository } from '../wedding/wedding_repository'
 import type { ApiRequest, ApiResponse } from './api_message'
 import { splitPath } from './path'
@@ -184,6 +187,19 @@ export interface EscalationHandlerDeps {
   readonly service: MessagingService
 }
 
+/**
+ * The narrow bag handed to the planner billing-summary handler (Phase 30). `ledger` is read NARROWED to the fold
+ * (`summarize` only — not `record`, so the read surface can never write a billing event); `tenants` is narrowed to
+ * `findById` ONLY (read the TRUSTED `plan_tier` of the caller's own tenant, keyed by `context.tenant_id` — never a
+ * body field); `authorizer` is the GuestAuthorizer (the management-capability home) for the planner-only gate. No
+ * resolver/sessionStore (structural handler purity); no `weddings` (billing is tenant-account, not per-wedding).
+ */
+export interface BillingHandlerDeps {
+  readonly ledger: Pick<BillingLedger, 'summarize'>
+  readonly tenants: Pick<TenantStore, 'findById'>
+  readonly authorizer: GuestAuthorizer
+}
+
 /** Everything the pipeline needs. resolver/sessionStore/operators live ONLY here, never in a handler. */
 export interface ProductApiDeps {
   readonly resolver: TenantContextResolver
@@ -219,6 +235,15 @@ export interface ProductApiDeps {
    */
   readonly escalations?: EscalationHandlerDeps
   /**
+   * Phase 30: the planner-facing billing & usage summary read surface. Optional — like `escalations`/`messaging`,
+   * mounted only when wired; when absent `GET /t/:slug/billing` is an unmounted-subresource 404.
+   * `composeProductSurface` ALWAYS wires it (a compose e2e pins that it is reachable on the demo tenant), so the
+   * optional shape is for test-fixture omission, not a real off state — billing visibility is core planner
+   * functionality. (Required would mean updating every hand-built ProductApi fixture; the established
+   * subresource convention here is "compose always wires it, tests inject when exercising".)
+   */
+  readonly billing?: BillingHandlerDeps
+  /**
    * Phase 17: the loop's champion strategy genome (injected — a `@wedding-planner/shared` value; the surface
    * never imports the loop). Projected ONCE to guidance in the constructor; absent ⇒ the strategy route 404s.
    */
@@ -236,6 +261,8 @@ export class ProductApi {
   readonly #messaging: MessagingHandlerDeps | undefined
   /** The escalation-inbox read deps (Phase 26), or undefined when the inbox read surface is not wired. */
   readonly #escalations: EscalationHandlerDeps | undefined
+  /** The planner billing-summary read deps (Phase 30), or undefined when not wired. */
+  readonly #billing: BillingHandlerDeps | undefined
   /** The narrow bag handed to every wedding dispatch handler — no resolver/sessionStore. */
   readonly #handlerDeps: WeddingHandlerDeps
   /** The narrow bag handed to every guest-management handler (Phase 21) — no resolver/sessionStore. */
@@ -258,6 +285,7 @@ export class ProductApi {
     this.#webhookCredentials = deps.webhookCredentials
     this.#messaging = deps.messaging
     this.#escalations = deps.escalations
+    this.#billing = deps.billing
     this.#handlerDeps = { weddings: deps.weddings, authorizer: deps.authorizer }
     this.#guests = deps.guests
     this.#adminDeps = { onboarding: deps.onboarding }
@@ -328,6 +356,15 @@ export class ProductApi {
       if (this.#escalations !== undefined && segments.length === 3 && segments[2] === 'escalations') {
         const principal = this.#authenticate(req, context)
         return dispatchEscalations(context, principal, req, this.#escalations)
+      }
+
+      // /t/:slug/billing — PROTECTED planner-only (Phase 30): the tenant's OWN billing & usage summary. Stages
+      // 3–4 (authenticate) run BEFORE any method/authorize check (route shape is not a pre-auth oracle — a
+      // byte-identical 401 for any method, like `strategy`). The summary is folded from the caller's own ledger
+      // keyed by `context.tenant_id` (the trusted minted context, never a body field). Mounted only when wired.
+      if (this.#billing !== undefined && segments.length === 3 && segments[2] === 'billing') {
+        const principal = this.#authenticate(req, context)
+        return dispatchBilling(context, principal, req, this.#billing)
       }
 
       // /t/:slug/messaging/... — the PROVIDER-WEBHOOK surface (Phase 19): an inbound guest message.
@@ -788,6 +825,32 @@ function handleEscalationReply(
     reply_text,
   })
   return { status: 200, body: { replied: true } }
+}
+
+/**
+ * GET /t/:slug/billing — the planner's OWN billing & usage summary (Phase 30). Statement order is PINNED:
+ *   1. authorize FIRST — `authorizeBillingView` is planner-only; a couple is `forbidden` -> 403 for ANY method
+ *      (the capability check precedes the method branch, so a couple can distinguish neither resource nor method;
+ *      billing is the whole tenant account, not a probed resource, so the 403 is no existence oracle);
+ *   2. method GET-only (only a planner reaches this) — else 405;
+ *   3. read the TRUSTED tenant by `context.tenant_id` (the minted partition key, NEVER a body/URL field — a
+ *      smuggled `tenant_id` is inert). The context was just minted from an active tenant this same request, so
+ *      `findById` always resolves; the `undefined` arm is defensive-only (masked 404, never a crash/oracle);
+ *   4. build the summary: the trusted `plan_tier` priced by `monthlyPriceCents` joined onto the tenant's own
+ *      ledger fold (`summarize(context.tenant_id)`). -> { billing: summary }.
+ */
+function dispatchBilling(
+  context: TenantContext,
+  principal: Principal,
+  req: ApiRequest,
+  deps: BillingHandlerDeps,
+): ApiResponse {
+  if (deps.authorizer.authorizeBillingView(principal) === 'forbidden') throw forbidden()
+  if (req.method !== 'GET') throw methodNotAllowed()
+  const tenant = deps.tenants.findById(context.tenant_id)
+  if (tenant === undefined) return RESP_NOT_FOUND // defensive: unreachable for a freshly-minted context
+  const billing = buildBillingSummary(tenant.plan_tier, deps.ledger.summarize(context.tenant_id))
+  return { status: 200, body: { billing } }
 }
 
 function handleGuestList(context: TenantContext, principal: Principal, deps: GuestHandlerDeps): ApiResponse {

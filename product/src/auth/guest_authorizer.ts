@@ -51,6 +51,20 @@ export class GuestAuthorizer {
     return principal.role === 'planner' ? 'allow' : 'forbidden'
   }
 
+  /**
+   * View the tenant's billing & usage summary (Phase 30). Planner only — billing is a TENANT-ACCOUNT capability
+   * (not a per-wedding resource), so a couple lacks it ENTIRELY (`forbidden` -> 403), exactly like
+   * {@link authorizeRegister}. Because no specific resource is being probed (the account IS the whole tenant), the
+   * 403 is no existence oracle; the handler checks it BEFORE the method branch, so a couple cannot distinguish
+   * methods either. This authorizer is the intra-tenant MANAGEMENT-capability home (it already owns
+   * `authorizeRegister` + the `manageScope` reused by the escalation inbox), so the account-level billing
+   * capability fits here rather than on the wedding-resource authorizer. Returns a decision — never throws.
+   */
+  authorizeBillingView(principal: Principal): AccessDecision {
+    assertMintedPrincipal(principal)
+    return principal.role === 'planner' ? 'allow' : 'forbidden'
+  }
+
   /** How to scope list/remove for this principal (planner: whole tenant; couple: their bound wedding). */
   manageScope(principal: Principal): GuestScope {
     assertMintedPrincipal(principal)
