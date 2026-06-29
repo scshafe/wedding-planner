@@ -279,3 +279,88 @@ describe('the guest inbound edge — keystone', () => {
     expect(w.escalations.list(w.ctxA)).toHaveLength(1)
   })
 })
+
+// An unknown-topic text (no keyword) always escalates; distinct refs = distinct messages.
+const ESC1 = { text: 'Can I bring my dog?', provider_message_ref: 'pmr_e1' }
+const ESC2 = { text: 'Do you have a gift list?', provider_message_ref: 'pmr_e2' }
+
+describe('Phase 35 — guest-reply → thread correlation', () => {
+  it('a follow-up escalation from a guest with an OPEN escalation THREADS into it (sender:guest, no new escalation, no send)', () => {
+    const w = makeWorld()
+    seedGuestOnAlpha(w)
+    expect(w.api.handle(inbound('alpha', payload(ESC1)))).toEqual(ACCEPTED) // opens E1
+    expect(w.api.handle(inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED) // threads into E1
+    expect(w.escalations.list(w.ctxA)).toHaveLength(1) // NOT a second escalation
+    const thread = w.replies.list(w.ctxA)
+    expect(thread).toHaveLength(1)
+    expect(thread[0]).toMatchObject({ sender: 'guest', body: ESC2.text, provider_message_ref: ESC2.provider_message_ref })
+    expect(thread[0]?.escalation_id).toBe(w.escalations.list(w.ctxA)[0]?.escalation_id)
+    expect(w.service.usageView(w.tenantAId).message_count).toBe(0) // a guest turn is RECEIVED — no metered send
+  })
+
+  it('§B0 the COMMON break: re-delivery of a freshly-escalated message does NOT spawn a spurious guest turn', () => {
+    const w = makeWorld()
+    seedGuestOnAlpha(w)
+    expect(w.api.handle(inbound('alpha', payload(ESC1)))).toEqual(ACCEPTED) // opens E1 (now OPEN)
+    expect(w.api.handle(inbound('alpha', payload(ESC1)))).toEqual(ACCEPTED) // SAME ref re-delivered
+    expect(w.escalations.list(w.ctxA)).toHaveLength(1)
+    expect(w.replies.list(w.ctxA)).toHaveLength(0) // the gate no-ops it; NOT threaded into E1
+  })
+
+  it('re-delivery of a THREADED follow-up is idempotent (one guest turn)', () => {
+    const w = makeWorld()
+    seedGuestOnAlpha(w)
+    w.api.handle(inbound('alpha', payload(ESC1))) // E1
+    w.api.handle(inbound('alpha', payload(ESC2))) // threads
+    w.api.handle(inbound('alpha', payload(ESC2))) // re-delivery of the follow-up
+    expect(w.replies.list(w.ctxA)).toHaveLength(1)
+  })
+
+  it('a RESOLVED escalation does not receive the follow-up — a new conversation opens a fresh escalation', () => {
+    const w = makeWorld()
+    const weddingId = seedGuestOnAlpha(w)
+    w.api.handle(inbound('alpha', payload(ESC1))) // E1
+    const e1 = w.escalations.list(w.ctxA)[0]
+    w.resolutions.resolve(w.ctxA, { escalation_id: e1!.escalation_id, wedding_id: weddingId, status: 'resolved', resolved_by: 'couple' })
+    expect(w.api.handle(inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED) // no OPEN escalation -> fresh
+    expect(w.escalations.list(w.ctxA)).toHaveLength(2) // E2 opened
+    expect(w.replies.list(w.ctxA)).toHaveLength(0) // not threaded
+  })
+
+  it('§B0 the CROSS-RESOLVE break: a threaded follow-up re-delivered AFTER its escalation is resolved is a no-op (not a fresh escalation)', () => {
+    const w = makeWorld()
+    const weddingId = seedGuestOnAlpha(w)
+    w.api.handle(inbound('alpha', payload(ESC1))) // E1
+    w.api.handle(inbound('alpha', payload(ESC2))) // threads ESC2 into E1
+    const e1 = w.escalations.list(w.ctxA)[0]
+    w.resolutions.resolve(w.ctxA, { escalation_id: e1!.escalation_id, wedding_id: weddingId, status: 'resolved', resolved_by: 'couple' })
+    w.api.handle(inbound('alpha', payload(ESC2))) // re-delivery of the threaded follow-up after resolve
+    expect(w.escalations.list(w.ctxA)).toHaveLength(1) // guestTurnByProviderRef no-ops it — NO duplicate escalation
+    expect(w.replies.list(w.ctxA)).toHaveLength(1)
+  })
+
+  it('cross-wedding re-bind: after a guest moves A->B, a follow-up opens a FRESH escalation in B (never threads into A)', () => {
+    const w = makeWorld()
+    const weddingA = seedGuestOnAlpha(w)
+    w.api.handle(inbound('alpha', payload(ESC1))) // E1 OPEN in wedding A
+    // Re-bind the same ref from wedding A to a new wedding B (remove then register — register rejects a dup ref).
+    const weddingB = w.weddings.create(w.ctxA, { couple_display_name: 'Bee & Cee', event_date: '2028-02-02' })
+    expect(w.registry.remove(w.ctxA, REF)).toBe(true)
+    w.registry.register(w.ctxA, { recipient_ref: REF, wedding_id: weddingB.wedding_id, guest_id: 'guest_2' })
+    w.api.handle(inbound('alpha', payload(ESC2))) // now bound to B
+    expect(w.replies.list(w.ctxA)).toHaveLength(0) // NEVER threaded into A's open E1
+    const fresh = w.escalations.list(w.ctxA).find((e) => e.provider_message_ref === ESC2.provider_message_ref)
+    expect(fresh?.wedding_id).toBe(weddingB.wedding_id) // the new escalation is in wedding B
+    expect(weddingB.wedding_id).not.toBe(weddingA)
+  })
+
+  it('an ANSWERED follow-up still sends a metered reply and does NOT thread (deferral pinned)', () => {
+    const w = makeWorld()
+    seedGuestOnAlpha(w)
+    w.api.handle(inbound('alpha', payload(ESC1))) // opens E1
+    expect(w.api.handle(inbound('alpha', payload({ text: 'when is the wedding?', provider_message_ref: 'pmr_ans' })))).toEqual(ACCEPTED)
+    expect(w.service.usageView(w.tenantAId).message_count).toBe(1) // answered + metered
+    expect(w.replies.list(w.ctxA)).toHaveLength(0) // an auto-answer is NOT threaded
+    expect(w.escalations.list(w.ctxA)).toHaveLength(1) // E1 stays open, unchanged
+  })
+})
