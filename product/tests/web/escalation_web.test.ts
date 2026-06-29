@@ -175,8 +175,37 @@ describe('escalation inbox web page (?view=escalations) + resolve flow', () => {
     const after = get(ui, '/t/acme?view=escalations', cookie).body
     expect(after).toContain('Handled')
     expect(after).toContain('Resolved by planner')
-    // The question is no longer Open — no action form remains.
-    expect(after).not.toContain('action="/t/acme/escalations/resolve"')
+    // The question is no longer Open — no Resolve/Dismiss buttons or Reply form, but a Reopen affordance (Phase 36).
+    expect(after).not.toContain('value="resolved"')
+    expect(after).not.toContain('value="dismissed"')
+    expect(after).not.toContain('action="/t/acme/escalations/reply"')
+    expect(after).toContain('>Reopen<')
+  })
+
+  it('Phase 36: a planner resolves → reopens → replies, all via the browser forms (the full loop)', () => {
+    const { ui, api, messaging, store } = makeWorld()
+    seedEscalation(api, 'acme')
+    const cookie = loginCookie(ui, 'acme', 'planner')
+    const escId = escalationIdFrom(get(ui, '/t/acme?view=escalations', cookie).body)
+    const tenantId = new TenantContextResolver(store).resolveBySlug('acme').tenant_id
+
+    // Resolve.
+    const p1 = get(ui, '/t/acme?view=escalations', cookie).body
+    expect(postForm(ui, '/t/acme/escalations/resolve', { _csrf: csrfFrom(p1), escalation_id: escId, status: 'resolved' }, cookie).status).toBe(303)
+    expect(get(ui, '/t/acme?view=escalations', cookie).body).toContain('Handled')
+
+    // Reopen (the new affordance) → back to Open.
+    const p2 = get(ui, '/t/acme?view=escalations', cookie).body
+    expect(p2).toContain('>Reopen<')
+    expect(postForm(ui, '/t/acme/escalations/resolve', { _csrf: csrfFrom(p2), escalation_id: escId, status: 'reopened' }, cookie).status).toBe(303)
+    const reopened = get(ui, '/t/acme?view=escalations', cookie).body
+    expect(reopened).not.toContain('Handled')
+    expect(reopened).toContain('action="/t/acme/escalations/reply"') // Reply form is back
+
+    // Reply on the reopened escalation → a metered send (the keystone-conditional path, end to end).
+    expect(messaging.usageView(tenantId).message_count).toBe(0)
+    expect(postForm(ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(reopened), escalation_id: escId, reply_text: 'Lot B.', seq: '0' }, cookie).status).toBe(303)
+    expect(messaging.usageView(tenantId).message_count).toBe(1)
   })
 
   it('a forged CSRF resolve is masked 403 and performs NO mutation (stays Open)', () => {

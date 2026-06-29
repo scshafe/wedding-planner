@@ -203,14 +203,41 @@ describe('generic constants', () => {
     expect(out).toContain('via sms') // the channel is shown so the operator knows how the reply goes out
   })
 
-  it('renderEscalations moves a HANDLED question into a Handled section (status badge, no action form)', () => {
+  it('renderEscalations moves a HANDLED question into a Handled section (status badge + a Reopen form, no Resolve/Dismiss)', () => {
     const resolution: EscalationResolution = { resolution_id: 'res_1', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq: 0, status: 'dismissed', resolved_by: 'planner', resolved_at: '2027-05-02T00:00:00.000Z' }
     const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [resolution], [], 'csrf-xyz')
     expect(out).toContain('Handled')
     expect(out).toContain('Dismissed by planner')
-    // A handled row carries NO Resolve/Dismiss form (the only form action on the page is gone when nothing is open).
-    expect(out).not.toContain('action="/t/acme/escalations/resolve"')
+    // Phase 36: a handled row carries a Reopen form (status=reopened, no reply_text → routes to resolve, not reply)
+    // but NO Resolve/Dismiss buttons (those only appear on open rows).
+    expect(out).toContain('action="/t/acme/escalations/resolve"')
+    expect(out).toContain('value="reopened"')
+    expect(out).toContain('>Reopen<')
+    expect(out).not.toContain('value="resolved"')
+    expect(out).not.toContain('value="dismissed"')
+    expect(out).not.toContain('action="/t/acme/escalations/reply"') // a handled row offers no reply form
     expect(out).toContain('No open questions')
+  })
+
+  it('Phase 36: a resolved-then-reopened escalation renders in the OPEN column (effective-open, max-seq reopened)', () => {
+    const resolved: EscalationResolution = { resolution_id: 'res_0', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq: 0, status: 'resolved', resolved_by: 'planner', resolved_at: '2027-05-02T00:00:00.000Z' }
+    const reopened: EscalationResolution = { resolution_id: 'res_1', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq: 1, status: 'reopened', resolved_by: 'planner', resolved_at: '2027-05-02T00:01:00.000Z' }
+    // Pass out-of-seq-order to prove the fold uses MAX-seq, not last-in-array.
+    const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [reopened, resolved], [], 'csrf-xyz')
+    // Effective-open → an open row with Resolve/Dismiss + Reply forms, NOT a handled row / badge.
+    expect(out).toContain('value="resolved"')
+    expect(out).toContain('value="dismissed"')
+    expect(out).toContain('action="/t/acme/escalations/reply"')
+    expect(out).not.toContain('Handled') // no handled section
+    expect(out).not.toContain('Reopen') // no reopen affordance on an already-open row
+  })
+
+  it('Phase 36: a resolved→reopened→dismissed escalation renders HANDLED (max-seq dismissed)', () => {
+    const mk = (seq: number, status: EscalationResolution['status']): EscalationResolution => ({ resolution_id: `res_${seq}`, tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq, status, resolved_by: 'planner', resolved_at: '2027-05-02T00:00:00.000Z' })
+    const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [mk(0, 'resolved'), mk(1, 'reopened'), mk(2, 'dismissed')], [], 'csrf-xyz')
+    expect(out).toContain('Handled')
+    expect(out).toContain('Dismissed by planner')
+    expect(out).toContain('>Reopen<') // a Reopen affordance on the handled row
   })
 
   it('Phase 34: an OPEN row renders its reply THREAD and the form seq = thread length (multi-turn)', () => {
@@ -264,6 +291,9 @@ describe('generic constants', () => {
     expect(countOpenEscalations([ESC_1, esc2], [])).toBe(2)
     expect(countOpenEscalations([ESC_1, esc2], [resolution])).toBe(1) // esc_1 handled → only esc_2 open
     expect(countOpenEscalations([], [])).toBe(0)
+    // Phase 36: a reopened escalation (max-seq reopened) counts as OPEN again — the fold uses max-seq.
+    const reopened: EscalationResolution = { ...resolution, resolution_id: 'res_2', seq: 1, status: 'reopened' }
+    expect(countOpenEscalations([ESC_1, esc2], [resolution, reopened])).toBe(2) // esc_1 reopened → open again
   })
 
   it('renderLanding is tenant-independent (no theme)', () => {

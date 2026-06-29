@@ -263,27 +263,44 @@ export function renderGuests(
 }
 
 /**
- * The escalation_id → resolution join shared by the inbox (open/handled split) and the home (open-count). The
- * resolution log is append-only / first-writer-wins, so at most one resolution per escalation_id. SINGLE-SOURCING
- * the join here keeps the home's "N guest questions need attention" count and the inbox's Open/Handled split using
- * ONE definition of "handled" — they can never drift (Phase 33).
+ * The escalation_id → EFFECTIVE-transition join shared by the inbox (open/handled split) and the home
+ * (open-count). The resolution log is an append-only TRANSITION history (Phase 36) — MANY rows per escalation_id
+ * — so this folds to the HIGHEST-`seq` row per escalation (NOT `new Map(...)` last-in-array, which would mislabel
+ * a reopened escalation depending on insertion order). SINGLE-SOURCING the fold here keeps the home's "N guest
+ * questions need attention" count and the inbox's Open/Handled split using ONE definition of "handled" — they can
+ * never drift (Phase 33). The effective status is read off the returned record by {@link isEffectiveOpen}.
  */
-function resolutionIndex(resolutions: readonly EscalationResolution[]): Map<string, EscalationResolution> {
-  return new Map(resolutions.map((r) => [r.escalation_id, r]))
+function effectiveTransitionByEscalation(resolutions: readonly EscalationResolution[]): Map<string, EscalationResolution> {
+  const byEscalation = new Map<string, EscalationResolution>()
+  for (const r of resolutions) {
+    const current = byEscalation.get(r.escalation_id)
+    if (current === undefined || r.seq > current.seq) byEscalation.set(r.escalation_id, r)
+  }
+  return byEscalation
 }
 
 /**
- * The count of OPEN escalations (those with no resolution) within the supplied — already scoped — arrays. Folds
- * BOTH arrays from the one scoped `GET /t/:slug/escalations` body (an escalation WITH a resolution is handled, so
- * counting `escalations.length` alone would over-count). Used by the home overview; uses the SAME `resolutionIndex`
- * join the inbox renders, so the count and the inbox's Open list always agree.
+ * Whether an escalation is effective-OPEN given its highest-`seq` transition (or `undefined` if never handled):
+ * no transition OR a `reopened` max-`seq` row ⇒ open (in the inbox); a `resolved`/`dismissed` max-`seq` ⇒ handled.
+ * The ONE definition both the open-count and the inbox split read.
+ */
+function isEffectiveOpen(effective: EscalationResolution | undefined): boolean {
+  return effective === undefined || effective.status === 'reopened'
+}
+
+/**
+ * The count of OPEN escalations within the supplied — already scoped — arrays. Folds BOTH arrays from the one
+ * scoped `GET /t/:slug/escalations` body (a handled escalation must not be counted, so counting
+ * `escalations.length` alone would over-count). Used by the home overview; uses the SAME effective-transition
+ * fold the inbox renders, so the count and the inbox's Open list always agree (incl. a reopened escalation,
+ * which counts as open).
  */
 export function countOpenEscalations(
   escalations: readonly GuestEscalation[],
   resolutions: readonly EscalationResolution[],
 ): number {
-  const handled = resolutionIndex(resolutions)
-  return escalations.reduce((n, e) => (handled.has(e.escalation_id) ? n : n + 1), 0)
+  const effective = effectiveTransitionByEscalation(resolutions)
+  return escalations.reduce((n, e) => (isEffectiveOpen(effective.get(e.escalation_id)) ? n + 1 : n), 0)
 }
 
 /**
@@ -392,16 +409,17 @@ export function renderEscalations(
   replies: readonly EscalationReply[],
   csrfToken: string,
 ): string {
-  // Join by escalation_id: an escalation with a resolution is HANDLED; the rest are OPEN (the single-sourced
-  // definition lives in `resolutionIndex` — the home's open-count uses the SAME join so the two can't drift).
-  // NOTE: open-count is intentionally REPLY-AGNOSTIC — a replied-but-unresolved escalation stays OPEN /
-  // needs-attention until an explicit resolve/dismiss; do NOT subtract replies from the open set.
-  const resolutionOf = resolutionIndex(resolutions)
+  // Fold by escalation_id to the EFFECTIVE transition (Phase 36 — many transition rows per escalation): an
+  // escalation whose max-`seq` row is resolved/dismissed is HANDLED; no row OR a `reopened` max-`seq` is OPEN
+  // (the single-sourced definition lives in `isEffectiveOpen` — the home's open-count uses the SAME fold so the
+  // two can't drift). NOTE: open-count is intentionally REPLY-AGNOSTIC — a replied-but-unresolved escalation
+  // stays OPEN / needs-attention until an explicit resolve/dismiss; do NOT subtract replies from the open set.
+  const effectiveOf = effectiveTransitionByEscalation(resolutions)
   const threadOf = threadsByEscalation(replies)
-  const open = escalations.filter((e) => !resolutionOf.has(e.escalation_id))
-  const handled = escalations.filter((e) => resolutionOf.has(e.escalation_id))
+  const open = escalations.filter((e) => isEffectiveOpen(effectiveOf.get(e.escalation_id)))
+  const handled = escalations.filter((e) => !isEffectiveOpen(effectiveOf.get(e.escalation_id)))
 
-  const actionForm = (escalationId: string, status: 'resolved' | 'dismissed', label: string): SafeHtml =>
+  const actionForm = (escalationId: string, status: 'resolved' | 'dismissed' | 'reopened', label: string): SafeHtml =>
     html`<form class="inline" method="post" action="/t/${slug}/escalations/resolve">${csrfField(csrfToken)}<input type="hidden" name="escalation_id" value="${escalationId}"><input type="hidden" name="status" value="${status}"><button type="submit">${label}</button></form>`
 
   // The reply THREAD (Phase 34): each turn as a "Sender: body" line, escaped via `html` like every other value.
@@ -437,14 +455,20 @@ export function renderEscalations(
   </div>`,
   )
   const handledRows = handled.map((e) => {
-    const r = resolutionOf.get(e.escalation_id) as EscalationResolution
+    // `effectiveOf` always has a row here (a handled escalation has a max-`seq` resolved/dismissed row), and its
+    // status is NEVER `reopened` (a reopened escalation is effective-open → it renders in the OPEN column above,
+    // never here — so the badge can only be Resolved/Dismissed; `reopened` is structurally unreachable here).
+    const r = effectiveOf.get(e.escalation_id) as EscalationResolution
     const badge = r.status === 'resolved' ? 'Resolved' : 'Dismissed'
     // Phase 34: show the full reply thread beneath the guest's question — the question→answer transcript.
     // Each operator `body` is interpolated as plain TEXT through `html` (escaped exactly like e.text).
+    // Phase 36: a Reopen form (CSRF) returns a handled escalation to the Open inbox so it can be replied to again
+    // — posts status=reopened to the SAME /escalations/resolve route (no reply_text → routes to resolve).
     return html`<div class="card">
     <div><strong>“${e.text}”</strong> <span class="note">— ${badge} by ${r.resolved_by}</span></div>
     ${threadView(e.escalation_id)}
     <div class="note">From <code>${e.from_ref}</code> · ${e.received_at}</div>
+    <div class="inline">${actionForm(e.escalation_id, 'reopened', 'Reopen')}</div>
   </div>`
   })
 

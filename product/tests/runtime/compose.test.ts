@@ -391,7 +391,11 @@ describe('composeProductSurface — Phase 27 e2e: resolving an escalation clears
     expect(resolved.status).toBe(303)
     const after = ui.handle({ method: 'GET', path: '/t/demo?view=escalations', headers: { cookie } })
     expect(after.body).toContain('Resolved by couple')
-    expect(after.body).not.toContain('action="/t/demo/escalations/resolve"') // nothing Open left
+    // Nothing Open left: no Resolve/Dismiss buttons or Reply form (Phase 36 leaves a Reopen affordance on the
+    // handled row, which posts to /escalations/resolve — so we assert the OPEN-only affordances are gone).
+    expect(after.body).not.toContain('value="resolved"')
+    expect(after.body).not.toContain('value="dismissed"')
+    expect(after.body).not.toContain('action="/t/demo/escalations/reply"')
 
     // Idempotent first-writer-wins: a LATER dismiss (fresh CSRF) is a no-op — the recorded status stays 'resolved'.
     // The Open form is gone, so the dismiss is posted directly; the page then still shows 'Resolved', never 'Dismissed'.
