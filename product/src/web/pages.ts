@@ -263,6 +263,95 @@ export function renderGuests(
 }
 
 /**
+ * The escalation_id → resolution join shared by the inbox (open/handled split) and the home (open-count). The
+ * resolution log is append-only / first-writer-wins, so at most one resolution per escalation_id. SINGLE-SOURCING
+ * the join here keeps the home's "N guest questions need attention" count and the inbox's Open/Handled split using
+ * ONE definition of "handled" — they can never drift (Phase 33).
+ */
+function resolutionIndex(resolutions: readonly EscalationResolution[]): Map<string, EscalationResolution> {
+  return new Map(resolutions.map((r) => [r.escalation_id, r]))
+}
+
+/**
+ * The count of OPEN escalations (those with no resolution) within the supplied — already scoped — arrays. Folds
+ * BOTH arrays from the one scoped `GET /t/:slug/escalations` body (an escalation WITH a resolution is handled, so
+ * counting `escalations.length` alone would over-count). Used by the home overview; uses the SAME `resolutionIndex`
+ * join the inbox renders, so the count and the inbox's Open list always agree.
+ */
+export function countOpenEscalations(
+  escalations: readonly GuestEscalation[],
+  resolutions: readonly EscalationResolution[],
+): number {
+  const handled = resolutionIndex(resolutions)
+  return escalations.reduce((n, e) => (handled.has(e.escalation_id) ? n : n + 1), 0)
+}
+
+/**
+ * The principal-scoped figures the home overview renders — every one a COUNT/aggregate derived from a read the
+ * principal is already authorized for at its existing scope (weddings/escalations/guests, and the planner-only
+ * billing). It carries NO row detail and NO id, so it discloses strictly less than the views it links to. The
+ * optional `billing` is present ONLY for a planner (a couple's `GET /billing` is a 403 → the card is omitted, an
+ * affordance, not a masked value).
+ */
+export interface AccountOverview {
+  readonly weddingsCount: number
+  readonly openQuestionsCount: number
+  readonly guestsCount: number
+  readonly billing?: { readonly balanceCents: number; readonly planTier: string }
+}
+
+/**
+ * The themed account HOME / overview (Phase 33) — the default `/t/:slug` landing and the console's hub. An
+ * at-a-glance "what needs attention" summary: open guest questions (highlighted when any await handling), the
+ * weddings/guests counts, and — for a planner only — the owed balance + plan, each a card that links into the
+ * matching view. EVERY figure is a pure {@link AccountOverview} count composed at the web edge from the existing
+ * scoped reads, so the page discloses only the union of those reads (no new oracle). The billing card renders iff
+ * `overview.billing` is present (planner); a couple simply sees no billing card. Carries the Sign-out form, so it
+ * issues the per-session CSRF token like every other authenticated page. All values flow through the `html` template.
+ */
+export function renderHome(
+  theme: Tenant['theme'],
+  slug: string,
+  overview: AccountOverview,
+  csrfToken: string,
+): string {
+  const attention =
+    overview.openQuestionsCount > 0
+      ? html`<p><strong>${`${overview.openQuestionsCount} need attention`}</strong></p>`
+      : html`<p class="note">All caught up — no open guest questions.</p>`
+  const billingCard =
+    overview.billing === undefined
+      ? html``
+      : html`<div class="card">
+    <h3><a href="/t/${slug}?view=billing">Billing &amp; usage →</a></h3>
+    <p><strong>${`${dollars(overview.billing.balanceCents)} owed`}</strong> · <span class="status">${overview.billing.planTier}</span></p>
+  </div>`
+  return themedShell(
+    theme,
+    slug,
+    'Home',
+    html`<div style="display:flex;justify-content:space-between;align-items:center">
+    <h2>Overview</h2>
+    <form class="inline" method="post" action="/t/${slug}/logout">${csrfField(csrfToken)}<button type="submit">Sign out</button></form>
+  </div>
+  <div class="card">
+    <h3><a href="/t/${slug}?view=escalations">Guest questions →</a></h3>
+    ${attention}
+  </div>
+  <div class="card">
+    <h3><a href="/t/${slug}?view=weddings">Weddings →</a></h3>
+    <p>${`${overview.weddingsCount} wedding(s)`}</p>
+  </div>
+  <div class="card">
+    <h3><a href="/t/${slug}?view=guests">Guests →</a></h3>
+    <p>${`${overview.guestsCount} registered guest(s)`}</p>
+  </div>
+  ${billingCard}
+  <p><a href="/t/${slug}/strategy">View the planning strategy →</a></p>`,
+  )
+}
+
+/**
  * The themed escalation-inbox page (Phase 26 read + Phase 27 resolve): the questions guests asked that the
  * platform could not answer, split into OPEN (still to handle) and HANDLED (resolved/dismissed). Each OPEN row
  * carries a CSRF-protected Reply form (Phase 28 — a metered send back to the guest that auto-resolves) plus
@@ -281,9 +370,9 @@ export function renderEscalations(
   resolutions: readonly EscalationResolution[],
   csrfToken: string,
 ): string {
-  // Join by escalation_id: an escalation with a resolution is HANDLED; the rest are OPEN. The resolution log is
-  // append-only/first-writer-wins, so at most one resolution per escalation_id.
-  const resolutionOf = new Map(resolutions.map((r) => [r.escalation_id, r]))
+  // Join by escalation_id: an escalation with a resolution is HANDLED; the rest are OPEN (the single-sourced
+  // definition lives in `resolutionIndex` — the home's open-count uses the SAME join so the two can't drift).
+  const resolutionOf = resolutionIndex(resolutions)
   const open = escalations.filter((e) => !resolutionOf.has(e.escalation_id))
   const handled = escalations.filter((e) => resolutionOf.has(e.escalation_id))
 

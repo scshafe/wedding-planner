@@ -4,13 +4,16 @@ import { describe, expect, it } from 'vitest'
 import { NEUTRAL_COLOR } from '../../src/web/html'
 import type { BillingActivityEntry } from '../../src/billing/billing_activity'
 import type { BillingSummary } from '../../src/billing/billing_summary'
+import type { AccountOverview } from '../../src/web/pages'
 import {
+  countOpenEscalations,
   ERROR_500,
   GENERIC_404,
   renderBilling,
   renderConsole,
   renderDetail,
   renderEscalations,
+  renderHome,
   renderLanding,
   renderLogin,
 } from '../../src/web/pages'
@@ -242,6 +245,14 @@ describe('generic constants', () => {
     expect(out).toContain('&lt;script&gt;')
   })
 
+  it('countOpenEscalations counts only escalations with no resolution (folds both arrays)', () => {
+    const esc2: GuestEscalation = { ...ESC_1, escalation_id: 'esc_2', provider_message_ref: 'pm_2' }
+    const resolution: EscalationResolution = { resolution_id: 'res_1', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', status: 'resolved', resolved_by: 'planner', resolved_at: '2027-05-02T00:00:00.000Z' }
+    expect(countOpenEscalations([ESC_1, esc2], [])).toBe(2)
+    expect(countOpenEscalations([ESC_1, esc2], [resolution])).toBe(1) // esc_1 handled → only esc_2 open
+    expect(countOpenEscalations([], [])).toBe(0)
+  })
+
   it('renderLanding is tenant-independent (no theme)', () => {
     const out = renderLanding()
     expect(out).toContain('white-label')
@@ -335,5 +346,64 @@ describe('renderBilling (Phase 30)', () => {
     ]
     const out = renderBilling(SAFE_THEME, 'acme', SUMMARY, hostile, 'csrf-tok')
     assertNoLiveMarkup(out, 'billing activity')
+  })
+})
+
+describe('renderHome (Phase 33)', () => {
+  const PLANNER_OVERVIEW = {
+    weddingsCount: 2,
+    openQuestionsCount: 3,
+    guestsCount: 5,
+    billing: { balanceCents: 1500, planTier: 'studio' },
+  } as const
+
+  it('shows the weddings/guests/open-questions counts with deep links into each view', () => {
+    const out = renderHome(SAFE_THEME, 'acme', PLANNER_OVERVIEW, 'csrf-home')
+    expect(out).toContain('2 wedding(s)')
+    expect(out).toContain('5 registered guest(s)')
+    expect(out).toContain('3 need attention')
+    expect(out).toContain('/t/acme?view=escalations')
+    expect(out).toContain('/t/acme?view=weddings')
+    expect(out).toContain('/t/acme?view=guests')
+    expect(out).toContain('/t/acme/strategy')
+    // Carries the Sign-out form with the CSRF token (an authenticated page).
+    expect(out).toContain('action="/t/acme/logout"')
+    expect(out).toContain('name="_csrf" value="csrf-home"')
+  })
+
+  it('renders the planner-only billing card (owed balance + plan) when overview.billing is present', () => {
+    const out = renderHome(SAFE_THEME, 'acme', PLANNER_OVERVIEW, 'csrf-home')
+    expect(out).toContain('/t/acme?view=billing')
+    expect(out).toContain('$15.00 owed')
+    expect(out).toContain('studio')
+  })
+
+  it('OMITS the billing card entirely for a couple (overview.billing absent) — an affordance, not a masked value', () => {
+    const coupleOverview: AccountOverview = { weddingsCount: 1, openQuestionsCount: 0, guestsCount: 4 }
+    const out = renderHome(SAFE_THEME, 'acme', coupleOverview, 'csrf-home')
+    expect(out).not.toContain('?view=billing')
+    expect(out).not.toContain('owed')
+    // Still a complete page with the other cards.
+    expect(out).toContain('1 wedding(s)')
+    expect(out).toContain('4 registered guest(s)')
+  })
+
+  it('shows an "All caught up" note (no highlight) when there are no open questions', () => {
+    const calm: AccountOverview = { weddingsCount: 1, openQuestionsCount: 0, guestsCount: 0 }
+    const out = renderHome(SAFE_THEME, 'acme', calm, 'csrf-home')
+    expect(out).toContain('All caught up')
+    expect(out).not.toContain('need attention')
+  })
+
+  it('escapes the themed brand AND a hostile plan tier on the home (no live markup, defense-in-depth)', () => {
+    const evilOverview: AccountOverview = {
+      weddingsCount: 1,
+      openQuestionsCount: 1,
+      guestsCount: 1,
+      billing: { balanceCents: 100, planTier: '<script>alert(1)</script>' },
+    }
+    const out = renderHome(EVIL_THEME, 'acme', evilOverview, 'csrf-home')
+    assertNoLiveMarkup(out, 'home/theme+plan_tier')
+    expect(out).toContain('&lt;script&gt;')
   })
 })
