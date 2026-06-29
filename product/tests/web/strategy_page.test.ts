@@ -124,7 +124,8 @@ describe('GET /t/:slug/strategy — the themed planning-strategy page', () => {
 
   it('the console links to the strategy page', () => {
     const { ui } = makeUi({ champion: CHAMPION })
-    const html = bodyOf(get(ui, '/t/acme', loginCookie(ui, 'acme', 'planner')))
+    // Phase 33: the wedding list (which carries the strategy nav link) relocated to ?view=weddings.
+    const html = bodyOf(get(ui, '/t/acme?view=weddings', loginCookie(ui, 'acme', 'planner')))
     expect(html).toContain('/t/acme/strategy')
     expect(html).toMatch(/planning strategy/i)
   })

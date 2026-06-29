@@ -118,7 +118,7 @@ describe('wedding create browser flow + CSRF', () => {
   it('a planner creates a wedding (with logistics) via the form; PRG redirect then it is listed + detailed', () => {
     const { ui } = makeWorld()
     const cookie = loginCookie(ui, 'acme', 'planner')
-    const csrf = csrfFrom(get(ui, '/t/acme', cookie).body)
+    const csrf = csrfFrom(get(ui, '/t/acme?view=weddings', cookie).body)
 
     const created = postForm(
       ui,
@@ -127,9 +127,9 @@ describe('wedding create browser flow + CSRF', () => {
       cookie,
     )
     expect(created.status).toBe(303)
-    expect(created.headers.location).toBe('/t/acme')
+    expect(created.headers.location).toBe('/t/acme?view=weddings')
 
-    const list = get(ui, '/t/acme', cookie).body
+    const list = get(ui, '/t/acme?view=weddings', cookie).body
     expect(list).toContain('Alex &amp; Sam')
     // The logistics field round-trips to the detail page.
     const id = /href="\/t\/acme\?wedding=([^"]+)"/.exec(list)?.[1] as string
@@ -140,7 +140,7 @@ describe('wedding create browser flow + CSRF', () => {
     const { ui, api } = makeWorld()
     const own = createWedding(api, 'acme', 'Own Couple')
     const cookie = loginCookie(ui, 'acme', 'couple', own)
-    const csrf = csrfFrom(get(ui, '/t/acme', cookie).body)
+    const csrf = csrfFrom(get(ui, '/t/acme?view=weddings', cookie).body)
 
     const res = postForm(
       ui,
@@ -151,7 +151,7 @@ describe('wedding create browser flow + CSRF', () => {
     expect(res.status).toBe(403)
     expect(res.body).toContain('Not allowed')
     // The planner still sees exactly the one pre-existing wedding.
-    expect(get(ui, '/t/acme', loginCookie(ui, 'acme', 'planner')).body).not.toContain('Sneaky New')
+    expect(get(ui, '/t/acme?view=weddings', loginCookie(ui, 'acme', 'planner')).body).not.toContain('Sneaky New')
   })
 
   it('a forged CSRF token on create is rejected (403) and creates NO wedding', () => {
@@ -164,13 +164,13 @@ describe('wedding create browser flow + CSRF', () => {
       cookie,
     )
     expect(res.status).toBe(403)
-    expect(get(ui, '/t/acme', cookie).body).toContain('No weddings to show')
+    expect(get(ui, '/t/acme?view=weddings', cookie).body).toContain('No weddings to show')
   })
 
   it('an invalid create body re-renders the console with a GENERIC notice (400, no leak)', () => {
     const { ui } = makeWorld()
     const cookie = loginCookie(ui, 'acme', 'planner')
-    const csrf = csrfFrom(get(ui, '/t/acme', cookie).body)
+    const csrf = csrfFrom(get(ui, '/t/acme?view=weddings', cookie).body)
     const res = postForm(
       ui,
       '/t/acme/weddings/create',
@@ -179,7 +179,7 @@ describe('wedding create browser flow + CSRF', () => {
     )
     expect(res.status).toBe(400)
     expect(res.body).toContain('could not be created')
-    expect(get(ui, '/t/acme', cookie).body).toContain('No weddings to show')
+    expect(get(ui, '/t/acme?view=weddings', cookie).body).toContain('No weddings to show')
   })
 
   it('a malformed slug masks to GENERIC_404 BEFORE any CSRF verdict (no tenant-existence oracle)', () => {
@@ -259,10 +259,10 @@ describe('wedding edit browser flow + CSRF', () => {
   it('a blank optional on the CREATE form is just unset (create omits empties — no "" clear sentinel on POST)', () => {
     const { ui } = makeWorld()
     const cookie = loginCookie(ui, 'acme', 'planner')
-    const csrf = csrfFrom(get(ui, '/t/acme', cookie).body)
+    const csrf = csrfFrom(get(ui, '/t/acme?view=weddings', cookie).body)
     const res = postForm(ui, '/t/acme/weddings/create', { _csrf: csrf, couple_display_name: 'Blank Optionals', event_date: '2029-09-12', status: 'planning', dress_code: '', venue_name: '' }, cookie)
     expect(res.status).toBe(303) // created, not a 400 — the empty optionals are omitted, not sent as ''
-    const listed = get(ui, '/t/acme', cookie).body
+    const listed = get(ui, '/t/acme?view=weddings', cookie).body
     expect(listed).toContain('Blank Optionals')
   })
 
@@ -288,7 +288,7 @@ describe('wedding edit browser flow + CSRF', () => {
   it('an EMPTY wedding_id update is byte-identical to a non-owned/missing id (no raw 405 oracle)', () => {
     const { ui } = makeWorld()
     const cookie = loginCookie(ui, 'acme', 'planner')
-    const csrf = csrfFrom(get(ui, '/t/acme', cookie).body)
+    const csrf = csrfFrom(get(ui, '/t/acme?view=weddings', cookie).body)
     const res = postForm(
       ui,
       '/t/acme/weddings/update',
@@ -303,7 +303,7 @@ describe('wedding edit browser flow + CSRF', () => {
     const { ui, api } = makeWorld()
     const victim = createWedding(api, 'acme', 'Victim')
     const cookie = loginCookie(ui, 'acme', 'planner')
-    const csrf = csrfFrom(get(ui, '/t/acme', cookie).body)
+    const csrf = csrfFrom(get(ui, '/t/acme?view=weddings', cookie).body)
     for (const evil of [`${victim}/../../sessions`, '../sessions', 'a/weddings/b']) {
       const res = postForm(
         ui,

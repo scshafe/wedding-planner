@@ -87,7 +87,9 @@ describe('web_server (integration)', () => {
     expect(cookie).toContain('HttpOnly')
     const token = /wp_session=([^;]+)/.exec(cookie)?.[1] ?? ''
 
-    const console_ = await fetch(`${base}/t/acme`, { headers: { cookie: `wp_session=${token}` } })
+    // Phase 33: the wedding list relocated to ?view=weddings (the home — which composes the escalations/billing
+    // reads not wired in this minimal fixture — is the default). This proves the authenticated HTML round-trip.
+    const console_ = await fetch(`${base}/t/acme?view=weddings`, { headers: { cookie: `wp_session=${token}` } })
     expect(console_.status).toBe(200)
     expect(await console_.text()).toContain('Weddings')
   })

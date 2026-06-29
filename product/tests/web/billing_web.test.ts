@@ -282,3 +282,65 @@ describe('billing activity card (Phase 32 — the itemized line items)', () => {
     expect(res.body).not.toContain('<h2>Activity</h2>')
   })
 })
+
+/**
+ * Phase 33 — the account HOME / overview (the default /t/:slug). A web-layer composition of the existing scoped
+ * reads: open guest questions, weddings/guests counts, and a PLANNER-ONLY billing card. Uses the full compose
+ * surface (escalations wired) so the home gate's three reads (weddings/escalations/guests) all return 200.
+ */
+describe('account home overview (default /t/:slug — Phase 33)', () => {
+  it('a planner home shows the weddings/guests/open-questions counts AND the billing card', () => {
+    const { ui, api } = makeWorld()
+    seedEscalation(api, 'acme') // one wedding + one guest + one OPEN escalation
+    const cookie = loginCookie(ui, 'acme', 'planner')
+    const home = get(ui, '/t/acme', cookie)
+    expect(home.status).toBe(200)
+    expect(home.body).toContain('1 wedding(s)')
+    expect(home.body).toContain('1 registered guest(s)')
+    expect(home.body).toContain('1 need attention')
+    // The planner-only billing card (links to ?view=billing, shows the owed balance + plan).
+    expect(home.body).toContain('?view=billing')
+    expect(home.body).toContain('$0.00 owed')
+    expect(home.body).toContain('solo')
+    // The hub links to every spoke.
+    expect(home.body).toContain('?view=escalations')
+    expect(home.body).toContain('?view=weddings')
+    expect(home.body).toContain('?view=guests')
+  })
+
+  it('a couple home is 200 (NOT 403) with the overview scoped to their wedding and NO billing card', () => {
+    const { ui, api } = makeWorld()
+    const weddingId = seedEscalation(api, 'acme')
+    const cookie = loginCookie(ui, 'acme', 'couple', weddingId)
+    const home = get(ui, '/t/acme', cookie)
+    expect(home.status).toBe(200) // P1: a couple's billing 403 must NOT turn the whole home into a Forbidden wall
+    expect(home.body).toContain('1 wedding(s)')
+    expect(home.body).toContain('1 registered guest(s)')
+    expect(home.body).toContain('1 need attention')
+    // The billing card is OMITTED for a couple (a capability affordance, not a masked value).
+    expect(home.body).not.toContain('?view=billing')
+    expect(home.body).not.toContain('owed')
+  })
+
+  it('the open-questions count drops to 0 once the escalation is resolved (single-sourced "open" join)', () => {
+    const { ui, api } = makeWorld()
+    seedEscalation(api, 'acme')
+    const cookie = loginCookie(ui, 'acme', 'planner')
+    expect(get(ui, '/t/acme', cookie).body).toContain('1 need attention')
+    // Resolve it via the inbox Resolve form, then the home count drops.
+    const inbox = get(ui, '/t/acme?view=escalations', cookie).body as string
+    postForm(ui, '/t/acme/escalations/resolve', { _csrf: csrfFrom(inbox), escalation_id: escalationIdFrom(inbox), status: 'resolved' }, cookie)
+    const home = get(ui, '/t/acme', cookie).body as string
+    expect(home).not.toContain('need attention')
+    expect(home).toContain('All caught up')
+  })
+
+  it('the home gate masks identically for unknown and unauthenticated (no oracle, no half-page)', () => {
+    const { ui } = makeWorld()
+    expect(get(ui, '/t/ghosttenant').status).toBe(404) // unknown tenant — masked
+    const unauth = get(ui, '/t/acme') // active tenant, no session → the home gate's weddings read 401s
+    expect(unauth.status).toBe(200)
+    expect(unauth.body).toContain('Sign in') // themed login, not the overview
+    expect(unauth.body).not.toContain('need attention')
+  })
+})

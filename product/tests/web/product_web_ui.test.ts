@@ -127,7 +127,8 @@ describe('ProductWebUi routing + rendering', () => {
     const { ui, api } = makeWorld()
     createWedding(api, 'acme', 'Alex & Sam')
     const cookie = loginCookie(ui, 'acme', 'planner')
-    const res = get(ui, '/t/acme', cookie)
+    // Phase 33: the wedding list relocated to ?view=weddings (the home is now the default /t/:slug).
+    const res = get(ui, '/t/acme?view=weddings', cookie)
     expect(res.status).toBe(200)
     expect(res.body).toContain('Alex &amp; Sam')
     expect(res.body).toContain('?wedding=')
@@ -161,7 +162,7 @@ describe('ProductWebUi routing + rendering', () => {
   it('logout WITH the CSRF token clears the cookie and redirects', () => {
     const { ui } = makeWorld()
     const cookie = loginCookie(ui, 'acme', 'planner')
-    const csrf = csrfFrom(get(ui, '/t/acme', cookie).body)
+    const csrf = csrfFrom(get(ui, '/t/acme?view=weddings', cookie).body)
     const res = postForm(ui, '/t/acme/logout', { _csrf: csrf }, cookie)
     expect(res.status).toBe(303)
     expect(res.headers['set-cookie']).toContain('Max-Age=0')

@@ -10,6 +10,8 @@ import type { StrategyGuidance } from '../strategy/strategy_guidance'
 import { WEDDING_LOGISTICS_FIELDS } from '../wedding/wedding_repository'
 import { normalizeSlugForRoute } from './html'
 import {
+  type AccountOverview,
+  countOpenEscalations,
   ERROR_500,
   GENERIC_404,
   renderBilling,
@@ -18,6 +20,7 @@ import {
   renderEscalations,
   renderForbidden,
   renderGuests,
+  renderHome,
   renderLanding,
   renderLogin,
   renderStrategy,
@@ -177,8 +180,14 @@ export class ProductWebUi {
     return this.#delegate(req)
   }
 
-  /** GET /t/:slug — list (or `?wedding=ID` detail / `?view=guests` management), themed strictly by status. */
+  /**
+   * GET /t/:slug — the account HOME overview by default (Phase 33), or one of the spoke views by query: the
+   * `?wedding=ID` detail, `?view=weddings` list, `?view=guests|escalations|billing` management. Themed strictly
+   * by status (each spoke makes its own `api.handle()` read).
+   */
   #console(req: ApiRequest, slug: string): HttpResult {
+    // ?view=weddings — the wedding list + create form (Phase 33 relocated it here; the home is now the default).
+    if (queryParam(req.path, 'view') === 'weddings') return this.#weddingList(req, slug)
     // ?view=guests — the guest-management page (Phase 21 planner; Phase 24 couple, scoped to their wedding).
     if (queryParam(req.path, 'view') === 'guests') return this.#guestsPage(req, slug)
     // ?view=escalations — the read-only escalation inbox (Phase 26; planner whole-tenant, couple their wedding).
@@ -188,7 +197,47 @@ export class ProductWebUi {
 
     const weddingId = queryParam(req.path, 'wedding')
     if (weddingId !== undefined) return this.#detail(req, slug, weddingId)
-    return this.#weddingList(req, slug)
+    return this.#home(req, slug)
+  }
+
+  /**
+   * GET /t/:slug — the account HOME / overview (Phase 33), the default landing and the console's hub. A pure
+   * web-layer COMPOSITION of the principal's already-authorized scoped reads:
+   *   - GET /weddings, /escalations, /guests form the GATE — both roles read all three (couples scoped to their
+   *     wedding since Phase 24/26). Any non-200 takes the SAME `#renderNonData` masking as every other page (the
+   *     `#guestsPage` no-half-page pattern): unknown/suspended/unauthenticated all mask identically, and an
+   *     unwired `escalations` subresource 404s → the whole home masks to GENERIC_404 (intentional fail-closed,
+   *     disclosure-equivalent — NOT a partial render).
+   *   - GET /billing is read LAST and its status is consulted ONLY as `=== 200 ? card : omit`. It NEVER flows
+   *     into `#renderNonData` (the load-bearing P1): a couple's 403 (the planner-only billing capability denial)
+   *     must leave the home a 200 with the billing card simply ABSENT — an affordance, never a Forbidden wall.
+   * The overview carries only COUNTS (and the planner's owed balance + plan), so it discloses strictly less than
+   * the views it links to — no figure the principal couldn't already obtain by visiting each view directly.
+   * Issues the per-session CSRF token (the Sign-out form), like every other authenticated page.
+   */
+  #home(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const weddingsRes = this.#api.handle(bearerGet(`/t/${slug}/weddings`, token))
+    if (weddingsRes.status !== 200) return this.#renderNonData(slug, weddingsRes.status)
+    const escRes = this.#api.handle(bearerGet(`/t/${slug}/escalations`, token))
+    if (escRes.status !== 200) return this.#renderNonData(slug, escRes.status)
+    const guestsRes = this.#api.handle(bearerGet(`/t/${slug}/guests`, token))
+    if (guestsRes.status !== 200) return this.#renderNonData(slug, guestsRes.status)
+    // The ONE intentionally-conditional read — 200 → planner billing card; any other status → omit it. Billing's
+    // status is NEVER passed to #renderNonData (P1: a couple's 403 keeps the home a 200, card absent).
+    const billingRes = this.#api.handle(bearerGet(`/t/${slug}/billing`, token))
+    const summary = billingRes.status === 200 ? readBilling(billingRes.body) : undefined
+    const theme = this.#themes.resolveActiveTheme(slug)
+    const csrf = this.#csrf.issueCsrf(token)
+    // A 200 means the session resolved; theme + CSRF token must exist in the same stores (mirrors #guestsPage).
+    if (theme === undefined || csrf === undefined) return theme === undefined ? GENERIC_404 : ERROR_500
+    const overview: AccountOverview = {
+      weddingsCount: readWeddings(weddingsRes.body).length,
+      openQuestionsCount: countOpenEscalations(readEscalations(escRes.body), readResolutions(escRes.body)),
+      guestsCount: readGuests(guestsRes.body).length,
+      ...(summary === undefined ? {} : { billing: { balanceCents: summary.balance_cents, planTier: summary.plan_tier } }),
+    }
+    return htmlResult(200, renderHome(theme, slug, overview, csrf))
   }
 
   /**
@@ -355,7 +404,9 @@ export class ProductWebUi {
     const form = parseForm(req.rawBody)
     if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
     const apiRes = this.#api.handle(bearerJson('POST', `/t/${slug}/weddings`, token, weddingBodyFromForm(form)))
-    if (apiRes.status === 201) return redirect(303, `/t/${slug}`)
+    // PRG back to the wedding LIST it was submitted from (Phase 33 relocated the list to ?view=weddings; the home
+    // is now the default). The follow-up GET masks unknown-tenant on its own read.
+    if (apiRes.status === 201) return redirect(303, `/t/${slug}?view=weddings`)
     if (apiRes.status === 403) return this.#renderNonData(slug, 403)
     return this.#weddingList(req, slug, true)
   }
