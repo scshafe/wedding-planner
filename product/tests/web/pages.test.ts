@@ -13,6 +13,7 @@ import {
   renderConsole,
   renderDetail,
   renderEscalations,
+  renderGuests,
   renderHome,
   renderLanding,
   renderLogin,
@@ -393,6 +394,22 @@ describe('renderHome (Phase 33)', () => {
     const out = renderHome(SAFE_THEME, 'acme', calm, 'csrf-home')
     expect(out).toContain('All caught up')
     expect(out).not.toContain('need attention')
+  })
+
+  it('the spoke pages link back to the home, and the home links to every spoke (hub-and-spoke nav)', () => {
+    const csrf = 'csrf-nav'
+    // The home is the hub: it links to all four spokes + strategy.
+    const home = renderHome(SAFE_THEME, 'acme', PLANNER_OVERVIEW, csrf)
+    for (const spoke of ['?view=escalations', '?view=weddings', '?view=guests', '?view=billing', '/t/acme/strategy']) {
+      expect(home, `home → ${spoke}`).toContain(spoke)
+    }
+    // Each management spoke links back to the home (← Home → /t/acme).
+    const zeroSummary: BillingSummary = { plan_tier: 'solo', monthly_price_cents: 2900, messages_sent: 0, messaging_spend_cents: 0, subscription_charges_cents: 0, payments_cents: 0, balance_cents: 0 }
+    expect(renderGuests(SAFE_THEME, 'acme', [], [], csrf)).toContain('← Home')
+    expect(renderEscalations(SAFE_THEME, 'acme', [], [], csrf)).toContain('← Home')
+    expect(renderBilling(SAFE_THEME, 'acme', zeroSummary, [], csrf)).toContain('← Home')
+    // The wedding list (a spoke) also offers a ← Home link in its nav strip.
+    expect(renderConsole(SAFE_THEME, 'acme', [], csrf)).toContain('← Home')
   })
 
   it('escapes the themed brand AND a hostile plan tier on the home (no live markup, defense-in-depth)', () => {

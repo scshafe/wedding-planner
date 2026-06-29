@@ -192,7 +192,7 @@ export function renderConsole(
     <h2>Weddings</h2>
     <form class="inline" method="post" action="/t/${slug}/logout">${csrfField(csrfToken)}<button type="submit">Sign out</button></form>
   </div>
-  <p><a href="/t/${slug}/strategy">View the planning strategy →</a> · <a href="/t/${slug}?view=guests">Manage guests →</a> · <a href="/t/${slug}?view=escalations">Guest questions →</a> · <a href="/t/${slug}?view=billing">Billing &amp; usage →</a></p>
+  <p><a href="/t/${slug}">← Home</a> · <a href="/t/${slug}/strategy">View the planning strategy →</a> · <a href="/t/${slug}?view=guests">Manage guests →</a> · <a href="/t/${slug}?view=escalations">Guest questions →</a> · <a href="/t/${slug}?view=billing">Billing &amp; usage →</a></p>
   ${body}
   <div class="card"><h3>Create a wedding</h3>${createWarning}
     <form method="post" action="/t/${slug}/weddings/create">
@@ -255,7 +255,7 @@ export function renderGuests(
     <h2>Guests</h2>
     <form class="inline" method="post" action="/t/${slug}/logout">${csrfField(csrfToken)}<button type="submit">Sign out</button></form>
   </div>
-  <p><a href="/t/${slug}">← All weddings</a></p>
+  <p><a href="/t/${slug}">← Home</a></p>
   <div class="card"><h3>Register a guest</h3>${warning}${addForm}</div>
   <h3>Registered guests</h3>
   ${list}`,
@@ -419,7 +419,7 @@ export function renderEscalations(
     theme,
     slug,
     'Guest questions',
-    html`<p><a href="/t/${slug}">← All weddings</a></p>
+    html`<p><a href="/t/${slug}">← Home</a></p>
   <div class="card">
     <h2>Questions we couldn't answer</h2>
     <p class="note">A guest texted in and we had no fact to answer from. Open the wedding to fill the detail — then the next guest who asks gets an automatic reply. Mark a question resolved once you've handled it, or dismiss one that isn't actionable.</p>
@@ -463,7 +463,7 @@ export function renderDetail(
     theme,
     slug,
     wedding.couple_display_name,
-    html`<p><a href="/t/${slug}">← All weddings</a></p>
+    html`<p><a href="/t/${slug}?view=weddings">← All weddings</a></p>
   <div class="card">
     <h2>${wedding.couple_display_name}</h2>
     <p>Date: <strong>${wedding.event_date}</strong></p>
@@ -500,7 +500,7 @@ export function renderStrategy(theme: Tenant['theme'], slug: string, guidance: S
     theme,
     slug,
     'Planning strategy',
-    html`<p><a href="/t/${slug}">← All weddings</a></p>
+    html`<p><a href="/t/${slug}">← Home</a></p>
   <div class="card">
     <h2>${guidance.headline}</h2>
     <p>${guidance.autonomy.label} <span class="status">${guidance.autonomy.appliedAutomatically ? 'automatic' : 'needs approval'}</span></p>
@@ -560,7 +560,7 @@ export function renderBilling(
     theme,
     slug,
     'Billing & usage',
-    html`<p><a href="/t/${slug}">← All weddings</a></p>
+    html`<p><a href="/t/${slug}">← Home</a></p>
   <div class="card">
     <h2>Your plan</h2>
     <p><strong>${summary.plan_tier}</strong> <span class="status">${`${dollars(summary.monthly_price_cents)} / month`}</span></p>

@@ -241,10 +241,10 @@ export class ProductWebUi {
   }
 
   /**
-   * The wedding LIST page (the console default). Issues the per-session CSRF token (the create form on the
-   * console carries it). `invalid` re-renders with the generic create-failure notice (a 400 page) after a
-   * failed create — the re-render's own read masks unknown/suspended to GENERIC_404, so create-vs-conflict-
-   * vs-missing never leaks (mirrors `#guestsPage`).
+   * The wedding LIST page (`?view=weddings` since Phase 33 — the home is now the default landing). Issues the
+   * per-session CSRF token (the create form on the page carries it). `invalid` re-renders with the generic
+   * create-failure notice (a 400 page) after a failed create — the re-render's own read masks unknown/suspended
+   * to GENERIC_404, so create-vs-conflict-vs-missing never leaks (mirrors `#guestsPage`).
    */
   #weddingList(req: ApiRequest, slug: string, invalid = false): HttpResult {
     const token = readSessionCookie(req.headers.cookie)
