@@ -132,6 +132,14 @@ function resolve(w: World, slug: string, token: string, escalation_id: string, s
   return w.api.handle(req('POST', `/t/${slug}/escalations`, { token, body: { escalation_id, status } }))
 }
 
+/** Read the EFFECTIVE status the inbox would render: open iff no row OR the max-seq row is reopened. */
+function effectiveStatus(w: World, slug: string, token: string, escalation_id: string): string {
+  const rows = listResolutions(w, slug, token).filter((r) => r.escalation_id === escalation_id)
+  if (rows.length === 0) return 'open'
+  const max = rows.reduce((a, b) => (b.seq > a.seq ? b : a))
+  return max.status === 'reopened' ? 'open' : max.status
+}
+
 function listResolutions(w: World, slug: string, token: string): EscalationResolution[] {
   const res = w.api.handle(req('GET', `/t/${slug}/escalations`, { token }))
   expect(res.status).toBe(200)
@@ -269,5 +277,66 @@ describe('escalation resolve/dismiss mutation', () => {
     const plannerB = login(w, 'beta', { role: 'planner' })
     expect(resolve(w, 'beta', plannerB, escId).body).toEqual({ resolved: false })
     expect(listResolutions(w, 'beta', plannerB)).toEqual([])
+  })
+})
+
+describe('escalation REOPEN transition (Phase 36)', () => {
+  let w: World
+  beforeEach(() => {
+    w = makeWorld()
+  })
+
+  it('a planner reopens a HANDLED escalation back to open; the transition history accretes a reopened row', () => {
+    const planner = login(w, 'alpha', { role: 'planner' })
+    const wedA = makeWedding(w, 'alpha', planner)
+    registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
+    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+
+    expect(resolve(w, 'alpha', planner, escId, 'resolved').body).toEqual({ resolved: true })
+    expect(effectiveStatus(w, 'alpha', planner, escId)).toBe('resolved')
+    // Reopen — same route, discriminated by status; uniform {resolved:true} body.
+    expect(resolve(w, 'alpha', planner, escId, 'reopened').body).toEqual({ resolved: true })
+    expect(effectiveStatus(w, 'alpha', planner, escId)).toBe('open')
+    const rows = listResolutions(w, 'alpha', planner).filter((r) => r.escalation_id === escId)
+    expect(rows.map((r) => r.status).sort()).toEqual(['reopened', 'resolved'])
+    expect(rows.find((r) => r.status === 'reopened')!.seq).toBe(1) // above the high-water mark, never thread.length
+  })
+
+  it('reopen of an OPEN escalation is an idempotent no-op (out of direction) — no row, still {resolved:true}', () => {
+    const planner = login(w, 'alpha', { role: 'planner' })
+    const wedA = makeWedding(w, 'alpha', planner)
+    registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
+    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+
+    expect(resolve(w, 'alpha', planner, escId, 'reopened').body).toEqual({ resolved: true }) // already open
+    expect(listResolutions(w, 'alpha', planner)).toHaveLength(0) // nothing recorded
+    expect(effectiveStatus(w, 'alpha', planner, escId)).toBe('open')
+  })
+
+  it('NO-ORACLE: a couple reopening an ABSENT id and a SIBLING-WEDDING id get the byte-identical {resolved:false}, no write', () => {
+    const planner = login(w, 'alpha', { role: 'planner' })
+    const wedA = makeWedding(w, 'alpha', planner)
+    const wedB = makeWedding(w, 'alpha', planner)
+    registerGuest(w, 'alpha', planner, 'sms:+2', wedB)
+    const escB = escalate(w, 'alpha', planner, 'sms:+2', 'pm_B')
+    resolve(w, 'alpha', planner, escB, 'resolved') // a handled escalation in wedding B
+
+    const coupleA = login(w, 'alpha', { role: 'couple', wedding_id: wedA })
+    const absent = resolve(w, 'alpha', coupleA, 'escalation_does_not_exist', 'reopened')
+    const foreign = resolve(w, 'alpha', coupleA, escB, 'reopened')
+    expect(JSON.stringify(absent.body)).toBe(JSON.stringify(foreign.body))
+    expect(foreign.body).toEqual({ resolved: false })
+    // The foreign-wedding reopen probe wrote nothing — escB stays resolved (planner sees only its resolve row).
+    expect(listResolutions(w, 'alpha', planner).filter((r) => r.escalation_id === escB).map((r) => r.status)).toEqual(['resolved'])
+  })
+
+  it('reopen is in the masked-400 enum: a non-enum status still 400s INDEPENDENT of existence', () => {
+    const planner = login(w, 'alpha', { role: 'planner' })
+    const wedA = makeWedding(w, 'alpha', planner)
+    registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
+    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    // reopened is accepted (200); only a genuinely unknown status 400s.
+    expect(resolve(w, 'alpha', planner, escId, 'reopened').status).toBe(200)
+    expect(resolve(w, 'alpha', planner, escId, 'archived').status).toBe(400)
   })
 })

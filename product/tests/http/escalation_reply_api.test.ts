@@ -286,6 +286,22 @@ describe('escalation reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
     expect(usage(w, 'alpha').message_count).toBe(0)
   })
 
+  it('Phase 36 keystone-CONDITIONAL: a REOPENED escalation accepts a reply again (dismiss blocks → reopen re-enables one billed send)', () => {
+    const planner = login(w, 'alpha', { role: 'planner' })
+    const wedA = makeWedding(w, 'alpha', planner)
+    registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
+    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    // Dismiss → the no-bill gate blocks the reply (terminal-style, exactly as before).
+    expect(w.api.handle(req('POST', `/t/alpha/escalations`, { token: planner, body: { escalation_id: escId, status: 'dismissed' } })).body).toEqual({ resolved: true })
+    expect(reply(w, 'alpha', planner, escId, { seq: 0 }).body).toEqual({ replied: false })
+    expect(usage(w, 'alpha').message_count).toBe(0)
+    // Reopen (operator action) → effective open → the reply now sends EXACTLY one billed message.
+    expect(w.api.handle(req('POST', `/t/alpha/escalations`, { token: planner, body: { escalation_id: escId, status: 'reopened' } })).body).toEqual({ resolved: true })
+    expect(reply(w, 'alpha', planner, escId, { seq: 0 }).body).toEqual({ replied: true })
+    expect(usage(w, 'alpha').message_count).toBe(1)
+    expect(listReplies(w, 'alpha', planner).map((r) => r.body)).toEqual(['Parking is in lot B.'])
+  })
+
   it('a malformed reply (missing/empty reply_text) is a masked 400 INDEPENDENT of existence (no oracle)', () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)

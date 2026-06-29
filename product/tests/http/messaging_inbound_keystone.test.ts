@@ -327,6 +327,23 @@ describe('Phase 35 — guest-reply → thread correlation', () => {
     expect(w.replies.list(w.ctxA)).toHaveLength(0) // not threaded
   })
 
+  it('Phase 36: after an operator REOPENS a resolved escalation, a guest follow-up threads INTO it (effective-open), not a fresh one', () => {
+    const w = makeWorld()
+    const weddingId = seedGuestOnAlpha(w)
+    w.api.handle(inbound('alpha', payload(ESC1))) // E1 opens
+    const e1 = w.escalations.list(w.ctxA)[0]!
+    // Operator resolves, then reopens (the explicit Phase-36 action) → E1 is effective-open again.
+    w.resolutions.transition(w.ctxA, { escalation_id: e1.escalation_id, wedding_id: weddingId, status: 'resolved', by: 'couple' })
+    w.resolutions.transition(w.ctxA, { escalation_id: e1.escalation_id, wedding_id: weddingId, status: 'reopened', by: 'couple' })
+    // A new guest follow-up now threads into the reopened E1 (the existing selector matches effective-open).
+    expect(w.api.handle(inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED)
+    expect(w.escalations.list(w.ctxA)).toHaveLength(1) // NO fresh escalation
+    const thread = w.replies.list(w.ctxA).filter((r) => r.escalation_id === e1.escalation_id)
+    expect(thread).toHaveLength(1)
+    expect(thread[0]).toMatchObject({ sender: 'guest', body: ESC2.text, provider_message_ref: ESC2.provider_message_ref })
+    expect(w.service.usageView(w.tenantAId).message_count).toBe(0) // a guest turn carries NO send/charge
+  })
+
   it('§B0 the CROSS-RESOLVE break: a threaded follow-up re-delivered AFTER its escalation is resolved is a no-op (not a fresh escalation)', () => {
     const w = makeWorld()
     const weddingId = seedGuestOnAlpha(w)
