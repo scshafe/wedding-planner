@@ -8,6 +8,7 @@ import { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import { BillingLedger } from '../billing/billing_ledger'
 import { ProductApi } from '../http/product_api'
 import { EscalationLog } from '../messaging/escalation_log'
+import { EscalationReplyLog } from '../messaging/escalation_reply_log'
 import { EscalationResolutionLog } from '../messaging/escalation_resolution_log'
 import { DeterministicGuestQaResponder } from '../messaging/guest_qa_responder'
 import { GuestRegistry } from '../messaging/guest_registry'
@@ -163,6 +164,10 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   // escalation_id, scoped exactly like the escalations. ONE instance — the resolve mutation writes it, the read
   // surface returns it alongside the escalations. Stamps resolved_at from the same injected clock.
   const resolutions = new EscalationResolutionLog(tenants, ids, clock)
+  // The reply THREAD (Phase 34, multi-turn): each console reply appends one operator message (keyed by
+  // (escalation_id, seq)) and sends a metered guest reply WITHOUT resolving. ONE instance — the reply mutation
+  // appends, the read surface returns it as the third scoped array. Stamps reply_id/sent_at from injected ids/clock.
+  const replies = new EscalationReplyLog(tenants, ids, clock)
 
   const api = new ProductApi({
     resolver,
@@ -182,11 +187,12 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
       service: messaging,
       escalations,
     },
-    // The escalation inbox READ + RESOLVE + REPLY surface (Phase 26 + 27 + 28) — the SAME log instances the
+    // The escalation inbox READ + RESOLVE + REPLY surface (Phase 26 + 27 + 28 + 34) — the SAME log instances the
     // inbound capture / resolve / reply mutations write to, read-scoped by the guest authorizer's manageScope
     // (planner: whole tenant; couple: their wedding). `service` is the SAME MessagingService the inbound path
-    // uses, so a console reply and a guest reply meter/bill through ONE ledger (Phase 28).
-    escalations: { escalations, resolutions, authorizer: guestAuthorizer, service: messaging },
+    // uses, so a console reply and a guest reply meter/bill through ONE ledger (Phase 28). `replies` is the
+    // multi-turn thread (Phase 34) — appended by a reply, returned as the read's third scoped array.
+    escalations: { escalations, resolutions, replies, authorizer: guestAuthorizer, service: messaging },
     // The planner billing & usage summary (Phase 30): the ledger NARROWED to its read fold (`summarize`), the
     // tenant store narrowed to `findById` (the trusted plan_tier of the caller's own tenant), and the
     // management-capability authorizer for the planner-only gate. Always wired (a compose e2e pins reachability).

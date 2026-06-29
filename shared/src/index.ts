@@ -98,4 +98,5 @@ export type {
   Guest,
   GuestEscalation,
   EscalationResolution,
+  EscalationReply,
 } from './contracts/contract_types'

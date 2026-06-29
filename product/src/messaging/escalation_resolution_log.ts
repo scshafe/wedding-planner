@@ -26,13 +26,11 @@ import type { TenantLivenessCheck } from '../tenant/tenant_store'
  * controlled) — unlike `received_at`, which the messaging PORT stamps, the resolution has no port, so it owns
  * its clock. The record is contract-validated before persisting.
  *
- * REPLY TRANSCRIPT (Phase 29). The OPTIONAL `reply_text` carries the operator's answer when (and only when)
- * the escalation was resolved by a console reply-from-the-inbox, so the Handled inbox row reads as a
- * question→answer transcript. It is TRUSTED couple/planner input (already non-empty + length-capped by the
- * handler), read back ONLY by the same scope that wrote it (couple→{@link listForWedding}, planner→{@link
- * list}) and HTML-escaped at render — never reflected to the guest. The resolve-form and dismiss paths omit
- * it (and the schema's `allOf` forbids it when status is `dismissed`). first-writer-wins makes the persisted
- * answer stable: a (gated-out) re-reply never overwrites it.
+ * A RESOLUTION IS NOW A PURE HANDLED-MARKER (Phase 34). The Phase-29 OPTIONAL `reply_text` was RETIRED from
+ * this record when the multi-turn reply THREAD took over the transcript: a console reply now appends to
+ * {@link EscalationReplyLog} and does NOT auto-resolve, so the resolution carries no reply content — it records
+ * ONLY that someone handled the escalation (resolved/dismissed). The question→answer transcript lives on the
+ * thread (escalation_reply); see ADR 0034.
  *
  * Isolation/unforgeability are INHERITED from {@link TenantScopedRepository}: minted-context brand + liveness
  * on every op, partition keyed by `context.tenant_id` ALONE, `#`-private. The couple slice mirrors
@@ -49,14 +47,6 @@ export interface RecordResolutionInput {
   readonly wedding_id: string
   readonly status: EscalationResolution['status']
   readonly resolved_by: EscalationResolution['resolved_by']
-  /**
-   * OPTIONAL (Phase 29): the operator's answer text, supplied ONLY by the reply-from-the-inbox path (so the
-   * Handled inbox row shows the question→answer transcript). Absent on the resolve-form and dismiss paths;
-   * the schema's `allOf` additionally forbids it when status is `dismissed`. Trusted couple/planner input,
-   * already length-capped (`REPLY_TEXT_MAX_LENGTH`) and non-empty by the handler, so it can't fail validation
-   * here. Built into the record via a conditional spread (never assigned `undefined` — Ajv would reject it).
-   */
-  readonly reply_text?: string
 }
 
 export class EscalationResolutionLog {
@@ -89,10 +79,6 @@ export class EscalationResolutionLog {
       status: input.status,
       resolved_by: input.resolved_by,
       resolved_at: this.clock.now(),
-      // The conditional spread is the SOLE place reply_text enters the record: with additionalProperties:false,
-      // a literal `reply_text: undefined` would serialize the key and fail Ajv — so resolve-form/dismiss (which
-      // omit it) produce no key, and only a console reply (the reply path) persists the operator's answer.
-      ...(input.reply_text === undefined ? {} : { reply_text: input.reply_text }),
     }
     getSchemaRegistry().assertValid<EscalationResolution>('escalation_resolution', resolution)
     return this.#repo.put(context, resolution)

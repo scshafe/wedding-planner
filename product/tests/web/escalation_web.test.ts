@@ -9,6 +9,7 @@ import {
   BillingLedger,
   DeterministicGuestQaResponder,
   EscalationLog,
+  EscalationReplyLog,
   EscalationResolutionLog,
   InboundReceiptLog,
   MessagingService,
@@ -60,6 +61,7 @@ function makeWorld(): World {
   const adapter = new SimulatedMessagingAdapter(clock, new SequentialIdGenerator('seedM'))
   const escalations = new EscalationLog(store, new SequentialIdGenerator('seedEsc'))
   const resolutions = new EscalationResolutionLog(store, new SequentialIdGenerator('seedRes'), clock)
+  const replies = new EscalationReplyLog(store, new SequentialIdGenerator('seedRep'), clock)
   const messaging = new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS'))
   const guestAuthorizer = new GuestAuthorizer()
   const api = new ProductApi({
@@ -80,7 +82,7 @@ function makeWorld(): World {
       service: messaging,
       escalations,
     },
-    escalations: { escalations, resolutions, authorizer: guestAuthorizer, service: messaging },
+    escalations: { escalations, resolutions, replies, authorizer: guestAuthorizer, service: messaging },
   })
   return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store), csrf: sessions }), api, messaging, store }
 }
@@ -217,19 +219,20 @@ describe('escalation inbox web page (?view=escalations) + resolve flow', () => {
   })
 })
 
-describe('escalation inbox web page — reply-from-the-inbox (Phase 28)', () => {
+describe('escalation inbox web page — reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
   const usageCount = (w: World): number => w.messaging.usageView(w.store.findBySlug('acme')!.tenant_id).message_count
 
-  it('an Open question carries a Reply form (textarea reply_text) posting to the 4-seg reply route', () => {
+  it('an Open question carries a Reply form (textarea reply_text + hidden seq) posting to the 4-seg reply route', () => {
     const w = makeWorld()
     seedEscalation(w.api, 'acme')
     const cookie = loginCookie(w.ui, 'acme', 'planner')
     const res = get(w.ui, '/t/acme?view=escalations', cookie)
     expect(res.body).toContain('action="/t/acme/escalations/reply"')
     expect(res.body).toContain('name="reply_text"')
+    expect(res.body).toContain('name="seq" value="0"') // fresh thread → seq 0
   })
 
-  it('a valid CSRF reply sends a metered message + moves the question to Handled (PRG redirect → 303)', () => {
+  it('a valid CSRF reply sends a metered message + appends to the thread, and the question STAYS OPEN (PRG 303)', () => {
     const w = makeWorld()
     seedEscalation(w.api, 'acme')
     const cookie = loginCookie(w.ui, 'acme', 'planner')
@@ -237,14 +240,33 @@ describe('escalation inbox web page — reply-from-the-inbox (Phase 28)', () => 
     const sent = postForm(
       w.ui,
       '/t/acme/escalations/reply',
-      { _csrf: csrfFrom(page), escalation_id: escalationIdFrom(page), reply_text: 'Parking is in lot B.' },
+      { _csrf: csrfFrom(page), escalation_id: escalationIdFrom(page), reply_text: 'Parking is in lot B.', seq: '0' },
       cookie,
     )
     expect(sent.status).toBe(303)
     expect(usageCount(w)).toBe(1)
     const after = get(w.ui, '/t/acme?view=escalations', cookie).body as string
-    expect(after).toContain('Resolved by planner')
-    expect(after).not.toContain('action="/t/acme/escalations/reply"') // no Open rows left
+    // DECOUPLED (Phase 34): the reply shows in the thread; the row stays OPEN (not Resolved), and the form now
+    // carries seq=1 so a follow-up is a fresh send (a re-POST of seq=0 would dedup).
+    expect(after).toContain('Planner: “Parking is in lot B.”')
+    expect(after).not.toContain('Resolved by planner')
+    expect(after).toContain('action="/t/acme/escalations/reply"') // still Open
+    expect(after).toContain('name="seq" value="1"')
+  })
+
+  it('multi-turn: a second reply at seq=1 sends again (the thread grows)', () => {
+    const w = makeWorld()
+    seedEscalation(w.api, 'acme')
+    const cookie = loginCookie(w.ui, 'acme', 'planner')
+    const page = get(w.ui, '/t/acme?view=escalations', cookie).body as string
+    const escId = escalationIdFrom(page)
+    postForm(w.ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(page), escalation_id: escId, reply_text: 'First.', seq: '0' }, cookie)
+    const page2 = get(w.ui, '/t/acme?view=escalations', cookie).body as string
+    postForm(w.ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(page2), escalation_id: escId, reply_text: 'Second.', seq: '1' }, cookie)
+    expect(usageCount(w)).toBe(2)
+    const after = get(w.ui, '/t/acme?view=escalations', cookie).body as string
+    expect(after).toContain('Planner: “First.”')
+    expect(after).toContain('Planner: “Second.”')
   })
 
   it('a forged CSRF reply is masked 403 and sends NOTHING (stays Open)', () => {
@@ -252,7 +274,7 @@ describe('escalation inbox web page — reply-from-the-inbox (Phase 28)', () => 
     seedEscalation(w.api, 'acme')
     const cookie = loginCookie(w.ui, 'acme', 'planner')
     const escId = escalationIdFrom(get(w.ui, '/t/acme?view=escalations', cookie).body as string)
-    const res = postForm(w.ui, '/t/acme/escalations/reply', { _csrf: 'forged', escalation_id: escId, reply_text: 'hi' }, cookie)
+    const res = postForm(w.ui, '/t/acme/escalations/reply', { _csrf: 'forged', escalation_id: escId, reply_text: 'hi', seq: '0' }, cookie)
     expect(res.status).toBe(403)
     expect(usageCount(w)).toBe(0)
     expect(get(w.ui, '/t/acme?view=escalations', cookie).body).toContain('action="/t/acme/escalations/reply"')
@@ -260,7 +282,7 @@ describe('escalation inbox web page — reply-from-the-inbox (Phase 28)', () => 
 
   it('a reply on an UNKNOWN tenant slug masks to GENERIC_404 BEFORE the CSRF verdict (no oracle)', () => {
     const { ui } = makeWorld()
-    const res = postForm(ui, '/t/ghosttenant/escalations/reply', { _csrf: 'forged', escalation_id: 'esc_x', reply_text: 'hi' })
+    const res = postForm(ui, '/t/ghosttenant/escalations/reply', { _csrf: 'forged', escalation_id: 'esc_x', reply_text: 'hi', seq: '0' })
     expect(res.status).toBe(404)
     expect(res.body).toContain('does not exist')
   })

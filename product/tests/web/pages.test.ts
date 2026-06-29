@@ -1,4 +1,4 @@
-import type { EscalationResolution, GuestEscalation, Tenant, Wedding } from '@wedding-planner/shared'
+import type { EscalationReply, EscalationResolution, GuestEscalation, Tenant, Wedding } from '@wedding-planner/shared'
 import { describe, expect, it } from 'vitest'
 
 import { NEUTRAL_COLOR } from '../../src/web/html'
@@ -185,7 +185,7 @@ describe('generic constants', () => {
   const ESC_1: GuestEscalation = { escalation_id: 'esc_1', tenant_id: 't1', wedding_id: 'wedding_42', from_ref: 'sms:+1555', text: 'where do I park?', received_at: '2027-05-01T00:00:00.000Z', provider_message_ref: 'pm_1', channel: 'sms' }
 
   it('renderEscalations lists an OPEN question with Resolve/Dismiss CSRF forms + a link to the wedding edit page', () => {
-    const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [], 'csrf-xyz')
+    const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [], [], 'csrf-xyz')
     expect(out).toContain('where do I park?')
     expect(out).toContain('sms:+1555')
     expect(out).toContain('/t/acme?wedding=wedding_42')
@@ -195,15 +195,17 @@ describe('generic constants', () => {
     expect(out).toContain('name="status" value="resolved"')
     expect(out).toContain('name="status" value="dismissed"')
     expect(out).toContain('value="csrf-xyz"')
-    // Phase 28: the OPEN row also carries a Reply form (textarea) posting to the 4-seg reply route.
+    // Phase 28/34: the OPEN row also carries a Reply form (textarea) posting to the 4-seg reply route, with the
+    // hidden seq = current thread length (0 with no replies yet) — the double-submit key.
     expect(out).toContain('action="/t/acme/escalations/reply"')
     expect(out).toContain('name="reply_text"')
+    expect(out).toContain('name="seq" value="0"')
     expect(out).toContain('via sms') // the channel is shown so the operator knows how the reply goes out
   })
 
   it('renderEscalations moves a HANDLED question into a Handled section (status badge, no action form)', () => {
     const resolution: EscalationResolution = { resolution_id: 'res_1', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', status: 'dismissed', resolved_by: 'planner', resolved_at: '2027-05-02T00:00:00.000Z' }
-    const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [resolution], 'csrf-xyz')
+    const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [resolution], [], 'csrf-xyz')
     expect(out).toContain('Handled')
     expect(out).toContain('Dismissed by planner')
     // A handled row carries NO Resolve/Dismiss form (the only form action on the page is gone when nothing is open).
@@ -211,26 +213,35 @@ describe('generic constants', () => {
     expect(out).toContain('No open questions')
   })
 
-  it('Phase 29: a HANDLED-by-reply row shows the operator answer as a transcript line; a resolve-form row shows none', () => {
-    const replied: EscalationResolution = { resolution_id: 'res_r', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', status: 'resolved', resolved_by: 'couple', resolved_at: '2027-05-02T00:00:00.000Z', reply_text: 'Parking is in lot B.' }
-    const withReply = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [replied], 'csrf-xyz')
-    expect(withReply).toContain('Replied:')
-    expect(withReply).toContain('Parking is in lot B.')
-
-    const formResolved: EscalationResolution = { resolution_id: 'res_f', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', status: 'resolved', resolved_by: 'planner', resolved_at: '2027-05-02T00:00:00.000Z' }
-    const noReply = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [formResolved], 'csrf-xyz')
-    expect(noReply).not.toContain('Replied:')
+  it('Phase 34: an OPEN row renders its reply THREAD and the form seq = thread length (multi-turn)', () => {
+    const r0: EscalationReply = { reply_id: 'rep_0', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq: 0, sender: 'couple', body: 'Parking is in lot B.', sent_at: '2027-05-02T00:00:00.000Z' }
+    const r1: EscalationReply = { reply_id: 'rep_1', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq: 1, sender: 'planner', body: 'By the oak tree.', sent_at: '2027-05-02T00:01:00.000Z' }
+    // Pass out-of-order to prove the render sorts NUMERICALLY by seq, not insertion/lexicographic.
+    const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [], [r1, r0], 'csrf-xyz')
+    expect(out).toContain('Couple: “Parking is in lot B.”')
+    expect(out).toContain('Planner: “By the oak tree.”')
+    expect(out.indexOf('Parking is in lot B.')).toBeLessThan(out.indexOf('By the oak tree.')) // seq 0 before seq 1
+    // The next reply form carries seq = 2 (two replies already in the thread).
+    expect(out).toContain('name="seq" value="2"')
   })
 
-  it('Phase 29: an XSS payload in the persisted reply_text is escaped (text-context render, no live markup)', () => {
-    const evil: EscalationResolution = { resolution_id: 'res_x', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', status: 'resolved', resolved_by: 'couple', resolved_at: '2027-05-02T00:00:00.000Z', reply_text: '<script>alert("xss")</script>' }
-    const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [evil], 'csrf-xyz')
-    assertNoLiveMarkup(out, 'resolution/reply_text')
+  it('Phase 34: a HANDLED row shows the full reply thread as the question→answer transcript', () => {
+    const resolution: EscalationResolution = { resolution_id: 'res_1', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', status: 'resolved', resolved_by: 'couple', resolved_at: '2027-05-02T00:02:00.000Z' }
+    const reply: EscalationReply = { reply_id: 'rep_0', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq: 0, sender: 'couple', body: 'Parking is in lot B.', sent_at: '2027-05-02T00:00:00.000Z' }
+    const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [resolution], [reply], 'csrf-xyz')
+    expect(out).toContain('Handled')
+    expect(out).toContain('Couple: “Parking is in lot B.”')
+  })
+
+  it('Phase 34: an XSS payload in a reply body is escaped (text-context render, no live markup)', () => {
+    const evil: EscalationReply = { reply_id: 'rep_x', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq: 0, sender: 'couple', body: '<script>alert("xss")</script>', sent_at: '2027-05-02T00:00:00.000Z' }
+    const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [], [evil], 'csrf-xyz')
+    assertNoLiveMarkup(out, 'reply/body')
     expect(out).toContain('&lt;script&gt;')
   })
 
   it('renderEscalations renders an empty-state when there are no questions', () => {
-    const out = renderEscalations(SAFE_THEME, 'acme', [], [], 'csrf-xyz')
+    const out = renderEscalations(SAFE_THEME, 'acme', [], [], [], 'csrf-xyz')
     expect(out).toContain('No open questions')
   })
 
@@ -239,6 +250,7 @@ describe('generic constants', () => {
       SAFE_THEME,
       'acme',
       [{ escalation_id: 'esc_1', tenant_id: 't1', wedding_id: 'w1', from_ref: '"><img src=x onerror=alert(1)>', text: '<script>alert("xss")</script>', received_at: '2027-05-01T00:00:00.000Z', provider_message_ref: 'pm_1', channel: 'sms' }],
+      [],
       [],
       'csrf-xyz',
     )
@@ -406,7 +418,7 @@ describe('renderHome (Phase 33)', () => {
     // Each management spoke links back to the home (← Home → /t/acme).
     const zeroSummary: BillingSummary = { plan_tier: 'solo', monthly_price_cents: 2900, messages_sent: 0, messaging_spend_cents: 0, subscription_charges_cents: 0, payments_cents: 0, balance_cents: 0 }
     expect(renderGuests(SAFE_THEME, 'acme', [], [], csrf)).toContain('← Home')
-    expect(renderEscalations(SAFE_THEME, 'acme', [], [], csrf)).toContain('← Home')
+    expect(renderEscalations(SAFE_THEME, 'acme', [], [], [], csrf)).toContain('← Home')
     expect(renderBilling(SAFE_THEME, 'acme', zeroSummary, [], csrf)).toContain('← Home')
     // The wedding list (a spoke) also offers a ← Home link in its nav strip.
     expect(renderConsole(SAFE_THEME, 'acme', [], csrf)).toContain('← Home')

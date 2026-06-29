@@ -1,4 +1,4 @@
-import type { EscalationResolution, Guest, GuestEscalation, Wedding } from '@wedding-planner/shared'
+import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Wedding } from '@wedding-planner/shared'
 
 import type { BillingActivityEntry } from '../billing/billing_activity'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -312,8 +312,9 @@ export class ProductWebUi {
    * strictly by status: any non-200 takes the SAME `#renderNonData` masking as every other page (unknown/
    * suspended/unauthenticated all mask identically). Since Phase 27 the page carries Resolve/Dismiss forms, so
    * it issues the per-session CSRF token (mirrors `#guestsPage` — a 200 means the session resolved, so its CSRF
-   * token must exist in the same store; absent ⇒ invariant break ⇒ ERROR_500). The body carries BOTH the
-   * escalations and the resolutions (scoped identically by the JSON layer); the page joins them.
+   * token must exist in the same store; absent ⇒ invariant break ⇒ ERROR_500). The body carries the
+   * escalations, the resolutions AND the reply threads (scoped identically by the JSON layer); the page joins
+   * them by escalation_id.
    */
   #escalationsPage(req: ApiRequest, slug: string): HttpResult {
     const token = readSessionCookie(req.headers.cookie)
@@ -322,7 +323,10 @@ export class ProductWebUi {
       const theme = this.#themes.resolveActiveTheme(slug)
       const csrf = this.#csrf.issueCsrf(token)
       if (theme === undefined || csrf === undefined) return theme === undefined ? GENERIC_404 : ERROR_500
-      return htmlResult(200, renderEscalations(theme, slug, readEscalations(apiRes.body), readResolutions(apiRes.body), csrf))
+      return htmlResult(
+        200,
+        renderEscalations(theme, slug, readEscalations(apiRes.body), readResolutions(apiRes.body), readReplies(apiRes.body), csrf),
+      )
     }
     return this.#renderNonData(slug, apiRes.status)
   }
@@ -343,18 +347,25 @@ export class ProductWebUi {
   }
 
   /**
-   * POST /t/:slug/escalations/reply — the browser Reply form (Phase 28): answer the guest directly (a metered
-   * send that auto-resolves). Verify the CSRF token (forged ⇒ masked 403, NO send) BEFORE translating the
-   * cookie to a Bearer and forwarding to the JSON `POST /t/:slug/escalations` (which discriminates the
-   * `reply_text` body to the reply handler). Always PRG-redirect back to the inbox; a foreign/absent/handled
-   * escalation is the JSON layer's idempotent `{replied:false}` no-op. Only escalation_id + reply_text are
-   * forwarded; channel/recipient come from the live escalation server-side (a smuggled field is inert).
+   * POST /t/:slug/escalations/reply — the browser Reply form (Phase 28/34): answer the guest directly (a metered
+   * send that APPENDS to the thread, multi-turn; it no longer auto-resolves). Verify the CSRF token (forged ⇒
+   * masked 403, NO send) BEFORE translating the cookie to a Bearer and forwarding to the JSON `POST
+   * /t/:slug/escalations` (which discriminates the `reply_text` body to the reply handler). Always PRG-redirect
+   * back to the inbox; a foreign/absent/handled escalation is the JSON layer's idempotent `{replied:false}`
+   * no-op. Forwards escalation_id + reply_text + `seq` (the render-time thread-position double-submit key the
+   * form carries); channel/recipient come from the live escalation server-side (a smuggled field is inert). A
+   * same-seq/different-body conflict (409) is swallowed by the redirect — the operator lands back on the inbox,
+   * sees their message absent, and the now-`seq+1` form lets them resend.
    */
   #escalationReply(req: ApiRequest, slug: string): HttpResult {
     const token = readSessionCookie(req.headers.cookie)
     const form = parseForm(req.rawBody)
     if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
-    const body = { escalation_id: form.get('escalation_id') ?? '', reply_text: form.get('reply_text') ?? '' }
+    const body = {
+      escalation_id: form.get('escalation_id') ?? '',
+      reply_text: form.get('reply_text') ?? '',
+      seq: form.get('seq') ?? '',
+    }
     this.#api.handle(bearerJson('POST', `/t/${slug}/escalations`, token, body))
     return redirect(303, `/t/${slug}?view=escalations`)
   }
@@ -671,6 +682,13 @@ function readResolutions(body: unknown): readonly EscalationResolution[] {
   if (typeof body !== 'object' || body === null) return []
   const resolutions = (body as { resolutions?: unknown }).resolutions
   return Array.isArray(resolutions) ? (resolutions as EscalationResolution[]) : []
+}
+
+/** Read the reply-thread array from a list (200) JSON body (Phase 34; tolerant — never throws on an odd shape). */
+function readReplies(body: unknown): readonly EscalationReply[] {
+  if (typeof body !== 'object' || body === null) return []
+  const replies = (body as { replies?: unknown }).replies
+  return Array.isArray(replies) ? (replies as EscalationReply[]) : []
 }
 
 /** Read the single wedding from a detail (200) JSON body, or undefined. */

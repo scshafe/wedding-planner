@@ -39,6 +39,7 @@ export type ContractKey =
   | 'guest'
   | 'guest_escalation'
   | 'escalation_resolution'
+  | 'escalation_reply'
 
 export interface ContractDefinition {
   /** Stable friendly key, e.g. 'grade_report'. */
@@ -178,6 +179,12 @@ export const CONTRACT_DEFINITIONS: readonly ContractDefinition[] = [
     key: 'escalation_resolution',
     schemaId: `${SCHEMA_ID_PREFIX}/escalation_resolution.json`,
     repoRelativePath: 'product/schemas/escalation_resolution_schema.json',
+    domain: 'product',
+  },
+  {
+    key: 'escalation_reply',
+    schemaId: `${SCHEMA_ID_PREFIX}/escalation_reply.json`,
+    repoRelativePath: 'product/schemas/escalation_reply_schema.json',
     domain: 'product',
   },
 ] as const

@@ -5,11 +5,9 @@
  */
 
 /**
- * A couple/planner's record that a guest escalation has been HANDLED (Phase 27) — the SEPARATE, append-only resolution record pinned by ADR 0026 F6: the matching `guest_escalation` is NEVER mutated (it stays the immutable historical fact that the question WAS unanswerable at the time), so handling is recorded here instead. Always accessed through a tenant-scoped repository KEYED BY (tenant_id, escalation_id), read-first-put-if-absent, so resolving an already-handled escalation returns the EXISTING record (FIRST-writer-wins: the first `status` sticks, the record is immutable). `status` is terminal — both `resolved` (dealt with, typically by filling the missing fact) and `dismissed` (not actionable: spam/irrelevant/duplicate) move the escalation out of the Open inbox; re-opening / changing a recorded status is a deferred future rung. The scope mirrors the escalation: a planner records over the whole tenant, a couple only over their bound wedding (`wedding_id`, COPIED from the live escalation in the same request — never the request body, so a body-smuggled wedding_id cannot widen a couple's reach). See escalation_resolution_log.ts, escalation_log.ts, and ADR 0027.
+ * A couple/planner's record that a guest escalation has been HANDLED (Phase 27) — the SEPARATE, append-only resolution record pinned by ADR 0026 F6: the matching `guest_escalation` is NEVER mutated (it stays the immutable historical fact that the question WAS unanswerable at the time), so handling is recorded here instead. Always accessed through a tenant-scoped repository KEYED BY (tenant_id, escalation_id), read-first-put-if-absent, so resolving an already-handled escalation returns the EXISTING record (FIRST-writer-wins: the first `status` sticks, the record is immutable). `status` is terminal — both `resolved` (dealt with, typically by filling the missing fact) and `dismissed` (not actionable: spam/irrelevant/duplicate) move the escalation out of the Open inbox; re-opening / changing a recorded status is a deferred future rung. The scope mirrors the escalation: a planner records over the whole tenant, a couple only over their bound wedding (`wedding_id`, COPIED from the live escalation in the same request — never the request body, so a body-smuggled wedding_id cannot widen a couple's reach). Phase 34 note: a resolution is now PURELY a handled-marker — the reply transcript moved to the per-escalation reply THREAD (escalation_reply), so a console reply no longer auto-resolves and the resolution carries no reply text (the Phase-29 `reply_text` field was retired here when the thread took over the transcript). See escalation_resolution_log.ts, escalation_log.ts, escalation_reply_schema.json, and ADR 0027 / ADR 0034.
  */
-export type EscalationResolution = ({
-[k: string]: unknown
-} & {
+export interface EscalationResolution {
 /**
  * The platform-minted public surrogate id for this record (ids.next('resolution')). NEVER the storage key — the (tenant_id, escalation_id) pair is; this is the audit/display id.
  */
@@ -38,8 +36,4 @@ resolved_by: ("planner" | "couple")
  * ISO 8601 UTC time the escalation was handled, from the injected clock (never ambient; platform-stamped, not guest-controlled). minLength:1 with NO format/pattern (matches guest_escalation.received_at) so the real clock.now() value can never fail validation here (no 500 oracle).
  */
 resolved_at: string
-/**
- * OPTIONAL (Phase 29): the operator's answer text, present ONLY when the escalation was resolved by a console reply-from-the-inbox (absent on the resolve-form and dismiss paths — and the allOf forbids it entirely when status is `dismissed`). TRUSTED couple/planner input; returned in the scoped `GET /t/:slug/escalations` JSON body AND HTML-escaped when rendered on the Handled inbox row — never reflected back to the guest (the guest send used the operator's freshly-typed text; this persisted copy is read only by the same scope that wrote it). maxLength:2000 MATCHES the handler's REPLY_TEXT_MAX_LENGTH and minLength:1 matches requireString's non-empty guarantee, so a reply that passed the handler can never fail validation here (no 500 oracle); the two `2000`s are drift-guarded by a test.
- */
-reply_text?: string
-})
+}

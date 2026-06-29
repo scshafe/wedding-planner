@@ -421,23 +421,22 @@ describe('composeProductSurface — Phase 27 e2e: resolving an escalation clears
     const csrf = /name="_csrf" value="([^"]+)"/.exec(open.body as string)?.[1] as string
     const escId = /name="escalation_id" value="([^"]+)"/.exec(open.body as string)?.[1] as string
 
-    // Reply via the form (CSRF-protected) → PRG redirect; a metered send went out to the guest.
-    const sent = ui.handle(form('POST', '/t/demo/escalations/reply', { _csrf: csrf, escalation_id: escId, reply_text: 'Parking is in lot B by the chapel.' }, cookie))
+    // Reply via the form (CSRF-protected, hidden seq=0) → PRG redirect; a metered send went out to the guest.
+    const sent = ui.handle(form('POST', '/t/demo/escalations/reply', { _csrf: csrf, escalation_id: escId, reply_text: 'Parking is in lot B by the chapel.', seq: '0' }, cookie))
     expect(sent.status).toBe(303)
     const usage = messaging.usageView(tenantId)
     expect(usage.message_count).toBe(1)
     expect(usage.records[0]).toMatchObject({ recipient_ref: ref, channel: 'sms' })
     expect(usage.billed_total_cents).toBeGreaterThan(0)
 
-    // The escalation is now Handled (resolved-by-replying), and a re-reply is a no-op (no second send).
+    // Phase 34 DECOUPLED: the reply shows in the thread + the question STAYS OPEN (no auto-resolve); a re-POST of
+    // the SAME rendered form (seq still 0) is a no-op double-submit (no second send — the seq slot is taken).
     const after = ui.handle({ method: 'GET', path: '/t/demo?view=escalations', headers: { cookie } })
-    expect(after.body).toContain('Resolved by couple')
-    expect(after.body).not.toContain('action="/t/demo/escalations/reply"')
-    // Phase 29: the inbox now shows the question→answer transcript — the operator's persisted reply renders.
-    expect(after.body).toContain('Parking is in lot B by the chapel.')
-    const detail = ui.handle({ method: 'GET', path: `/t/demo?wedding=${weddingId}`, headers: { cookie } })
-    const csrf2 = /name="_csrf" value="([^"]+)"/.exec(detail.body as string)?.[1] as string
-    ui.handle(form('POST', '/t/demo/escalations/reply', { _csrf: csrf2, escalation_id: escId, reply_text: 'second attempt' }, cookie))
-    expect(messaging.usageView(tenantId).message_count).toBe(1) // single send — the deterministic key + handled-gate
+    expect(after.body).toContain('Couple: “Parking is in lot B by the chapel.”')
+    expect(after.body).not.toContain('Resolved by couple')
+    expect(after.body).toContain('action="/t/demo/escalations/reply"') // still Open
+    // A re-submit of the original (stale) seq=0 form with the SAME body is the idempotent double-submit: no send.
+    ui.handle(form('POST', '/t/demo/escalations/reply', { _csrf: csrf, escalation_id: escId, reply_text: 'Parking is in lot B by the chapel.', seq: '0' }, cookie))
+    expect(messaging.usageView(tenantId).message_count).toBe(1) // single send — the seq-slot double-submit guard
   })
 })

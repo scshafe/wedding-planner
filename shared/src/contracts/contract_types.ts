@@ -59,3 +59,7 @@ export type { GuestEscalation } from './generated/guest_escalation'
 // A handled-escalation record (Phase 27): the SEPARATE append-only resolution keyed (tenant_id, escalation_id)
 // that marks a guest_escalation resolved/dismissed WITHOUT mutating it (ADR 0026 F6 / ADR 0027). First-writer-wins.
 export type { EscalationResolution } from './generated/escalation_resolution'
+// One operator message in a guest escalation's reply THREAD (Phase 34, multi-turn): keyed
+// (tenant_id, `${escalation_id}:${seq}`); a console reply appends one + sends a metered message WITHOUT
+// auto-resolving. The thread is the question->answer transcript (replaced Phase-29 resolution.reply_text). ADR 0034.
+export type { EscalationReply } from './generated/escalation_reply'

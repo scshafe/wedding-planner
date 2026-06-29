@@ -9,6 +9,7 @@ import {
   BillingLedger,
   DeterministicGuestQaResponder,
   EscalationLog,
+  EscalationReplyLog,
   EscalationResolutionLog,
   InboundReceiptLog,
   MessagingService,
@@ -57,6 +58,7 @@ function makeWorld(): World {
   const adapter = new SimulatedMessagingAdapter(clock, new SequentialIdGenerator('seedM'))
   const escalations = new EscalationLog(store, new SequentialIdGenerator('seedEsc'))
   const resolutions = new EscalationResolutionLog(store, new SequentialIdGenerator('seedRes'), clock)
+  const replies = new EscalationReplyLog(store, new SequentialIdGenerator('seedRep'), clock)
   const messaging = new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS'))
   const guestAuthorizer = new GuestAuthorizer()
   const api = new ProductApi({
@@ -77,7 +79,7 @@ function makeWorld(): World {
       service: messaging,
       escalations,
     },
-    escalations: { escalations, resolutions, authorizer: guestAuthorizer, service: messaging },
+    escalations: { escalations, resolutions, replies, authorizer: guestAuthorizer, service: messaging },
     billing: { ledger: billing, tenants: store, authorizer: guestAuthorizer },
   })
   return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store), csrf: sessions }), api }
@@ -144,7 +146,7 @@ describe('billing page (?view=billing)', () => {
     seedEscalation(api, 'acme')
     const cookie = loginCookie(ui, 'acme', 'planner')
     const page = get(ui, '/t/acme?view=escalations', cookie).body as string
-    const sent = postForm(ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(page), escalation_id: escalationIdFrom(page), reply_text: 'Parking is in lot B.' }, cookie)
+    const sent = postForm(ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(page), escalation_id: escalationIdFrom(page), reply_text: 'Parking is in lot B.', seq: '0' }, cookie)
     expect(sent.status).toBe(303)
     const billing = get(ui, '/t/acme?view=billing', cookie).body as string
     expect(billing).toContain('1 message(s) sent')
@@ -181,7 +183,7 @@ describe('billing Pay form (Phase 31 — settle the owed balance)', () => {
     seedEscalation(api, 'acme')
     const cookie = loginCookie(ui, 'acme', 'planner')
     const inbox = get(ui, '/t/acme?view=escalations', cookie).body as string
-    postForm(ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(inbox), escalation_id: escalationIdFrom(inbox), reply_text: 'Parking is in lot B.' }, cookie)
+    postForm(ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(inbox), escalation_id: escalationIdFrom(inbox), reply_text: 'Parking is in lot B.', seq: '0' }, cookie)
     return cookie
   }
 
@@ -227,7 +229,7 @@ describe('billing Pay form (Phase 31 — settle the owed balance)', () => {
     // The planner owes a balance.
     const plannerCookie = loginCookie(ui, 'acme', 'planner')
     const inbox = get(ui, '/t/acme?view=escalations', plannerCookie).body as string
-    postForm(ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(inbox), escalation_id: escalationIdFrom(inbox), reply_text: 'Lot B.' }, plannerCookie)
+    postForm(ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(inbox), escalation_id: escalationIdFrom(inbox), reply_text: 'Lot B.', seq: '0' }, plannerCookie)
     // A couple's billing page is Forbidden (no Pay form / no CSRF token).
     const coupleCookie = loginCookie(ui, 'acme', 'couple', weddingId)
     expect(get(ui, '/t/acme?view=billing', coupleCookie).status).toBe(403)
@@ -258,7 +260,7 @@ describe('billing activity card (Phase 32 — the itemized line items)', () => {
     const cookie = loginCookie(ui, 'acme', 'planner')
     // A metered guest reply accrues a usage_charge.
     const inbox = get(ui, '/t/acme?view=escalations', cookie).body as string
-    postForm(ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(inbox), escalation_id: escalationIdFrom(inbox), reply_text: 'Lot B.' }, cookie)
+    postForm(ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(inbox), escalation_id: escalationIdFrom(inbox), reply_text: 'Lot B.', seq: '0' }, cookie)
     const owed = get(ui, '/t/acme?view=billing', cookie).body as string
     expect(owed).toContain('Messaging usage') // the usage line item is now itemized
     expect(owed).not.toContain('No activity yet.')

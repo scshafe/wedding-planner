@@ -8,6 +8,7 @@ import {
   BillingLedger,
   DeterministicGuestQaResponder,
   EscalationLog,
+  EscalationReplyLog,
   EscalationResolutionLog,
   GuestRegistry,
   InboundReceiptLog,
@@ -58,6 +59,7 @@ function makeWorld(): World {
   const adapter = new SimulatedMessagingAdapter(clock, new SequentialIdGenerator('seedM'))
   const escalations = new EscalationLog(store, new SequentialIdGenerator('seedEsc'))
   const resolutions = new EscalationResolutionLog(store, new SequentialIdGenerator('seedRes'), clock)
+  const replies = new EscalationReplyLog(store, new SequentialIdGenerator('seedRep'), clock)
   const messaging = new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS'))
   const guestAuthorizer = new GuestAuthorizer()
   const api = new ProductApi({
@@ -78,7 +80,7 @@ function makeWorld(): World {
       service: messaging,
       escalations,
     },
-    escalations: { escalations, resolutions, authorizer: guestAuthorizer, service: messaging },
+    escalations: { escalations, resolutions, replies, authorizer: guestAuthorizer, service: messaging },
   })
   return { api }
 }

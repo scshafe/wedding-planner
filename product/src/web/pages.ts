@@ -1,4 +1,4 @@
-import type { EscalationResolution, Guest, GuestEscalation, Tenant, Wedding } from '@wedding-planner/shared'
+import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Tenant, Wedding } from '@wedding-planner/shared'
 
 import type { BillingActivityEntry } from '../billing/billing_activity'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -352,44 +352,82 @@ export function renderHome(
 }
 
 /**
- * The themed escalation-inbox page (Phase 26 read + Phase 27 resolve): the questions guests asked that the
- * platform could not answer, split into OPEN (still to handle) and HANDLED (resolved/dismissed). Each OPEN row
- * carries a CSRF-protected Reply form (Phase 28 — a metered send back to the guest that auto-resolves) plus
- * Resolve and Dismiss forms (Phase 27 — the inbox's first mutation, reusing the Phase-21 seam; the page
- * therefore issues a CSRF token, unlike the read-only strategy page) plus a link to the matching wedding's edit
- * page (fill the missing fact → the next ask is answered). The guest's `text` is
- * UNTRUSTED input — it (and every other value, incl. the hidden `escalation_id`/`status`) flows through the
- * `html` template (escaped text, never a `src`/`href`), so a hostile question can never inject markup. Rendered
- * from the scoped `GET /t/:slug/escalations` (planner: whole tenant; couple: their wedding) so the page
- * discloses only in-scope rows; the `resolutions` are scoped by the SAME branch, joined here by `escalation_id`.
+ * Group a flat reply list into per-escalation THREADS, each sorted NUMERICALLY by `seq` (`a.seq - b.seq`, never
+ * lexicographic — or `10` would sort before `2`). Built from the ALREADY-SCOPED `replies` array the read
+ * returned (never a request-supplied escalation_id), so it discloses only what the scoped read already did. A
+ * forged far-future `seq` leaves only a harmless display gap — the numeric sort floats it to the end and the
+ * next legit reply takes `thread.length`; the render never array-INDEXES by `seq`.
+ */
+function threadsByEscalation(replies: readonly EscalationReply[]): Map<string, EscalationReply[]> {
+  const byEscalation = new Map<string, EscalationReply[]>()
+  for (const reply of replies) {
+    const thread = byEscalation.get(reply.escalation_id)
+    if (thread === undefined) byEscalation.set(reply.escalation_id, [reply])
+    else thread.push(reply)
+  }
+  for (const thread of byEscalation.values()) thread.sort((a, b) => a.seq - b.seq)
+  return byEscalation
+}
+
+/**
+ * The themed escalation-inbox page (Phase 26 read + Phase 27 resolve + Phase 28/34 multi-turn reply): the
+ * questions guests asked that the platform could not answer, split into OPEN (still to handle) and HANDLED
+ * (resolved/dismissed). Each row shows its reply THREAD (the question→answer transcript — Phase 34 replaced the
+ * single Phase-29 `reply_text`); each OPEN row carries a CSRF-protected Reply form (a metered send that APPENDS
+ * to the thread and does NOT resolve — so an operator can reply as many times as needed) plus Resolve and
+ * Dismiss forms (Phase 27 — the page issues a CSRF token, unlike the read-only strategy page) plus a link to
+ * the matching wedding's edit page. The Reply form carries a hidden `seq = (thread length)` — the render-time
+ * double-submit key: a re-POST of the same form re-sends the same seq (the JSON layer dedups it to one send);
+ * a fresh form (after a reply lands) carries `seq+1`. The guest's `text` AND every operator `body` are
+ * interpolated through the `html` template (escaped text, never a `src`/`href`/attribute), so neither a hostile
+ * question nor a reply can inject markup; an operator `body` is never reflected to the guest. Rendered from the
+ * scoped `GET /t/:slug/escalations` (planner: whole tenant; couple: their wedding); the `resolutions` AND
+ * `replies` are scoped by the SAME branch, joined here by `escalation_id`.
  */
 export function renderEscalations(
   theme: Tenant['theme'],
   slug: string,
   escalations: readonly GuestEscalation[],
   resolutions: readonly EscalationResolution[],
+  replies: readonly EscalationReply[],
   csrfToken: string,
 ): string {
   // Join by escalation_id: an escalation with a resolution is HANDLED; the rest are OPEN (the single-sourced
   // definition lives in `resolutionIndex` — the home's open-count uses the SAME join so the two can't drift).
+  // NOTE: open-count is intentionally REPLY-AGNOSTIC — a replied-but-unresolved escalation stays OPEN /
+  // needs-attention until an explicit resolve/dismiss; do NOT subtract replies from the open set.
   const resolutionOf = resolutionIndex(resolutions)
+  const threadOf = threadsByEscalation(replies)
   const open = escalations.filter((e) => !resolutionOf.has(e.escalation_id))
   const handled = escalations.filter((e) => resolutionOf.has(e.escalation_id))
 
   const actionForm = (escalationId: string, status: 'resolved' | 'dismissed', label: string): SafeHtml =>
     html`<form class="inline" method="post" action="/t/${slug}/escalations/resolve">${csrfField(csrfToken)}<input type="hidden" name="escalation_id" value="${escalationId}"><input type="hidden" name="status" value="${status}"><button type="submit">${label}</button></form>`
 
-  // Phase 28: a Reply form on each OPEN row — answer the guest directly (a metered send over the channel they
-  // asked on), which AUTO-resolves the escalation. Posts to the 4-seg web route (CSRF), distinct from the
-  // resolve form. reply_text is the operator's (trusted) body; it flows through `html` like every other value.
-  const replyForm = (escalationId: string): SafeHtml =>
-    html`<form method="post" action="/t/${slug}/escalations/reply">${csrfField(csrfToken)}<input type="hidden" name="escalation_id" value="${escalationId}"><textarea name="reply_text" rows="2" placeholder="Reply to the guest…" required></textarea><button type="submit">Send reply</button></form>`
+  // The reply THREAD (Phase 34): each operator message as a "Sender: body" line, escaped via `html` like every
+  // other value. Empty when no replies yet.
+  const threadView = (escalationId: string): SafeHtml => {
+    const thread = threadOf.get(escalationId) ?? []
+    if (thread.length === 0) return html``
+    const lines = thread.map((m) => html`<div class="note">${m.sender === 'planner' ? 'Planner' : 'Couple'}: “${m.body}”</div>`)
+    return html`${lines}`
+  }
+
+  // Phase 28/34: a Reply form on each OPEN row — answer the guest (a metered send over the channel they asked
+  // on) which APPENDS to the thread (no auto-resolve). Posts to the 4-seg web route (CSRF), distinct from the
+  // resolve form. The hidden `seq` = current thread length (the double-submit key). reply_text is the operator's
+  // (trusted) body; it flows through `html` like every other value.
+  const replyForm = (escalationId: string): SafeHtml => {
+    const seq = (threadOf.get(escalationId) ?? []).length
+    return html`<form method="post" action="/t/${slug}/escalations/reply">${csrfField(csrfToken)}<input type="hidden" name="escalation_id" value="${escalationId}"><input type="hidden" name="seq" value="${String(seq)}"><textarea name="reply_text" rows="2" placeholder="Reply to the guest…" required></textarea><button type="submit">Send reply</button></form>`
+  }
 
   const openRows = open.map(
     (e) => html`<div class="card">
     <div><strong>“${e.text}”</strong></div>
     <div class="note">From <code>${e.from_ref}</code> · ${e.received_at} · via ${e.channel}</div>
     <div class="note">Wedding <code>${e.wedding_id}</code> · <a href="/t/${slug}?wedding=${e.wedding_id}">Set the missing details →</a></div>
+    ${threadView(e.escalation_id)}
     ${replyForm(e.escalation_id)}
     <div class="inline">${actionForm(e.escalation_id, 'resolved', 'Mark resolved')} ${actionForm(e.escalation_id, 'dismissed', 'Dismiss')}</div>
   </div>`,
@@ -397,14 +435,11 @@ export function renderEscalations(
   const handledRows = handled.map((e) => {
     const r = resolutionOf.get(e.escalation_id) as EscalationResolution
     const badge = r.status === 'resolved' ? 'Resolved' : 'Dismissed'
-    // Phase 29: when the escalation was resolved by a console reply, show the operator's answer beneath the
-    // guest's question — the question→answer transcript. reply_text is the operator's (trusted) text but is
-    // interpolated as plain TEXT content through `html` (escaped exactly like e.text), never an attribute.
-    const replyLine =
-      r.reply_text === undefined ? html`` : html`<div class="note">Replied: “${r.reply_text}”</div>`
+    // Phase 34: show the full reply thread beneath the guest's question — the question→answer transcript.
+    // Each operator `body` is interpolated as plain TEXT through `html` (escaped exactly like e.text).
     return html`<div class="card">
     <div><strong>“${e.text}”</strong> <span class="note">— ${badge} by ${r.resolved_by}</span></div>
-    ${replyLine}
+    ${threadView(e.escalation_id)}
     <div class="note">From <code>${e.from_ref}</code> · ${e.received_at}</div>
   </div>`
   })
@@ -422,7 +457,7 @@ export function renderEscalations(
     html`<p><a href="/t/${slug}">← Home</a></p>
   <div class="card">
     <h2>Questions we couldn't answer</h2>
-    <p class="note">A guest texted in and we had no fact to answer from. Open the wedding to fill the detail — then the next guest who asks gets an automatic reply. Mark a question resolved once you've handled it, or dismiss one that isn't actionable.</p>
+    <p class="note">A guest texted in and we had no fact to answer from. Open the wedding to fill the detail — then the next guest who asks gets an automatic reply. Reply to the guest as many times as you need; mark a question resolved once you've handled it, or dismiss one that isn't actionable.</p>
   </div>
   ${openBody}
   ${handledBody}`,

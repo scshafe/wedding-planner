@@ -104,7 +104,7 @@ export {
   type AdminHandlerDeps,
   type MessagingHandlerDeps,
   type EscalationHandlerDeps,
-  REPLY_TEXT_MAX_LENGTH,
+  REPLY_BODY_MAX_LENGTH,
 } from './http/product_api'
 export { createProductApiServer, MAX_BODY_BYTES } from './http/node_server'
 
@@ -162,6 +162,7 @@ export { EscalationLog, type RecordEscalationInput } from './messaging/escalatio
 // The escalation-resolution log (Phase 27): the SEPARATE append-only record (keyed (tenant_id, escalation_id))
 // that marks a guest escalation handled (resolved/dismissed) WITHOUT mutating it; first-writer-wins (ADR 0027).
 export { EscalationResolutionLog, type RecordResolutionInput } from './messaging/escalation_resolution_log'
+export { EscalationReplyLog, type RecordReplyInput } from './messaging/escalation_reply_log'
 export {
   type GuestQaResponder,
   type GuestQaOutcome,
