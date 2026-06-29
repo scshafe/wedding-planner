@@ -115,17 +115,17 @@ that escalation_id (none → `open`; a `reopened` max-seq → `open`; `resolved`
   findings folded into the prose and Steps above (keystone-conditional, the documented guest-followup
   consequence, max-`seq` fold not last-in-array, `.ts` prose rewrite, uniform `{resolved:true}` body, the
   named test-migration breakages). Commit the plan.
-- [ ] **Step 1 — Schema + types.** MODIFY `escalation_resolution_schema.json` (add `seq`, status enum +=
+- [x] **Step 1 — Schema + types.** MODIFY `escalation_resolution_schema.json` (add `seq`, status enum +=
   `reopened`, rewrite descriptions). `npm run gen:types`. Verify build/test/lint green (existing tests still
   compile against the new optional-on-read shape; `seq` is required so update fixtures as needed).
-- [ ] **Step 2 — Transition log.** Rework `EscalationResolutionLog`: composite key, `transition()` with the
+- [x] **Step 2 — Transition log.** Rework `EscalationResolutionLog`: composite key, `transition()` with the
   directional no-op rule + `max+1` seq, `effectiveStatus()`, `effectiveTransition()`, remove
   `getByEscalationId`, rewrite the `@canonical` header prose. Update its unit tests
   (`escalation_resolution_log.test.ts`): resolve→reopen→re-resolve, double-submit idempotency, reopen-from-
   dismissed, **resolve→dismiss is a no-op** (directional rule preserves first-writer-wins for the handled
   status — architect P2-6), effectiveStatus fold (empty→open, reopened-max→open), tenant + per-wedding
   isolation on the MULTI-ROW shape (doddy P2-1). Green.
-- [ ] **Step 3 — Handlers + deps.** `product_api.ts`: enum += `reopened` in `handleEscalationResolve` +
+- [x] **Step 3 — Handlers + deps.** `product_api.ts`: enum += `reopened` in `handleEscalationResolve` +
   `transition()` call + uniform `{resolved:true}` body; reply gate + selector → `effectiveStatus`; narrow
   `MessagingHandlerDeps.resolutions` to `effectiveStatus`. `compose.ts` wiring (same instance, new Pick).
   **Migration breakage to fix (architect P1-1/P1-2):** `messaging_inbound_keystone.test.ts` calls
@@ -136,12 +136,12 @@ that escalation_id (none → `open`; a `reopened` max-seq → `open`; `resolved`
   P1-1 keystone-conditional); miss byte-identical; couple-foreign-wedding reopen masked; planner reopen any;
   guest follow-up after an operator reopen threads into the reopened escalation (doddy P1-2, still 202/no
   charge). Green.
-- [ ] **Step 4 — Page + web.** `pages.ts`: `effectiveStatusByEscalation` max-`seq` fold, `countOpenEscalations`
+- [x] **Step 4 — Page + web.** `pages.ts`: `effectiveStatusByEscalation` max-`seq` fold, `countOpenEscalations`
   + `renderEscalations` on the fold, Reopen button on handled rows (CSRF). No new web route. Update/extend page
   + e2e tests: a `[resolved@0, reopened@1]` escalation renders in OPEN + increments the open count, `[…,
   dismissed@2]` renders Handled (doddy P2-2 ordering); Reopen button present on handled, absent on open; Reopen
   form forwards no `reply_text` and routes to resolve (doddy P2-3); full browser resolve→reopen→reply loop. Green.
-- [ ] **Step 5 — Docs.** ADR 0036 (include the architect P2-7 note: an interim Phase-36 state allows a
+- [x] **Step 5 — Docs.** ADR 0036 (include the architect P2-7 note: an interim Phase-36 state allows a
   reopened escalation to coexist with a separate new escalation for the same guest — Phase-37 auto-reopen
   closes this); memory `[[escalation-status-transition-model]]` + MEMORY.md index; update this plan's boxes;
   refresh `.claude/handoff.local.md` (Phase 36 complete, Phase 37 = guest-follow-up auto-reopen as the next
