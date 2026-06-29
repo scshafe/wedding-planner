@@ -5,13 +5,15 @@ import { TenantScopedRepository } from '../tenant/tenant_scoped_repository'
 import type { TenantLivenessCheck } from '../tenant/tenant_store'
 
 /**
- * @canonical escalation_reply_log -- the per-tenant, wedding-scoped record of the operator (planner/couple)
- * messages sent on a guest escalation — the multi-turn reply THREAD (Phase 34). Where Phase 28 sent exactly
- * one reply per escalation and AUTO-resolved it, an OPEN escalation can now carry MANY replies: each console
- * "send reply" appends one of these and dispatches a metered guest message, WITHOUT resolving (resolving /
- * dismissing stays the explicit Phase-27 action — see {@link EscalationResolutionLog}). The thread is the
- * question→answer transcript the inbox renders; it REPLACED the Phase-29 `reply_text` that used to live on the
- * resolution.
+ * @canonical escalation_reply_log -- the per-tenant, wedding-scoped multi-turn reply THREAD on a guest
+ * escalation (Phase 34), now BI-DIRECTIONAL (Phase 35). Where Phase 28 sent exactly one reply per escalation
+ * and AUTO-resolved it, an OPEN escalation can now carry MANY turns: an OPERATOR (planner/couple) console
+ * "send reply" {@link append}s one and dispatches a metered guest message WITHOUT resolving (resolving /
+ * dismissing stays the explicit Phase-27 action — see {@link EscalationResolutionLog}); and (Phase 35) an
+ * inbound GUEST follow-up the platform can't answer is {@link recordGuestReply}'d as a `sender:'guest'` turn
+ * (a RECEIVED message — no send, no charge). The thread is the question→answer transcript the inbox renders;
+ * it REPLACED the Phase-29 `reply_text` that used to live on the resolution. The two entry points dedup on
+ * DIFFERENT keys (operator: client `seq`; guest: `provider_message_ref` — see each method).
  *
  * THE COMPOSITE KEY IS THE DOUBLE-SUBMIT GUARD. The backing {@link TenantScopedRepository} is KEYED BY
  * `${escalation_id}:${seq}` — one escalation holds many replies, one per `seq` (the 0-based thread position the
@@ -44,13 +46,26 @@ import type { TenantLivenessCheck } from '../tenant/tenant_store'
  * three-array read), messaging_service.ts (the metered send), ADR 0034.
  */
 
-/** What the reply handler supplies (tenant_id from the CONTEXT; reply_id/sent_at stamped here). */
+/** What the OPERATOR reply handler supplies (tenant_id from the CONTEXT; reply_id/sent_at stamped here). */
 export interface RecordReplyInput {
   readonly escalation_id: string
   readonly wedding_id: string
   /** The 0-based thread position = the per-tenant double-submit key (composite `${escalation_id}:${seq}`). */
   readonly seq: number
-  readonly sender: EscalationReply['sender']
+  /** Operator turns only — a guest turn is appended via {@link EscalationReplyLog.recordGuestReply}. */
+  readonly sender: 'planner' | 'couple'
+  readonly body: string
+}
+
+/**
+ * What the INBOUND edge supplies to thread a GUEST follow-up (Phase 35). No `seq` (allocated above the
+ * thread's high-water mark here); no `sender` (always `'guest'`); tenant_id/reply_id/sent_at stamped here.
+ * `provider_message_ref` is the inbound message's opaque ref — the re-delivery dedup key.
+ */
+export interface RecordGuestReplyInput {
+  readonly escalation_id: string
+  readonly wedding_id: string
+  readonly provider_message_ref: string
   readonly body: string
 }
 
@@ -104,6 +119,56 @@ export class EscalationReplyLog {
     }
     getSchemaRegistry().assertValid<EscalationReply>('escalation_reply', reply)
     return this.#repo.put(context, reply)
+  }
+
+  /**
+   * Thread an INBOUND GUEST follow-up as a `sender:'guest'` turn (Phase 35) — the BI-DIRECTIONAL sibling of
+   * {@link append}. Both append a turn to the SAME composite-slot thread, but the two provenances dedup on
+   * DIFFERENT keys:
+   *   - {@link append} (operator): the client-carried `seq` IS the key — a form re-POST re-sends the same seq
+   *     (put-if-absent), and the handler arbitrates a same-seq/different-body race with a 409.
+   *   - this method (guest): the inbound `provider_message_ref` is the key — a provider RE-DELIVERY carries the
+   *     same ref. A guest has no form and no seq, so we DEDUP BY REF (scan the thread) and then allocate the
+   *     slot STRICTLY ABOVE THE THREAD'S HIGH-WATER MARK (`max(seq)+1`, 0 if empty) — NEVER `thread.length`,
+   *     which would land inside a gap left by a forged/sparse operator `seq` and silently overwrite/drop a turn.
+   *     `max+1` is provably free of every occupied slot, so the inherited put-if-absent is an unreachable net.
+   * The verb `record` (vs `append`) signals "ref-keyed, like escalation_log.record". A guest turn carries NO
+   * send and NO charge — it is a RECEIVED message filed into the conversation. `body` is UNTRUSTED guest input
+   * (already passed the inbound edge; the schema `body` has NO maxLength so it can never fail validation here —
+   * no 500 oracle), HTML-escaped at render, never reflected back to the guest. NOTE: a tenant-wide re-delivery
+   * guard belongs at the inbound handler (the §B0 process-once gate) — the per-thread scan here only dedups a
+   * re-delivery that re-selects the SAME escalation; the handler's `guestTurnByProviderRef` closes the rest.
+   */
+  recordGuestReply(context: TenantContext, input: RecordGuestReplyInput): EscalationReply {
+    const thread = this.#repo.list(context).filter((reply) => reply.escalation_id === input.escalation_id)
+    const existing = thread.find((reply) => reply.provider_message_ref === input.provider_message_ref)
+    if (existing !== undefined) return existing
+    // Allocate above the high-water mark — never thread.length (a gap-collision / silent-drop vector).
+    const seq = thread.reduce((max, reply) => Math.max(max, reply.seq), -1) + 1
+    const reply: EscalationReply = {
+      reply_id: this.ids.next('reply'),
+      tenant_id: context.tenant_id,
+      escalation_id: input.escalation_id,
+      wedding_id: input.wedding_id,
+      seq,
+      sender: 'guest',
+      body: input.body,
+      provider_message_ref: input.provider_message_ref,
+      sent_at: this.clock.now(),
+    }
+    getSchemaRegistry().assertValid<EscalationReply>('escalation_reply', reply)
+    return this.#repo.put(context, reply)
+  }
+
+  /**
+   * The tenant-wide re-delivery guard for the §B0 process-once gate (Phase 35): the existing GUEST turn (in
+   * ANY of this tenant's escalation threads) carrying `provider_message_ref`, or `undefined`. A tenant-scoped
+   * scan (the repo is keyed by `${escalation_id}:${seq}`, not the ref). Only matches `sender:'guest'` turns —
+   * an operator turn never carries a ref (the schema allOf forbids it). Used by the inbound handler to no-op a
+   * re-delivery whose message already landed as a guest turn, even if its escalation was since resolved.
+   */
+  guestTurnByProviderRef(context: TenantContext, provider_message_ref: string): EscalationReply | undefined {
+    return this.#repo.list(context).find((reply) => reply.provider_message_ref === provider_message_ref)
   }
 
   /** Every reply within the context's tenant (planner-facing; only ever this tenant's partition). */

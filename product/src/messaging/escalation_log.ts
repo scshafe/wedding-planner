@@ -83,6 +83,17 @@ export class EscalationLog {
     return this.#repo.put(context, escalation)
   }
 
+  /**
+   * Look up the escalation a given inbound `provider_message_ref` CREATED, or `undefined` (Phase 35). The
+   * backing repo is keyed by `provider_message_ref`, so this is the O(1) direct read (unlike the
+   * `getByEscalationId` scan). The inbound handler's process-once gate uses it to no-op a re-delivery of an
+   * escalation-creating message BEFORE routing it (so a re-delivery is never threaded as a spurious guest
+   * turn). Tenant-scoped by construction; a missing/foreign ref returns `undefined` (no oracle).
+   */
+  getByProviderRef(context: TenantContext, provider_message_ref: string): GuestEscalation | undefined {
+    return this.#repo.read(context, provider_message_ref)
+  }
+
   /** Every escalation within the context's tenant (planner-facing; only ever this tenant's partition). */
   list(context: TenantContext): readonly GuestEscalation[] {
     return this.#repo.list(context)

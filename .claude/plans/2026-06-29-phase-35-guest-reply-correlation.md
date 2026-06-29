@@ -79,6 +79,29 @@ appending would let a re-delivery (after the first append grew the thread) compu
 DUPLICATE. So a guest turn MUST dedup by `provider_message_ref`, exactly as `escalation_log.record`
 already does for the escalation itself.
 
+**B0. The PROCESS-ONCE gate — the re-delivery routing-instability bug (self-caught; BOTH review agents
+missed it).** The split routing (thread-or-record) makes a per-thread ref-scan INSUFFICIENT, because the
+selector's output can change between deliveries:
+- *The common break:* a brand-new escalated question finds no open escalation → records a fresh escalation
+  `E_new` (now OPEN) with `provider_message_ref = R`. A provider RE-DELIVERY of that SAME message (ref `R`)
+  re-runs the selector, which now picks `E_new` (open, this guest, this wedding) and threads `R` as a guest
+  turn — `E_new`'s thread was empty so the per-thread ref-scan doesn't catch it. **Every re-delivery of a
+  freshly-escalated message would create a spurious duplicate guest turn.**
+- *The cross-resolve break:* a follow-up `R2` threads into `E_new`, `E_new` is resolved, then `R2`
+  re-delivers → selector finds no open escalation → records `R2` as a FRESH escalation (duplicate of the
+  threaded turn).
+- **Fix — gate the whole escalated branch on TWO "already processed?" reads BEFORE routing:**
+  1. `escalations.getByProviderRef(context, R)` — the `EscalationLog` repo is ALREADY keyed by
+     `provider_message_ref`, so this is an **O(1)** `#repo.read`. If `R` already created an escalation → the
+     re-delivery is a no-op (never threaded).
+  2. `replies.guestTurnByProviderRef(context, R)` — a tenant-scoped scan for a guest turn carrying `R`. If
+     `R` already landed as a guest turn (in ANY escalation, even a since-resolved one) → no-op. Closes the
+     cross-resolve break.
+  Then route (thread vs fresh-record). This is the escalated-branch analogue of the answered branch's
+  top-of-handler `receipts.seen(R)` short-circuit — each side-effect log still owns its own idempotency
+  (no widening of the doddy-P0 receipt log); the gate just consults BOTH escalated-side logs before routing.
+  Enumerated cases all collapse to exactly one record per inbound ref.
+
 **Resolution — a separate `recordGuestReply` entry point on `EscalationReplyLog`:**
 - `recordGuestReply(context, {escalation_id, wedding_id, provider_message_ref, body})`:
   1. scan the escalation's existing thread (`list(context).filter(r => r.escalation_id === escalation_id)`)
@@ -204,10 +227,16 @@ exploit, no cost-amplification, no stored-XSS. Findings folded above (§B, §D) 
 ### Step 3 — Inbound correlation in `handleInbound`
 - [ ] Add `resolutions: Pick<EscalationResolutionLog,'getByEscalationId'>` (read-only narrowing — inbound
   reads the open-status, never resolves — P2) + `replies: EscalationReplyLog` to `MessagingHandlerDeps`.
+- [ ] Add `EscalationLog.getByProviderRef(context, ref)` (O(1) `#repo.read` — the repo is keyed by the ref)
+  and `EscalationReplyLog.guestTurnByProviderRef(context, ref)` (tenant scan for a guest turn carrying ref).
 - [ ] Add the module-private `mostRecentOpenEscalationForGuest(context, deps, wedding_id, from_ref)`
   selector (§A) — returns the target `GuestEscalation` or `undefined`. The `received_at` max-by pick uses
   a stable `escalation_id` tiebreak FOR DETERMINISM ONLY (not a recency guarantee — two escalations at the
   same tick are both that guest's open conversation; the choice is immaterial).
+- [ ] In the `escalated` branch, apply the §B0 PROCESS-ONCE gate FIRST (getByProviderRef + guestTurnByProviderRef
+  → no-op on a re-delivery), THEN route (thread vs fresh-record). Tests must cover: re-delivery of a
+  freshly-escalated message does NOT spawn a guest turn (the common break); a threaded follow-up's
+  re-delivery after its escalation is RESOLVED does not spawn a fresh escalation (the cross-resolve break).
 - [ ] In `handleInbound`'s `escalated` branch: select the target; if found →
   `deps.replies.recordGuestReply(...)` (escalation_id/wedding_id COPIED from the live escalation,
   provider_message_ref/body from the validated message); else → the existing `escalations.record(...)`.

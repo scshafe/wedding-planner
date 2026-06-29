@@ -5,9 +5,11 @@
  */
 
 /**
- * One operator (planner/couple) message in a guest escalation's reply THREAD (Phase 34 — multi-turn). Where Phase 28 sent exactly one reply per escalation and auto-resolved it, an OPEN escalation can now carry MANY replies: each `send reply` from the console appends one of these and dispatches a metered message back to the guest, WITHOUT resolving the escalation (resolving/dismissing stays the explicit Phase-27 action). The thread is the question->answer transcript the inbox renders. Always accessed through a tenant-scoped repository KEYED BY (tenant_id, `${escalation_id}:${seq}`): the composite `${escalation_id}:${seq}` is the per-tenant idempotency/double-submit key (read-first-put-if-absent), and `seq` is the render-time thread position the form carries. The reply path is decoupled from the resolution: a reply no longer writes an escalation_resolution. Inbound guest replies landing back in the thread are a separate, deferred design (the provider port carries only opaque refs, no conversation id). See escalation_reply_log.ts, escalation_log.ts, escalation_resolution_schema.json, and ADR 0034.
+ * One message in a guest escalation's reply THREAD — multi-turn (Phase 34) and BI-DIRECTIONAL (Phase 35). Where Phase 28 sent exactly one reply per escalation and auto-resolved it, an OPEN escalation now carries MANY turns: an operator (`sender` planner/couple) `send reply` appends one of these AND dispatches a metered message back to the guest WITHOUT resolving (resolving/dismissing stays the explicit Phase-27 action); and (Phase 35) an inbound GUEST follow-up that the platform can't answer lands in the guest's most-recent OPEN escalation as a `sender:'guest'` turn instead of opening a new escalation (a RECEIVED message — no send, no charge). The thread is the question->answer transcript the inbox renders. Always accessed through a tenant-scoped repository KEYED BY (tenant_id, `${escalation_id}:${seq}`); the composite key is per-tenant. The two turn provenances have DIFFERENT idempotency keys: an operator turn dedups by the client-carried `seq` (form double-submit, read-first-put-if-absent; a same-seq/different-body re-POST is a 409 lost-update at the handler), while a guest turn dedups by `provider_message_ref` (provider re-delivery) and allocates its slot above the thread's high-water mark (`max(seq)+1`). The reply path is decoupled from the resolution: no turn writes an escalation_resolution. See escalation_reply_log.ts, escalation_log.ts, escalation_resolution_schema.json, and ADR 0034 / ADR 0035.
  */
-export interface EscalationReply {
+export type EscalationReply = ({
+[k: string]: unknown
+} & {
 /**
  * The platform-minted public surrogate id for this reply (ids.next('reply')). NEVER the storage key — the (tenant_id, `${escalation_id}:${seq}`) pair is; this is the audit/display id.
  */
@@ -29,15 +31,19 @@ wedding_id: string
  */
 seq: number
 /**
- * The role of the principal who sent this reply (principal.role, from the minted session — never the body). Display metadata, never read for a decision.
+ * Who authored this turn: a `planner`/`couple` operator (principal.role, from the minted session — never the body) sending a reply, or (Phase 35) the `guest` whose inbound follow-up landed in the thread (set server-side at the inbound edge, never from a body field). Display metadata, never read for a decision; the `guest` value also pairs with a required `provider_message_ref` via the allOf above.
  */
-sender: ("planner" | "couple")
+sender: ("planner" | "couple" | "guest")
 /**
- * The operator's reply text. TRUSTED couple/planner input; returned in the scoped `GET /t/:slug/escalations` JSON body AND HTML-escaped when rendered on the thread — NEVER reflected back to the guest (the guest send used the operator's freshly-typed text; this persisted copy is the transcript, read only by the same scope that wrote it). maxLength:2000 MATCHES the handler's REPLY_BODY_MAX_LENGTH and minLength:1 matches requireString's non-empty guarantee, so a reply that passed the handler can never fail validation here (no 500 oracle); the two `2000`s are drift-guarded by a test.
+ * The turn's text. For an operator turn: TRUSTED couple/planner reply text, capped at the handler's REPLY_BODY_MAX_LENGTH (a SEND/cost bound, not a storage bound — enforced ONLY at the handler, the sole surviving cap post-Phase-35). For a guest turn (Phase 35): UNTRUSTED inbound guest text, byte-identical in constraint to inbound_webhook.text / guest_escalation.text (minLength:1, NO maxLength) so any message that passed the inbound edge can never fail validation here (no 500 oracle / no swallowed capture). Both provenances are returned in the scoped `GET /t/:slug/escalations` JSON body AND HTML-escaped when rendered on the thread — a guest turn is NEVER reflected back to the guest; an operator turn's persisted copy is the transcript, read only by the same scope that wrote it. The maxLength was DROPPED in Phase 35 because the field now hosts unbounded guest input; the operator cap moved entirely to the handler.
  */
 body: string
 /**
- * ISO 8601 UTC time the reply was sent, from the injected clock (never ambient; platform-stamped, not operator-controlled). minLength:1 with NO format/pattern (matches escalation_resolution.resolved_at / guest_escalation.received_at) so the real clock.now() value can never fail validation here (no 500 oracle).
+ * Present IFF `sender` is `guest` (Phase 35): the opaque provider ref of the inbound guest message this turn records — its per-tenant re-delivery dedup key (recordGuestReply scans the thread for a matching ref so a re-delivered inbound records exactly one turn). A provider-controlled value safe as a dedup scan key because the partition is `context.tenant_id` ALONE and the scan is within the already-selected escalation's own thread. FORBIDDEN on operator turns (the allOf above), so its presence is the trusted guest/operator discriminant.
+ */
+provider_message_ref?: string
+/**
+ * ISO 8601 UTC time the turn was recorded, from the injected clock (never ambient; platform-stamped, not operator- or guest-controlled). minLength:1 with NO format/pattern (matches escalation_resolution.resolved_at / guest_escalation.received_at) so the real clock.now() value can never fail validation here (no 500 oracle).
  */
 sent_at: string
-}
+})

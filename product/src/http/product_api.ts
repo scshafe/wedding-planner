@@ -1,6 +1,7 @@
 import {
   deepFreeze,
   getSchemaRegistry,
+  type GuestEscalation,
   type InboundWebhook,
   type StrategyGenome,
   type Tenant,
@@ -160,6 +161,15 @@ export interface MessagingHandlerDeps {
   readonly responder: GuestQaResponder
   readonly service: MessagingService
   readonly escalations: EscalationLog
+  /**
+   * Phase 35 — guest-reply → thread correlation. The inbound edge READS these to decide whether an
+   * `escalated` follow-up threads into the guest's most-recent OPEN escalation (vs opening a new one):
+   * `resolutions` is NARROWED to `getByProviderRef`-free read-only (`getByEscalationId` — the open-status
+   * join; inbound NEVER resolves, so the narrowing makes that structural, mirroring BillingHandlerDeps); the
+   * full `replies` log is the write target (`recordGuestReply`) + the re-delivery guard (`guestTurnByProviderRef`).
+   */
+  readonly resolutions: Pick<EscalationResolutionLog, 'getByEscalationId'>
+  readonly replies: EscalationReplyLog
 }
 
 /**
@@ -1027,8 +1037,12 @@ function dispatchMessaging(
  *      send succeeds (doddy P1: commit-after-success — a send failure stays retryable and the ack stays 202).
  *      On `escalated` (a question we could not answer), record it in the `escalations` inbox so the couple/
  *      planner can read it (Phase 26) — idempotent by provider_message_ref, so a re-delivery records exactly
- *      one. `refused` records NOTHING (the fact-independent surprise outcome; recording it would persist
- *      surprise-probe content — see escalation_log.ts). EVERY branch still returns the SAME uniform 202.
+ *      one. Phase 35: an `escalated` follow-up from a guest who already has an OPEN escalation in their bound
+ *      wedding THREADS into it (a `sender:'guest'` turn) instead of opening a new escalation — gated by the
+ *      §B0 process-once reads so a re-delivery is never duplicated; routing is invisible to the guest (still
+ *      202) and carries no send/charge. `refused` records NOTHING (the fact-independent surprise outcome;
+ *      recording it would persist surprise-probe content — see escalation_log.ts). EVERY branch still returns
+ *      the SAME uniform 202.
  * Identity is sourced from trusted state ONLY — the registry's stored recipient_ref + the bound wedding_id,
  * never a body field — so a body-smuggled guest_id/wedding_id is inert.
  */
@@ -1072,22 +1086,86 @@ function handleInbound(context: TenantContext, req: ApiRequest, deps: MessagingH
     // Commit-after-success: only now is the ref a no-op for future re-deliveries.
     deps.receipts.markReplied(context, message.provider_message_ref, replyId)
   } else if (outcome.action === 'escalated') {
-    // Record the unanswerable question for the couple/planner inbox (Phase 26). Idempotent by
-    // provider_message_ref, so a re-delivery records exactly one. Sourced from TRUSTED state + the
-    // already-validated message ONLY (binding.wedding_id, message.sender_ref/body/received_at/ref), never the
-    // raw body. NOT swallowed to 202: record() cannot be provoked to throw by guest input that passed the
-    // inbound edge (its `text` constraint matches inbound_webhook.text), so a throw here is a genuine bug, not
-    // a guest-reachable oracle. `refused` records nothing (the fact-independent surprise outcome).
-    deps.escalations.record(context, {
-      wedding_id: binding.wedding_id,
-      from_ref: message.sender_ref,
-      text: message.body,
-      received_at: message.received_at,
-      provider_message_ref: message.provider_message_ref,
-      channel: message.channel, // Phase 28: the reply-routing snapshot — a console reply sends back over this.
-    })
+    // Phase 35 — guest-reply → thread correlation. An `escalated` follow-up from a guest who already has an
+    // OPEN escalation in their CURRENTLY-BOUND wedding lands in THAT escalation's thread (a `sender:'guest'`
+    // turn) instead of opening a new one; only a genuinely new conversation opens a fresh escalation. The
+    // target is inferred ENTIRELY from trusted state (the live binding's wedding_id + the registry-vetoed
+    // sender_ref), never the inbound body. Like the record path, this is a server-side write invisible to the
+    // guest (every branch returns the uniform 202) and carries NO send / NO charge — a guest turn is a
+    // RECEIVED message we file into the conversation.
+    //
+    // PROCESS-ONCE gate (§B0): the split routing makes a per-thread ref-scan insufficient, because the
+    // selector's output can change between provider re-deliveries (a freshly-recorded escalation is OPEN, so a
+    // re-delivery of the SAME message would otherwise thread into it; a since-resolved escalation would drop a
+    // re-delivered follow-up to a fresh escalation). So gate on TWO "already processed?" reads BEFORE routing:
+    const ref = message.provider_message_ref
+    if (
+      deps.escalations.getByProviderRef(context, ref) === undefined && // (1) ref didn't already CREATE an escalation
+      deps.replies.guestTurnByProviderRef(context, ref) === undefined // (2) ref didn't already land as a guest turn
+    ) {
+      const target = mostRecentOpenEscalationForGuest(context, deps, binding.wedding_id, message.sender_ref)
+      if (target !== undefined) {
+        // Thread the follow-up. escalation_id/wedding_id COPIED from the live escalation (never the body);
+        // body/ref from the already-validated inbound message. recordGuestReply allocates the slot above the
+        // thread's high-water mark and dedups by ref; the schema body has no maxLength so a long guest message
+        // can never fail validation here (no 500 oracle), exactly as escalation.record cannot.
+        deps.replies.recordGuestReply(context, {
+          escalation_id: target.escalation_id,
+          wedding_id: target.wedding_id,
+          provider_message_ref: ref,
+          body: message.body,
+        })
+      } else {
+        // A new conversation: record the unanswerable question for the couple/planner inbox (Phase 26).
+        // Idempotent by provider_message_ref; sourced from TRUSTED state + the validated message ONLY, never
+        // the raw body. NOT swallowed to 202: record() cannot be provoked to throw by guest input that passed
+        // the inbound edge (its `text` constraint matches inbound_webhook.text), so a throw is a genuine bug.
+        deps.escalations.record(context, {
+          wedding_id: binding.wedding_id,
+          from_ref: message.sender_ref,
+          text: message.body,
+          received_at: message.received_at,
+          provider_message_ref: ref,
+          channel: message.channel, // Phase 28: the reply-routing snapshot — a console reply sends back over this.
+        })
+      }
+    }
   }
   return RESP_ACCEPTED
+}
+
+/**
+ * Phase 35 — the guest-reply correlation selector. Returns the guest's MOST-RECENT OPEN escalation in their
+ * CURRENTLY-BOUND wedding, or `undefined` if none. The DUAL match (from_ref AND wedding_id) is the
+ * cross-wedding mis-segmentation defense (doddy): a `recipient_ref` re-bound from wedding A to B carries stale
+ * A-escalations, but filtering candidates by `binding.wedding_id` (the CURRENT trusted binding) excludes them,
+ * so a re-bound guest's message can only ever reach an open escalation in their current wedding. Both axes are
+ * TRUSTED state (the live binding + the recorded escalation), never the inbound body. OPEN = no resolution
+ * (the same join the inbox uses). The `received_at` max-by pick breaks ties on `escalation_id` FOR
+ * DETERMINISM ONLY (not a recency guarantee — both are that guest's open conversation, so the choice is
+ * immaterial). All reads are tenant-scoped by the minted context.
+ */
+function mostRecentOpenEscalationForGuest(
+  context: TenantContext,
+  deps: MessagingHandlerDeps,
+  wedding_id: string,
+  from_ref: string,
+): GuestEscalation | undefined {
+  const open = deps.escalations
+    .listForWedding(context, wedding_id)
+    .filter((escalation) => escalation.from_ref === from_ref)
+    .filter((escalation) => deps.resolutions.getByEscalationId(context, escalation.escalation_id) === undefined)
+  let best: GuestEscalation | undefined
+  for (const escalation of open) {
+    if (
+      best === undefined ||
+      escalation.received_at > best.received_at ||
+      (escalation.received_at === best.received_at && escalation.escalation_id > best.escalation_id)
+    ) {
+      best = escalation
+    }
+  }
+  return best
 }
 
 function dispatchAdmin(req: ApiRequest, segments: readonly string[], deps: AdminHandlerDeps): ApiResponse {

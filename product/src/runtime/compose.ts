@@ -186,6 +186,12 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
       responder: guestResponder,
       service: messaging,
       escalations,
+      // Phase 35 — guest-reply → thread correlation: the SAME resolution + reply log instances the escalation
+      // read/resolve/reply surface uses, so an inbound `escalated` follow-up can thread into the guest's
+      // most-recent OPEN escalation (resolutions = the open-status join; replies = the write target + the
+      // re-delivery guard) instead of opening a new one.
+      resolutions,
+      replies,
     },
     // The escalation inbox READ + RESOLVE + REPLY surface (Phase 26 + 27 + 28 + 34) — the SAME log instances the
     // inbound capture / resolve / reply mutations write to, read-scoped by the guest authorizer's manageScope

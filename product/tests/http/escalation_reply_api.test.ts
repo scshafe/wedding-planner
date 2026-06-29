@@ -85,6 +85,8 @@ function makeWorld(): World {
       responder: new DeterministicGuestQaResponder(),
       service: messaging,
       escalations,
+      resolutions,
+      replies,
     },
     escalations: { escalations, resolutions, replies, authorizer: guestAuthorizer, service: messaging },
   })

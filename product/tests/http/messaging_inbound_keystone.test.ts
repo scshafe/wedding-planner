@@ -8,6 +8,8 @@ import {
   BillingLedger,
   DeterministicGuestQaResponder,
   EscalationLog,
+  EscalationReplyLog,
+  EscalationResolutionLog,
   GuestRegistry,
   InboundReceiptLog,
   MessagingService,
@@ -48,6 +50,8 @@ interface World {
   service: MessagingService
   registry: GuestRegistry
   escalations: EscalationLog
+  resolutions: EscalationResolutionLog
+  replies: EscalationReplyLog
   resolver: TenantContextResolver
   weddings: WeddingRepository
   tenantAId: string
@@ -68,6 +72,8 @@ function makeWorld(): World {
   const service = new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS'))
   const registry = new GuestRegistry(store)
   const escalations = new EscalationLog(store, new SequentialIdGenerator('seedEsc'))
+  const resolutions = new EscalationResolutionLog(store, new SequentialIdGenerator('seedRes'), clock)
+  const replies = new EscalationReplyLog(store, new SequentialIdGenerator('seedRep'), clock)
   const api = new ProductApi({
     resolver,
     sessionStore: new SessionStore(new SequentialIdGenerator('seedS')),
@@ -85,6 +91,8 @@ function makeWorld(): World {
       responder: new DeterministicGuestQaResponder(),
       service,
       escalations,
+      resolutions,
+      replies,
     },
   })
   return {
@@ -92,6 +100,8 @@ function makeWorld(): World {
     service,
     registry,
     escalations,
+    resolutions,
+    replies,
     resolver,
     weddings,
     tenantAId: a.tenant_id,

@@ -7,6 +7,8 @@ import {
   BillingLedger,
   DeterministicGuestQaResponder,
   EscalationLog,
+  EscalationReplyLog,
+  EscalationResolutionLog,
   GuestRegistry,
   InboundReceiptLog,
   MessagingService,
@@ -72,6 +74,8 @@ function makeWorld(): World {
       responder: new DeterministicGuestQaResponder(),
       service: new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS')),
       escalations: new EscalationLog(store, new SequentialIdGenerator('seedEsc')),
+      resolutions: new EscalationResolutionLog(store, new SequentialIdGenerator('seedRes'), new ManualClock('2027-03-01T00:00:00.000Z')),
+      replies: new EscalationReplyLog(store, new SequentialIdGenerator('seedRep'), new ManualClock('2027-03-01T00:00:00.000Z')),
     },
   })
   return { api }

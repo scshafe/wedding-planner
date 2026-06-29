@@ -404,12 +404,16 @@ export function renderEscalations(
   const actionForm = (escalationId: string, status: 'resolved' | 'dismissed', label: string): SafeHtml =>
     html`<form class="inline" method="post" action="/t/${slug}/escalations/resolve">${csrfField(csrfToken)}<input type="hidden" name="escalation_id" value="${escalationId}"><input type="hidden" name="status" value="${status}"><button type="submit">${label}</button></form>`
 
-  // The reply THREAD (Phase 34): each operator message as a "Sender: body" line, escaped via `html` like every
-  // other value. Empty when no replies yet.
+  // The reply THREAD (Phase 34): each turn as a "Sender: body" line, escaped via `html` like every other value.
+  // Phase 35: the thread is BI-DIRECTIONAL — a `guest` turn (an inbound follow-up) sits beside operator turns.
+  // The label is an EXHAUSTIVE three-way map (NOT a binary `planner`-else fallthrough, which would mislabel a
+  // guest turn as "Couple" — a trust-presentation bug). Empty when no turns yet.
+  const senderLabel = (sender: EscalationReply['sender']): string =>
+    sender === 'guest' ? 'Guest' : sender === 'planner' ? 'Planner' : 'Couple'
   const threadView = (escalationId: string): SafeHtml => {
     const thread = threadOf.get(escalationId) ?? []
     if (thread.length === 0) return html``
-    const lines = thread.map((m) => html`<div class="note">${m.sender === 'planner' ? 'Planner' : 'Couple'}: “${m.body}”</div>`)
+    const lines = thread.map((m) => html`<div class="note">${senderLabel(m.sender)}: “${m.body}”</div>`)
     return html`${lines}`
   }
 
