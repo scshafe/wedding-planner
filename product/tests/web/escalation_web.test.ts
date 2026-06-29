@@ -289,3 +289,49 @@ describe('escalation inbox web page — reply-from-the-inbox (Phase 28/34 multi-
     expect(res.body).toContain('does not exist')
   })
 })
+
+describe('escalation inbox web page — guest-reply thread correlation (Phase 35)', () => {
+  /** Drive an UNANSWERABLE inbound follow-up from the SAME guest (fresh ref) → threads into the open escalation. */
+  function followUp(api: ProductApi, slug: string, text: string, ref: string): void {
+    const res = api.handle({
+      method: 'POST',
+      path: `/t/${slug}/messaging/inbound`,
+      headers: { authorization: `Bearer ${WH}`, 'content-type': 'application/json' },
+      rawBody: JSON.stringify({ channel: 'sms', from_ref: 'sms:+15550100', text, provider_message_ref: ref }),
+    })
+    expect(res.status).toBe(202)
+  }
+
+  it('a guest follow-up renders as a "Guest:" turn in the thread, interleaved with an operator reply', () => {
+    const w = makeWorld()
+    seedEscalation(w.api, 'acme') // opens E1 (the guest asked "where do I park?")
+    const cookie = loginCookie(w.ui, 'acme', 'planner')
+    // The operator replies, then the guest texts a follow-up that threads in.
+    const page = get(w.ui, '/t/acme?view=escalations', cookie).body as string
+    postForm(w.ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(page), escalation_id: escalationIdFrom(page), reply_text: 'Lot B.', seq: '0' }, cookie)
+    followUp(w.api, 'acme', 'Can I bring my dog too?', 'pm_follow')
+    const after = get(w.ui, '/t/acme?view=escalations', cookie).body as string
+    expect(after).toContain('Planner: “Lot B.”') // operator turn
+    expect(after).toContain('Guest: “Can I bring my dog too?”') // guest turn (three-way label — NOT "Couple")
+    expect(after).not.toContain('Couple: “Can I bring my dog too?”') // would be the binary-ternary mislabel
+  })
+
+  it('an UNTRUSTED guest follow-up body is HTML-escaped in the thread (no stored XSS into the operator view)', () => {
+    const w = makeWorld()
+    seedEscalation(w.api, 'acme')
+    const cookie = loginCookie(w.ui, 'acme', 'planner')
+    followUp(w.api, 'acme', "<script>alert('x')</script>", 'pm_xss')
+    const after = get(w.ui, '/t/acme?view=escalations', cookie).body as string
+    expect(after).toContain('Guest: “&lt;script&gt;') // escaped
+    expect(after).not.toContain("<script>alert('x')</script>") // never raw
+  })
+
+  it('the reply form seq counts a guest turn (the operator double-submit guard stays correct)', () => {
+    const w = makeWorld()
+    seedEscalation(w.api, 'acme')
+    const cookie = loginCookie(w.ui, 'acme', 'planner')
+    expect(get(w.ui, '/t/acme?view=escalations', cookie).body).toContain('name="seq" value="0"') // empty thread
+    followUp(w.api, 'acme', 'Any update?', 'pm_seq')
+    expect(get(w.ui, '/t/acme?view=escalations', cookie).body).toContain('name="seq" value="1"') // the guest turn occupies slot 0
+  })
+})
