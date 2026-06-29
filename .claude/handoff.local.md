@@ -1,76 +1,73 @@
 # Handoff
 
-## Where things stand — Phase 34 (multi-turn console reply thread) is COMPLETE ✅
-`.claude/plans/2026-06-28-phase-34-multi-turn-reply-thread.md` is **complete — Step 0 design review + the
-implementation (plan Steps 1–3, landed as ONE coherent commit because the schema retirement, the decoupled
-handler, and the web form's `seq` are inseparable) + Step 4 docs**, on branch
-**`build/phase-34-multi-turn-reply-thread`** (off `build/phase-33-account-home-overview`, the open
+## Where things stand — Phase 35 (guest-reply → thread correlation) is COMPLETE ✅
+`.claude/plans/2026-06-29-phase-35-guest-reply-correlation.md` is **complete — Step 0 design review (both
+lenses APPROVE-WITH-FIXES) + Steps 1–4 implementation + Step 5 docs**, on branch
+**`build/phase-35-guest-reply-correlation`** (off `build/phase-34-multi-turn-reply-thread`, the open
 review-artifact stack toward `main`; the loop's merge-keeper advances `main` when green). Working tree clean.
-`npm run build && npm test && npm run lint` all green (**953 tests**, up from 945 at the start of this run).
+`npm run build && npm test && npm run lint` all green (**970 tests**, up from 953 at the start of this run).
 
-This rung turns the escalation inbox into a **conversation surface**. Until now a console reply (Phase 28) sent
-ONE metered message per escalation and AUTO-resolved it — one shot per question. Now a reply **appends to a
-per-escalation thread** and meters a send **without resolving**, so an operator can send follow-ups while the
-escalation stays OPEN; resolving/dismissing stays the explicit Phase-27 action. doddy+architect APPROVE at BOTH
-design (APPROVE-WITH-FIXES, all P1/P2 folded) AND built code (APPROVE — no constructible exploit, 8 properties
-verified at file:line). ADR 0034, memory [[multi-turn-reply-thread]].
+This rung makes the guest-escalation inbox **bi-directional**. Until now every inbound guest message the
+platform couldn't answer (`escalated`) opened a FRESH escalation — a follow-up from a guest with an open
+question spawned a *second* escalation. Now an `escalated` follow-up from a guest who already has an OPEN
+escalation in their CURRENTLY-BOUND wedding **threads into that escalation** as a `sender:'guest'` turn (no
+send, no charge — only operator replies meter). Correlation is INFERRED server-side (the port has no
+conversation id). doddy+architect APPROVE-WITH-FIXES at design; the §B0 routing-instability bug was self-caught
+during build (beyond the review). ADR 0035, memory [[guest-reply-thread-correlation]].
 
-## What changed this phase
-- **21st schema `escalation_reply`** (`{reply_id, tenant_id, escalation_id, wedding_id, seq, sender, body,
-  sent_at}`) + `gen:types` + manifest 20→21 (count test, title prose, gen-script header). **Retired**
-  `escalation_resolution.reply_text` (+ its `allOf`) — the thread owns the transcript now; a resolution is again
-  a pure handled-marker.
-- **`escalation_reply_log.ts`** — `EscalationReplyLog`: `TenantScopedRepository` keyed by the composite
-  `${escalation_id}:${seq}`; `readSlot` / `append` (read-first-put-if-absent) / `list` / `listForWedding`
-  (couple scope, `undefined → []`). Mirrors the resolution log + the `provider_message_ref`-as-key precedent.
-- **`product_api.ts`** — `handleEscalationReply` rewritten (PINNED order: scope → escalation_id/reply_text(cap)/
-  `seq`(parseSeq) → getByEscalationId absent miss → couple foreign-wedding miss → resolved/dismissed miss →
-  `readSlot` (same body=idempotent `{replied:true}`; different body=`409`) → `service.send` key
-  `reply:${id}:${seq}` → `replies.append`; **no resolution write**). New `parseSeq` (non-negative int, masked
-  400 before the lookup, never defaulted). `handleEscalationList` returns the 3rd scoped `replies` array.
-  `EscalationHandlerDeps` gains `replies`. Constant `REPLY_TEXT_MAX_LENGTH` → `REPLY_BODY_MAX_LENGTH`. New
-  `RESP_REPLY_CONFLICT` (409). `compose.ts` wires `new EscalationReplyLog(...)`.
-- **`pages.ts` / `product_web_ui.ts`** — `renderEscalations(+replies)` renders each escalation's thread
-  (`threadsByEscalation`, numeric `seq` sort) on OPEN + HANDLED rows; the reply form carries hidden
-  `seq = thread length`. Web `#escalationReply` forwards `seq`; new `readReplies`. `countOpenEscalations` stays
-  reply-agnostic.
-- **Tests** — new `escalation_reply_log.test.ts` (+8; seq idempotency/numeric-gap/couple-scope/cross-tenant/
-  liveness + the MOVED no-500 drift guard); rewrote `escalation_reply_api.test.ts` for decoupled multi-turn
-  (stays-open, 2nd reply at seq=1 sends again, same-seq/same-body once, same-seq/different-body 409,
-  dismissed/resolved no-bill, existence-independent seq 400, transcript on thread); migrated the web e2e
-  (`escalation_web`, `billing_web`, `compose`) + `pages.test`; 5 escalation harnesses gained a `replies` dep.
+## What changed this phase (commits on the branch)
+- **Step 0** — design review (doddy + architect lenses via general-purpose): APPROVE-WITH-FIXES, P1s/P2s folded.
+- **Steps 1–2** — `escalation_reply` schema MODIFY (manifest stays **21**): `sender` += `guest`; **DROPPED
+  `body.maxLength`** (the field now hosts UNBOUNDED untrusted guest input, byte-identical to
+  `inbound_webhook.text`/`guest_escalation.text` → no 500 oracle; the operator cost cap moved ENTIRELY to the
+  handler `REPLY_BODY_MAX_LENGTH`, the SOLE surviving enforcement); optional `provider_message_ref` with a
+  `billing_event`-style allOf if/then/**else** discriminant (required iff `sender:guest`, FORBIDDEN on operator
+  turns). `EscalationReplyLog.recordGuestReply` (dedup by ref; slot = `max(seq)+1`, **never `thread.length`** —
+  the P1 gap-collision fix) + `guestTurnByProviderRef`; `EscalationLog.getByProviderRef` (O(1), repo keyed by
+  ref). Drift guard repurposed (schema body has NO maxLength). `gen:types`.
+- **Step 3** — `handleInbound` escalated branch: the §B0 **process-once gate** (getByProviderRef +
+  guestTurnByProviderRef, BEFORE routing) → no-op on re-delivery, then thread-vs-fresh via
+  `mostRecentOpenEscalationForGuest` (the from_ref ∧ bound-wedding ∧ open ∧ most-recent selector).
+  `MessagingHandlerDeps` += `resolutions` (Pick-narrowed to `getByEscalationId`) + `replies`; compose wires the
+  same instances. +7 correlation tests.
+- **Step 4** — `pages.ts` `threadView`: exhaustive three-way sender label (guest/planner/couple, replacing the
+  binary `planner`-else ternary that would mislabel a guest turn as "Couple"). Guest body HTML-escaped. +3 web
+  e2e tests.
+- **Step 5** — ADR 0035, memory [[guest-reply-thread-correlation]] + index, this handoff.
 
-## The load-bearing insight (carry forward) — see [[multi-turn-reply-thread]] for the full set
-- **Decoupling moved the double-submit guard from "a resolution exists" to a render-time `seq`.** The form
-  carries `seq = (thread length)`; the log keys on the composite `${escalation_id}:${seq}` (read-first); the
-  meter key `reply:${id}:${seq}` is now defense-in-depth. A re-POST of the same form = same seq = one send; a
-  fresh form = `seq+1` = a new send.
-- **`seq` is a CLIENT-controlled KEY, safe like `provider_message_ref`** — partition is `context.tenant_id`
-  ALONE, so a forged seq is inert-or-self-harm (collides only with the caller's own slot), and every new slot
-  self-funds a metered send. channel/recipient/wedding_id/escalation_id come from the LIVE escalation.
-- **Same-seq / DIFFERENT-body ⇒ `409`, never a silent `{replied:true}`** (doddy P1) — the honest fix for the
-  concurrent-distinct-operator collision; no nonce store. Reachable only after scope+open gates ⇒ no oracle.
-- **The dismissed-no-bill keystone (Phase 28 F1/F2) STAYS** ahead of the send (no longer the double-submit
-  guard, but not dead — a closed escalation never dispatches a billed message).
+## The load-bearing insights (carry forward) — see [[guest-reply-thread-correlation]] for the full set
+- **THE PROCESS-ONCE GATE was the real correctness fix (self-caught; BOTH review agents missed it).** Split
+  routing (thread-or-record) makes a per-thread ref-scan insufficient: a freshly-recorded escalation is OPEN, so
+  a re-delivery of the SAME message would otherwise be threaded INTO it (the common break); a resolved escalation
+  drops a re-delivered follow-up to a fresh escalation (cross-resolve). FIX: gate the escalated branch on
+  `escalations.getByProviderRef(ref)` (O(1)) + `replies.guestTurnByProviderRef(ref)` BEFORE routing — the
+  answered-branch `receipts.seen` analogue; no widening of the doddy-P0 receipt log. **GENERAL LESSON: when a
+  side-effect splits across two logs by a runtime decision, dedup must be checked across BOTH before the write.**
+- **The DUAL match (from_ref AND live `binding.wedding_id`) is the cross-wedding mis-segmentation defense.** A
+  re-bound `recipient_ref` (planner moves a guest A→B) carries stale A-escalations; filtering by the LIVE binding
+  excludes them, so a re-bound guest's message can only reach an open escalation in their *current* wedding.
+- **Guest turn = ref-keyed, slot `max(seq)+1` never `thread.length`.** `thread.length` lands inside a gap a
+  forged/sparse operator seq leaves → silent overwrite/drop (both lenses' P1). Operator turn stays seq-keyed
+  (form double-submit / 409). Two idempotency models, one composite-slot thread.
+- **`escalation_reply.body` is now dual-provenance and UNBOUNDED.** Operator text capped at the handler (cost);
+  guest text unbounded at the schema (no 500). A long guest message can never fail validation.
+- **No new oracle.** Every inbound branch still returns the uniform 202; threading-vs-fresh is invisible to the
+  guest; the threaded path discloses only the guest's OWN conversation state.
 
 ## Next action — your call. Pick the next high-value lever (ranked)
-- **Guest-reply → thread correlation** — the deferred half of multi-turn and the MOST-CITED open thread now: a
-  guest texts back and it lands in the OPEN escalation's thread (vs today's "fresh question → fresh
-  escalation"). THE DESIGN PROBLEM (real): the provider-agnostic port carries only opaque refs and no
-  conversation id — a guest texts in with a `from_ref`, no escalation/thread id. So correlation must be
-  inferred (most-recent OPEN escalation for that `from_ref`+wedding? a time window?) WITHOUT a carrier concept
-  leaking into the domain and WITHOUT a cross-wedding mis-segmentation (a `from_ref` can be a guest at >1
-  wedding — the Phase-24 tenant-global-key tension resurfaces). Medium-large; scope the correlation rule
-  carefully (and it's UNTRUSTED guest input landing in a trusted thread → escape + no-oracle discipline).
 - **A couple-REGISTER design rung** — resolve the deferred Phase-24 oracle. THE TENSION: `recipient_ref` is the
   tenant-GLOBAL inbound-lookup partition key, so per-wedding namespacing would BREAK inbound segmentation, AND a
   conflict can't be masked without a correctness cost. A real design pass on the tenant-global-key collision.
 - **Unify `product/price_book.ts` onto the shared cost basis** (retail = COGS × margin over `MESSAGE_COST_CENTS`)
   — the clean Phase-20 follow-up; tidies the two-cents-tables seam. Smaller, clean, lower product value.
-- **Per-period billing windows / statements** — group the activity into billing periods/invoices (needs a
-  period model the ledger doesn't carry yet). Medium; defer until a product reason.
-- **Partial / arbitrary-amount payments** — the deferred Phase-31 extension (re-introduces client money input →
-  own bounds/no-fraud pass). Defer until a product reason.
+- **Reopen / re-route a resolved escalation** — Phase-35 deferral: a guest follow-up after resolve opens a fresh
+  escalation; a "reopen" action (or routing a follow-up to reopen) would keep the conversation in one place.
+  Needs a status-transition model the resolution log (first-writer-wins, terminal) doesn't carry yet. Medium.
+- **Thread the `answered` follow-up** — the other Phase-35 deferral: an auto-answerable follow-up sends but
+  doesn't thread / doesn't auto-resolve. Small, but conflates "what the platform auto-said" with operator turns
+  (think about the sender model first). Low-medium value.
+- **Per-period billing windows / statements** — group activity into billing periods/invoices (needs a period
+  model the ledger doesn't carry). Medium; defer until a product reason.
 - **Return-to-the-engine threads** — the self-improvement loop (advisory tier-2 recs, live publish pipeline) has
   open deferrals if you want to swing back from the product surface.
 
@@ -80,20 +77,19 @@ provider sending real texts is the human crossing (guest-comms tier-2 / exceptio
 never across it or simulate having.** Don't modify `ops/` or `CLAUDE.md` (human-reserved). Push only to this
 repo's `origin`. The named specialist sub-agents (doddy/wolf/testineer/rigorous-architect) are **not
 provisioned** here — route adversarial reviews through `general-purpose` agents carrying the persona lens (this
-run did, at BOTH design AND built-code — APPROVE, no exploit). **CI/exit-code lesson:** never pipe `npm run
-build`/`npm run lint` to tail/grep when gating with `&&` (the pipe masks the non-zero exit; `$?` after a pipe is
-the LAST stage's — use `${PIPESTATUS[0]}`); run them standalone and check the exit. **zsh does NOT word-split
-unquoted vars** — use an array (`files=(a b c); for f in $files`) for multi-file loops. `npm run build` runs from
-REPO ROOT. **Eval-harness/telemetry import ONLY `@wedding-planner/shared`, never `product`** (the firewall, by
-reachability). **Schema change ⇒ `npm run gen:types`**; a NEW schema file additionally bumps the manifest count
-test (+ title prose) + the gen-script header — Phase 34 added ONE schema (`escalation_reply`), so the manifest is
-now **21**. **The guest responder's security boundary is `projectGuestVisibleFacts`'s allow-list.** **Web-form
+run did, at design — APPROVE-WITH-FIXES, all folded; the §B0 routing-instability fix was self-caught beyond the
+review). **CI/exit-code lesson:** never pipe `npm run build`/`npm run lint` to tail/grep when gating with `&&`
+(the pipe masks the non-zero exit; use `${PIPESTATUS[0]}`); run them standalone and check the exit. **zsh does
+NOT word-split unquoted vars** — use an array for multi-file loops; a grep with embedded newlines is unreliable
+(use a Python multiline replace for multi-file edits — this run did). `npm run build` runs from REPO ROOT.
+**Eval-harness/telemetry import ONLY `@wedding-planner/shared`, never `product`** (the firewall, by
+reachability). **Schema MODIFY ⇒ `npm run gen:types`** (a NEW schema file additionally bumps the manifest count
+test + title prose + the gen-script header — Phase 35 only MODIFIED `escalation_reply`, so the manifest is still
+**21**). **The guest responder's security boundary is `projectGuestVisibleFacts`'s allow-list.** **Web-form
 mutations are CSRF-gated at the web layer ONLY** (the JSON API is Bearer-only / not CSRF-reachable). **The web
-UI's ONLY data path is `api.handle()`** (Phase 34's `seq` rides the SAME scoped read that renders the page — no
-new web dependency). **Guest/manage/billing scope comes from the MINTED principal/context, never the request
-body.** **A capability the role lacks entirely (couple→register, couple→billing incl. pay) is a 403 checked
-FIRST; a customer-facing PROJECTION/AGGREGATE of trusted records must disclose nothing the parts don't.** **A
-coupled validation/price/balance constant MUST be drift-guarded by a test** (Phase 34: `escalation_reply.body`
-maxLength == `REPLY_BODY_MAX_LENGTH`, the guard MOVED from the retired `escalation_resolution.reply_text`).
-**A client-controlled value used as a tenant-partitioned KEY is safe (inert-or-self-harm) — `seq` (Phase 34)
-joins `provider_message_ref` (Phase 26) in that pattern.**
+UI's ONLY data path is `api.handle()`.** **Guest/manage/billing scope comes from the MINTED principal/context,
+never the request body; a guest is UNTRUSTED (no Principal) bound to ONE wedding by the registry.** **When a
+side-effect splits across two logs by a runtime decision, dedup across BOTH before the write (Phase 35 §B0).**
+**A client/provider-controlled value used as a tenant-partitioned KEY is safe (inert-or-self-harm) — `seq`
+(34), `provider_message_ref` (26/35) — but a value used to SELECT a routing target (Phase 35 correlation) must
+intersect TRUSTED axes (from_ref ∧ live binding.wedding_id), never a body field.**

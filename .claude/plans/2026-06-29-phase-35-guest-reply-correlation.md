@@ -194,14 +194,14 @@ exploit, no cost-amplification, no stored-XSS. Findings folded above (§B, §D) 
 ## Steps
 
 ### Step 1 — Schema + types + drift guard
-- [ ] `escalation_reply_schema.json`: `sender` enum `+= "guest"`; DROP `body.maxLength` (keep
+- [x] `escalation_reply_schema.json`: `sender` enum `+= "guest"`; DROP `body.maxLength` (keep
   `minLength:1`, update the description to the dual-provenance story); add optional
   `provider_message_ref` (`string, minLength:1`); add the `allOf` discriminant (guest ⇒ required ref,
   operator ⇒ forbidden). Update the schema `description` (retire the "deferred inbound" sentence → now
   built; reference ADR 0035).
-- [ ] `npm run gen:types` → `EscalationReply` gains `sender:'guest'` + optional `provider_message_ref`.
+- [x] `npm run gen:types` → `EscalationReply` gains `sender:'guest'` + optional `provider_message_ref`.
   Manifest stays **21** (a MODIFY, not a new schema).
-- [ ] Update the drift guard in `escalation_reply_log.test.ts`: replace `body.maxLength === REPLY_BODY_MAX_LENGTH`
+- [x] Update the drift guard in `escalation_reply_log.test.ts`: replace `body.maxLength === REPLY_BODY_MAX_LENGTH`
   with (1) `body.maxLength === undefined` (guest turns never 500) and (2) a handler test that an over-cap
   operator `reply_text` 400s — comment it as the **SOLE surviving enforcement of the operator cost cap**
   (the schema no longer caps; do not delete as "covered by the contract"). Add the allOf tests: a `guest`
@@ -209,7 +209,7 @@ exploit, no cost-amplification, no stored-XSS. Findings folded above (§B, §D) 
   Verify `npm run build && npm test && npm run lint`.
 
 ### Step 2 — `EscalationReplyLog.recordGuestReply`
-- [ ] Add `recordGuestReply(context, {escalation_id, wedding_id, provider_message_ref, body})`:
+- [x] Add `recordGuestReply(context, {escalation_id, wedding_id, provider_message_ref, body})`:
   ref-dedup scan → `seq = max(existing seq)+1` (0 if empty, **never length** — P1) → `sender:'guest'` +
   stored ref → put-if-absent + assertValid. Document in the file header: the two ENTRY POINTS are siblings
   appending to the SAME composite-slot thread but with DIFFERENT idempotency keys — operator `append` =
@@ -217,7 +217,7 @@ exploit, no cost-amplification, no stored-XSS. Findings folded above (§B, §D) 
   = `provider_message_ref` (re-delivery), allocating its own slot above the high-water mark (the verb
   `record` signals "ref-keyed like `escalation_log.record`"). Note the dedup scan is O(thread) (same
   future-index caveat `getByEscalationId` documents).
-- [ ] Tests in `escalation_reply_log.test.ts`: a guest reply appends at the next seq with `sender:'guest'`
+- [x] Tests in `escalation_reply_log.test.ts`: a guest reply appends at the next seq with `sender:'guest'`
   + the ref; re-delivery (same ref) is idempotent (one row, stable reply_id); two distinct guest refs take
   consecutive seqs; a guest reply interleaves correctly with operator `append` (next seq after an operator
   turn); **a sparse/forged operator seq (a GAP) followed by a guest reply lands ABOVE the max seq and
@@ -225,25 +225,25 @@ exploit, no cost-amplification, no stored-XSS. Findings folded above (§B, §D) 
   is invisible to tenant B); liveness (a suspended tenant throws). Verify green.
 
 ### Step 3 — Inbound correlation in `handleInbound`
-- [ ] Add `resolutions: Pick<EscalationResolutionLog,'getByEscalationId'>` (read-only narrowing — inbound
+- [x] Add `resolutions: Pick<EscalationResolutionLog,'getByEscalationId'>` (read-only narrowing — inbound
   reads the open-status, never resolves — P2) + `replies: EscalationReplyLog` to `MessagingHandlerDeps`.
-- [ ] Add `EscalationLog.getByProviderRef(context, ref)` (O(1) `#repo.read` — the repo is keyed by the ref)
+- [x] Add `EscalationLog.getByProviderRef(context, ref)` (O(1) `#repo.read` — the repo is keyed by the ref)
   and `EscalationReplyLog.guestTurnByProviderRef(context, ref)` (tenant scan for a guest turn carrying ref).
-- [ ] Add the module-private `mostRecentOpenEscalationForGuest(context, deps, wedding_id, from_ref)`
+- [x] Add the module-private `mostRecentOpenEscalationForGuest(context, deps, wedding_id, from_ref)`
   selector (§A) — returns the target `GuestEscalation` or `undefined`. The `received_at` max-by pick uses
   a stable `escalation_id` tiebreak FOR DETERMINISM ONLY (not a recency guarantee — two escalations at the
   same tick are both that guest's open conversation; the choice is immaterial).
-- [ ] In the `escalated` branch, apply the §B0 PROCESS-ONCE gate FIRST (getByProviderRef + guestTurnByProviderRef
+- [x] In the `escalated` branch, apply the §B0 PROCESS-ONCE gate FIRST (getByProviderRef + guestTurnByProviderRef
   → no-op on a re-delivery), THEN route (thread vs fresh-record). Tests must cover: re-delivery of a
   freshly-escalated message does NOT spawn a guest turn (the common break); a threaded follow-up's
   re-delivery after its escalation is RESOLVED does not spawn a fresh escalation (the cross-resolve break).
-- [ ] In `handleInbound`'s `escalated` branch: select the target; if found →
+- [x] In `handleInbound`'s `escalated` branch: select the target; if found →
   `deps.replies.recordGuestReply(...)` (escalation_id/wedding_id COPIED from the live escalation,
   provider_message_ref/body from the validated message); else → the existing `escalations.record(...)`.
   Keep the uniform 202 on every path. Update the handler doc-comment.
-- [ ] Wire `resolutions` + `replies` into the `messaging:` bag in `compose.ts` (the SAME instances the
+- [x] Wire `resolutions` + `replies` into the `messaging:` bag in `compose.ts` (the SAME instances the
   escalation read/resolve/reply surface already uses).
-- [ ] Tests in `escalation_*` api/e2e: a follow-up from a guest with an OPEN escalation threads into it
+- [x] Tests in `escalation_*` api/e2e: a follow-up from a guest with an OPEN escalation threads into it
   (sender:'guest', no new escalation, no send/charge); a follow-up with NO open escalation opens a fresh
   one (current behavior); a re-delivery of the threaded message is idempotent (one turn); a resolved
   escalation does NOT receive the follow-up (it opens a fresh escalation — resolved ≠ open); the
@@ -252,7 +252,7 @@ exploit, no cost-amplification, no stored-XSS. Findings folded above (§B, §D) 
   branch. Verify green.
 
 ### Step 4 — Render guest turns in the thread
-- [ ] `pages.ts` `threadView`: replace the BINARY `sender` ternary (`planner` else "Couple") with an
+- [x] `pages.ts` `threadView`: replace the BINARY `sender` ternary (`planner` else "Couple") with an
   EXHAUSTIVE three-way map (`guest`→"Guest", `planner`→"Planner", `couple`→"Couple") — **P2 fix: today a
   `guest` turn would mislabel as "Couple" (a trust-presentation bug, operator mistakes a guest for the
   couple).** Still escaped via `html`, still sorted numerically by `seq`. The reply form's `seq =
@@ -260,19 +260,19 @@ exploit, no cost-amplification, no stored-XSS. Findings folded above (§B, §D) 
   allocate contiguously (`max+1`), so `thread.length === max+1` in normal operation — the operator form
   still lands on the next free slot, and the only divergence (a forged-seq gap) stays 409-protected exactly
   as Phase 34 designed.
-- [ ] Update `pages.test` / the escalation web e2e: the thread renders an interleaved guest+operator
+- [x] Update `pages.test` / the escalation web e2e: the thread renders an interleaved guest+operator
   conversation; a guest turn's body is HTML-escaped (XSS round-trip pinned); the reply form's hidden seq
   counts guest turns. Extend the existing demo e2e if a guest-follow-up path is exercisable end-to-end.
   Verify `npm run build && npm test && npm run lint` green.
 
 ### Step 5 — Docs + memory + handoff
-- [ ] ADR 0035 (guest-reply → thread correlation): the selector + dual-match defense, the two idempotency
+- [x] ADR 0035 (guest-reply → thread correlation): the selector + dual-match defense, the two idempotency
   models, the dropped maxLength dual-provenance, the allOf discriminant, the no-oracle wire invariance,
   the recorded deferrals (answered-threading, time-window).
-- [ ] New memory `.claude/memory/guest-reply-thread-correlation.md` + index line in `MEMORY.md`; link
+- [x] New memory `.claude/memory/guest-reply-thread-correlation.md` + index line in `MEMORY.md`; link
   [[multi-turn-reply-thread]], [[guest-escalation-inbox]], [[guest-messaging-channel-is-a-roadmap-goal]].
-- [ ] Update `.claude/handoff.local.md` (where we are, next lever, fresh context).
-- [ ] Final `npm run build && npm test && npm run lint` green; commit.
+- [x] Update `.claude/handoff.local.md` (where we are, next lever, fresh context).
+- [x] Final `npm run build && npm test && npm run lint` green; commit.
 
 ## Standing rails (unchanged)
 Offline-first (no real money/booking/comms; no prod/credentials). A real provider sending real texts is
