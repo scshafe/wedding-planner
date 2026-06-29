@@ -142,11 +142,14 @@ existing `api.handle()` reads (the established `#guestsPage` multi-read pattern)
   - Tests: pin that each spoke page links back to the home and that the home links to all spokes.
   - Verify; commit.
 
-- [ ] **Step 4 — ADR 0033 + memory + handoff + built-code review.** Write `docs/adr/0033-account-home-overview.md`
-  (the decisions above), add `.claude/memory/account-home-overview.md` (+ index line in `MEMORY.md`, linking
-  `[[planner-billing-view]]`, `[[guest-escalation-inbox]]`, `[[web-ui-themed-edge]]`), and update
-  `.claude/handoff.local.md`. Run a SECOND **built-code** adversarial review (general-purpose, doddy lens) of the
-  committed home path — confirm no constructible exploit, all keystone properties verified at file:line.
+- [x] **Step 4 — ADR 0033 + memory + handoff + built-code review.** Wrote `docs/adr/0033-account-home-overview.md`
+  (the decisions above), added `.claude/memory/account-home-overview.md` (+ index line in `MEMORY.md`, linking
+  `[[planner-billing-view]]`, `[[guest-escalation-inbox]]`, `[[web-ui-themed-edge]]`,
+  `[[html-wedding-create-edit-forms]]`, `[[planner-billing-activity-log]]`), and updated `.claude/handoff.local.md`.
+  A **built-code** adversarial review (general-purpose, doddy lens) of the committed home path returned
+  **APPROVE — no constructible exploit**, all 6 properties verified at file:line (no P1/P2): the billing-omit-not-mask
+  is structurally enforced at a single `=== 200` site; the three-read gate fails closed and disclosure-equivalently;
+  the open-count cannot leak a sibling wedding (both arrays `manageScope`-scoped); plan_tier is escaped trusted text.
 
 ## Out of scope (deferred, name them)
 - **A JSON `GET /t/:slug/overview` projection endpoint.** Deliberately none — the overview is a web-layer
