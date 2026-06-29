@@ -63,11 +63,30 @@ badges), so it is never displayed and the operator resolve/dismiss handler (`by:
 
 ## Steps
 
-- [ ] **Step 0 — Design review (doddy + architect lenses).** Route both adversarial reviews through
-  `general-purpose` agents carrying the persona lens (the named specialists aren't provisioned). doddy:
-  no-oracle / uniform-202 / trusted-state / process-once / the `resolved_by:'guest'` disclosure. architect:
-  the selector generalization, the open-preferred-then-resolved ordering, the coexistence-closure claim,
-  schema-MODIFY discipline. Fold all P1/P2 BEFORE writing code. Record the verdict in the ADR.
+- [x] **Step 0 — Design review (doddy + architect lenses).** Both `general-purpose` agents (persona lens)
+  returned **APPROVE-WITH-FIXES** — no design change; all findings are hardening + tests + doc-precision.
+  **Folded into the steps below:**
+  - (doddy P1 / arch ordering) reopen `transition()` STRICTLY BEFORE `recordGuestReply()` in the SAME
+    §B0-gated block — load-bearing, with a one-line comment; a re-delivery test asserts EXACTLY ONE
+    `reopened` row AND EXACTLY ONE guest turn (inseparability).
+  - (doddy P2 / rationale) a `transition()` validation throw maps to **400** via `errorToResponse`
+    (`CONTRACT.VALIDATION_FAILED`), **not 500** — an even cleaner oracle; the `resolved_by:'guest'` enum add is
+    what keeps it unreachable. Correct the wording in the ADR (the plan's "500" framing above is the mechanism
+    error doddy flagged).
+  - (arch P2-C, the load-bearing one) widening the enum lets the schema ACCEPT `resolved_by:'guest'` on a
+    `resolved`/`dismissed` row too; `guest` must appear ONLY on a `reopened` row. Pin it: (1) schema
+    `resolved_by` description says so; (2) a test asserts no inbound path ever writes a `resolved`/`dismissed`
+    row with `resolved_by:'guest'`.
+  - (doddy P2 / arch) the dismissed-stays-closed test asserts NO `reopened` row is appended to the dismissed
+    escalation specifically (pins the SELECTOR policy, independent of `transition()`'s permissive direction rule).
+  - (arch P2-A) ADR 0037 NARROWS ADR 0036's unconditional "Phase-37 closes this": it closes the
+    resolved-coexistence case; the residual operator-manual-reopen-of-a-DISMISSED-escalation-after-a-fresh-one
+    stays out of scope (deliberate operator action).
+  - (arch P2-B) the generalized selector's header is PER-TIER: for the resolved tier the recency pick IS the
+    conversation being reopened (not "immaterial" as the open-tier prose said).
+  - (arch) add the adversarial re-delivery test: a re-delivery arriving AFTER the auto-reopen made the
+    escalation effective-open (a DIFFERENT selector tier than first delivery) → §B0 still no-ops it (no second
+    `reopened`, no second thread). Don't re-describe the §B0 gate prose — only append the routing-tier note.
 
 - [ ] **Step 1 — Schema MODIFY + types.** `escalation_resolution_schema.json`: `resolved_by` enum
   `+= "guest"`; update its `description` (a `reopened` transition MAY be attributed to `guest` for an inbound

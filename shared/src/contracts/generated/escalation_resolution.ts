@@ -29,13 +29,13 @@ wedding_id: string
  */
 seq: number
 /**
- * The transition's target state. `resolved` = dealt with (typically the missing fact was filled); `dismissed` = not actionable (spam/irrelevant/duplicate); `reopened` (Phase 36) = an explicit operator action returning a previously handled escalation to the Open inbox. `resolved`/`dismissed` are recorded only from an effective-OPEN state (first handling sticks); `reopened` only from an effective-HANDLED state. The escalation's effective status = the status of its highest-`seq` transition (`reopened` ⇒ OPEN).
+ * The transition's target state. `resolved` = dealt with (typically the missing fact was filled); `dismissed` = not actionable (spam/irrelevant/duplicate); `reopened` (Phase 36) = returning a previously handled escalation to the Open inbox — either an explicit operator action (`resolved_by` planner/couple) or (Phase 37) an inbound guest follow-up auto-reopening a previously RESOLVED escalation (`resolved_by:'guest'`; a dismissed escalation is NEVER auto-reopened — operator dismissal is final to the guest). `resolved`/`dismissed` are recorded only from an effective-OPEN state (first handling sticks); `reopened` only from an effective-HANDLED state. The escalation's effective status = the status of its highest-`seq` transition (`reopened` ⇒ OPEN).
  */
 status: ("resolved" | "dismissed" | "reopened")
 /**
- * The role of the principal who made THIS transition (principal.role, from the minted session — never the body). For a `reopened` transition it is the reopener's role. Audit metadata; never read for a decision.
+ * Who made THIS transition. `planner`/`couple` = the minted principal's role (from the session — never the body), the operator who resolved/dismissed/reopened. `guest` (Phase 37) = an INBOUND guest follow-up that AUTO-REOPENED a previously resolved escalation (the guest is untrusted, not a Principal; this is the honest provenance of the follow-up that triggered the reopen). `guest` appears ONLY on a `reopened` row — the inbound auto-reopen is the sole writer of a `guest`-attributed transition, and it never records `resolved`/`dismissed` (those are operator-only), so a `guest`-attributed resolve/dismiss is structurally never produced. Audit metadata; never read for a decision.
  */
-resolved_by: ("planner" | "couple")
+resolved_by: ("planner" | "couple" | "guest")
 /**
  * ISO 8601 UTC time THIS transition was recorded, from the injected clock (never ambient; platform-stamped, not guest-controlled). minLength:1 with NO format/pattern (matches guest_escalation.received_at) so the real clock.now() value can never fail validation here (no 500 oracle).
  */
