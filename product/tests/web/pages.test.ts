@@ -204,7 +204,7 @@ describe('generic constants', () => {
   })
 
   it('renderEscalations moves a HANDLED question into a Handled section (status badge, no action form)', () => {
-    const resolution: EscalationResolution = { resolution_id: 'res_1', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', status: 'dismissed', resolved_by: 'planner', resolved_at: '2027-05-02T00:00:00.000Z' }
+    const resolution: EscalationResolution = { resolution_id: 'res_1', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq: 0, status: 'dismissed', resolved_by: 'planner', resolved_at: '2027-05-02T00:00:00.000Z' }
     const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [resolution], [], 'csrf-xyz')
     expect(out).toContain('Handled')
     expect(out).toContain('Dismissed by planner')
@@ -226,7 +226,7 @@ describe('generic constants', () => {
   })
 
   it('Phase 34: a HANDLED row shows the full reply thread as the question→answer transcript', () => {
-    const resolution: EscalationResolution = { resolution_id: 'res_1', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', status: 'resolved', resolved_by: 'couple', resolved_at: '2027-05-02T00:02:00.000Z' }
+    const resolution: EscalationResolution = { resolution_id: 'res_1', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq: 0, status: 'resolved', resolved_by: 'couple', resolved_at: '2027-05-02T00:02:00.000Z' }
     const reply: EscalationReply = { reply_id: 'rep_0', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq: 0, sender: 'couple', body: 'Parking is in lot B.', sent_at: '2027-05-02T00:00:00.000Z' }
     const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [resolution], [reply], 'csrf-xyz')
     expect(out).toContain('Handled')
@@ -260,7 +260,7 @@ describe('generic constants', () => {
 
   it('countOpenEscalations counts only escalations with no resolution (folds both arrays)', () => {
     const esc2: GuestEscalation = { ...ESC_1, escalation_id: 'esc_2', provider_message_ref: 'pm_2' }
-    const resolution: EscalationResolution = { resolution_id: 'res_1', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', status: 'resolved', resolved_by: 'planner', resolved_at: '2027-05-02T00:00:00.000Z' }
+    const resolution: EscalationResolution = { resolution_id: 'res_1', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq: 0, status: 'resolved', resolved_by: 'planner', resolved_at: '2027-05-02T00:00:00.000Z' }
     expect(countOpenEscalations([ESC_1, esc2], [])).toBe(2)
     expect(countOpenEscalations([ESC_1, esc2], [resolution])).toBe(1) // esc_1 handled → only esc_2 open
     expect(countOpenEscalations([], [])).toBe(0)

@@ -159,9 +159,14 @@ export { InboundReceiptLog } from './messaging/inbound_receipt_log'
 // The escalation inbox (Phase 26): an `escalated` guest question (one the platform could not answer) is recorded
 // here, keyed (tenant_id, provider_message_ref), and read by the couple (their wedding) / planner (whole tenant).
 export { EscalationLog, type RecordEscalationInput } from './messaging/escalation_log'
-// The escalation-resolution log (Phase 27): the SEPARATE append-only record (keyed (tenant_id, escalation_id))
-// that marks a guest escalation handled (resolved/dismissed) WITHOUT mutating it; first-writer-wins (ADR 0027).
-export { EscalationResolutionLog, type RecordResolutionInput } from './messaging/escalation_resolution_log'
+// The escalation status-transition log (Phase 27, generalized in Phase 36): the SEPARATE append-only sequence
+// (keyed (tenant_id, `${escalation_id}:${seq}`)) of resolved/dismissed/reopened transitions over a guest
+// escalation WITHOUT mutating it; effective status is the highest-`seq` fold (ADR 0027 / ADR 0036).
+export {
+  EscalationResolutionLog,
+  type RecordTransitionInput,
+  type EffectiveEscalationStatus,
+} from './messaging/escalation_resolution_log'
 export { EscalationReplyLog, type RecordReplyInput } from './messaging/escalation_reply_log'
 export {
   type GuestQaResponder,

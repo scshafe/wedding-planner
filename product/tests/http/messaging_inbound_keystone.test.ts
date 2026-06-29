@@ -321,7 +321,7 @@ describe('Phase 35 — guest-reply → thread correlation', () => {
     const weddingId = seedGuestOnAlpha(w)
     w.api.handle(inbound('alpha', payload(ESC1))) // E1
     const e1 = w.escalations.list(w.ctxA)[0]
-    w.resolutions.resolve(w.ctxA, { escalation_id: e1!.escalation_id, wedding_id: weddingId, status: 'resolved', resolved_by: 'couple' })
+    w.resolutions.transition(w.ctxA, { escalation_id: e1!.escalation_id, wedding_id: weddingId, status: 'resolved', by: 'couple' })
     expect(w.api.handle(inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED) // no OPEN escalation -> fresh
     expect(w.escalations.list(w.ctxA)).toHaveLength(2) // E2 opened
     expect(w.replies.list(w.ctxA)).toHaveLength(0) // not threaded
@@ -333,7 +333,7 @@ describe('Phase 35 — guest-reply → thread correlation', () => {
     w.api.handle(inbound('alpha', payload(ESC1))) // E1
     w.api.handle(inbound('alpha', payload(ESC2))) // threads ESC2 into E1
     const e1 = w.escalations.list(w.ctxA)[0]
-    w.resolutions.resolve(w.ctxA, { escalation_id: e1!.escalation_id, wedding_id: weddingId, status: 'resolved', resolved_by: 'couple' })
+    w.resolutions.transition(w.ctxA, { escalation_id: e1!.escalation_id, wedding_id: weddingId, status: 'resolved', by: 'couple' })
     w.api.handle(inbound('alpha', payload(ESC2))) // re-delivery of the threaded follow-up after resolve
     expect(w.escalations.list(w.ctxA)).toHaveLength(1) // guestTurnByProviderRef no-ops it — NO duplicate escalation
     expect(w.replies.list(w.ctxA)).toHaveLength(1)

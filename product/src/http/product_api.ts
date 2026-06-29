@@ -164,11 +164,12 @@ export interface MessagingHandlerDeps {
   /**
    * Phase 35 — guest-reply → thread correlation. The inbound edge READS these to decide whether an
    * `escalated` follow-up threads into the guest's most-recent OPEN escalation (vs opening a new one):
-   * `resolutions` is NARROWED to `getByProviderRef`-free read-only (`getByEscalationId` — the open-status
-   * join; inbound NEVER resolves, so the narrowing makes that structural, mirroring BillingHandlerDeps); the
-   * full `replies` log is the write target (`recordGuestReply`) + the re-delivery guard (`guestTurnByProviderRef`).
+   * `resolutions` is NARROWED to the read-only `effectiveStatus` fold (the open-status join; Phase 36 replaced
+   * the single-record `getByEscalationId` with this fold); inbound NEVER transitions, so the narrowing makes
+   * that structural, mirroring BillingHandlerDeps. The full `replies` log is the write target
+   * (`recordGuestReply`) + the re-delivery guard (`guestTurnByProviderRef`).
    */
-  readonly resolutions: Pick<EscalationResolutionLog, 'getByEscalationId'>
+  readonly resolutions: Pick<EscalationResolutionLog, 'effectiveStatus'>
   readonly replies: EscalationReplyLog
 }
 
@@ -782,19 +783,25 @@ function handleEscalationResolve(
   const status = body.status
   // Inline enum check (F7) — same PRODUCT.BAD_REQUEST -> masked 400 a planner's malformed body yields; NOT a
   // distinct code, and fires for a present AND an absent escalation_id alike (independent of existence).
-  if (status !== 'resolved' && status !== 'dismissed') {
-    throw new ProductError('PRODUCT.BAD_REQUEST', "Field 'status' must be 'resolved' or 'dismissed'.", {})
+  // Phase 36: `reopened` joins the enum (the operator reopen action — same route, discriminated by status).
+  if (status !== 'resolved' && status !== 'dismissed' && status !== 'reopened') {
+    throw new ProductError('PRODUCT.BAD_REQUEST', "Field 'status' must be 'resolved', 'dismissed' or 'reopened'.", {})
   }
   const escalation = deps.escalations.getByEscalationId(context, escalation_id)
   if (escalation === undefined) return RESP_RESOLVE_MISS
-  // A couple may resolve ONLY their bound wedding's escalations; a planner ({kind:'all'}) may resolve any.
+  // A couple may transition ONLY their bound wedding's escalations; a planner ({kind:'all'}) may transition any.
   // Byte-identical to the absent miss, BEFORE any write (no oracle, no record for a foreign-wedding probe).
   if (scope.kind === 'wedding' && escalation.wedding_id !== scope.wedding_id) return RESP_RESOLVE_MISS
-  deps.resolutions.resolve(context, {
+  // Phase 36: a status TRANSITION (resolve/dismiss from open, reopen from handled). The log's directional rule
+  // makes an out-of-direction transition (e.g. resolve an already-handled escalation, reopen an open one) an
+  // idempotent no-op. The response is the SAME `{resolved:true}` for all three statuses ("the transition took
+  // effect / the desired state holds") — it matches the frozen `{resolved:false}` miss key, and the web form
+  // ignores the body (PRG redirect). wedding_id is COPIED from the live escalation (F5 — never the body).
+  deps.resolutions.transition(context, {
     escalation_id,
-    wedding_id: escalation.wedding_id, // F5: from the live escalation, never the body / never scope.wedding_id
+    wedding_id: escalation.wedding_id,
     status,
-    resolved_by: principal.role,
+    by: principal.role,
   })
   return { status: 200, body: { resolved: true } }
 }
@@ -853,8 +860,10 @@ function handleEscalationReply(
   if (escalation === undefined) return RESP_REPLY_MISS
   // A couple may reply ONLY to their bound wedding's escalations; a planner ({kind:'all'}) may reply to any.
   if (scope.kind === 'wedding' && escalation.wedding_id !== scope.wedding_id) return RESP_REPLY_MISS
-  // Dismissed-no-bill keystone (doddy F1/F2): a closed escalation (resolved/dismissed) accepts no further reply.
-  if (deps.resolutions.getByEscalationId(context, escalation_id) !== undefined) return RESP_REPLY_MISS
+  // Dismissed-no-bill keystone (doddy F1/F2), now CONDITIONAL on EFFECTIVE status (Phase 36): a CURRENTLY-handled
+  // escalation (effective resolved/dismissed) accepts no further billed reply; a `reopened` escalation is
+  // effective-`open` and again accepts replies (the explicit operator reopen lifts the no-bill gate).
+  if (deps.resolutions.effectiveStatus(context, escalation_id) !== 'open') return RESP_REPLY_MISS
   // Double-submit guard: the slot read is the PRIMARY guard (the meter key is defense-in-depth). Same body at a
   // taken slot = true double-submit (idempotent, no send); different body at a taken slot = lost-update (409).
   const existing = deps.replies.readSlot(context, escalation_id, seq)
@@ -1154,7 +1163,7 @@ function mostRecentOpenEscalationForGuest(
   const open = deps.escalations
     .listForWedding(context, wedding_id)
     .filter((escalation) => escalation.from_ref === from_ref)
-    .filter((escalation) => deps.resolutions.getByEscalationId(context, escalation.escalation_id) === undefined)
+    .filter((escalation) => deps.resolutions.effectiveStatus(context, escalation.escalation_id) === 'open')
   let best: GuestEscalation | undefined
   for (const escalation of open) {
     if (
