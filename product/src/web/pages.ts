@@ -387,6 +387,162 @@ function threadsByEscalation(replies: readonly EscalationReply[]): Map<string, E
 }
 
 /**
+ * The label for a reply turn's author. EXHAUSTIVE three-way (NOT a binary `planner`-else fallthrough, which
+ * would mislabel a Phase-35 `guest` follow-up turn as "Couple" — a trust-presentation bug). Module-level so the
+ * inbox (`renderEscalations`) AND the per-conversation transcript (`renderConversation`) share ONE mapping.
+ */
+function senderLabel(sender: EscalationReply['sender']): string {
+  return sender === 'guest' ? 'Guest' : sender === 'planner' ? 'Planner' : 'Couple'
+}
+
+/** The label for a status transition in the conversation transcript (raw history — NOT an effective-status fold). */
+function transitionLabel(status: EscalationResolution['status']): string {
+  return status === 'resolved' ? 'Marked resolved' : status === 'dismissed' ? 'Dismissed' : 'Reopened'
+}
+
+/**
+ * One event in a single escalation's chronological transcript (Phase 38). A discriminated union over the THREE
+ * sources the scoped `GET /t/:slug/escalations` already returns — the question (singleton), each reply turn, and
+ * each status transition — each NORMALIZED to one `at` (the source's own ISO-8601 stamp: `received_at` /
+ * `sent_at` / `resolved_at`) and its own per-source `seq`. Built and rendered ONLY from already-scoped data.
+ */
+export type ConversationEvent =
+  | { readonly kind: 'question'; readonly at: string; readonly seq: number; readonly text: string; readonly from_ref: string; readonly channel: string }
+  | { readonly kind: 'reply'; readonly at: string; readonly seq: number; readonly sender: EscalationReply['sender']; readonly body: string }
+  | { readonly kind: 'transition'; readonly at: string; readonly seq: number; readonly status: EscalationResolution['status']; readonly by: EscalationResolution['resolved_by'] }
+
+/**
+ * The equal-timestamp GROUP rank `G` for the transcript comparator. The ONLY load-bearing distinctions are the
+ * CROSS-SOURCE reply↔transition ties that genuinely occur within ONE synchronous handler block:
+ *   - a `reopened` transition (G1) precedes a same-instant `reply` (G2): an inbound auto-reopen (Phase 37,
+ *     `product_api.ts` inbound branch) writes the `reopened` transition STRICTLY BEFORE the guest reply turn,
+ *     both from the same un-advanced `clock.now()` — so the reopen must render before the guest turn it enabled.
+ *   - a `reply` (G2) precedes a same-instant close transition (G3): a Phase-28 console reply writes the reply
+ *     turn, then (a separate action) the resolve — a close FOLLOWS the dialogue that prompted it.
+ * INVARIANT: production NEVER writes two transitions at one `at` (exactly two `transition()` call sites — the
+ * operator route, one-per-request; and the inbound branch, one `reopened` + a *reply*), so the transition↔
+ * transition `G` order (reopened<close) is an UNREACHED don't-care (a same-instant `resolved`→`reopened` is only
+ * constructible in a fixture that omits a clock advance; SystemClock always advances). A characterization test
+ * freezes that don't-care so it is never silently implementation-defined.
+ */
+function conversationEventRank(e: ConversationEvent): number {
+  if (e.kind === 'question') return 0
+  if (e.kind === 'transition') return e.status === 'reopened' ? 1 : 3
+  return 2 // reply
+}
+
+/**
+ * The TOTAL, transitive transcript order: lexicographic over `(at, G, seq)`. Primary `at` (ISO-8601 strings sort
+ * chronologically) is correct whenever the clock advanced between events (the production reality). The `(G, seq)`
+ * tiebreak only disambiguates same-instant fixtures and the cross-source ties above, and being a plain
+ * lexicographic tuple it can never form an inconsistent (non-transitive) comparator.
+ */
+function compareConversationEvents(a: ConversationEvent, b: ConversationEvent): number {
+  if (a.at !== b.at) return a.at < b.at ? -1 : 1
+  const ga = conversationEventRank(a)
+  const gb = conversationEventRank(b)
+  if (ga !== gb) return ga - gb
+  return a.seq - b.seq
+}
+
+/**
+ * Build the chronological transcript for ONE escalation (Phase 38). Takes the escalation OBJECT (so the join key
+ * is provably the trusted, in-scope `escalation.escalation_id` — never the client `?conversation=` string) plus
+ * the FULL scoped `resolutions` and `replies` arrays, and OWNS the join: it filters each to this escalation_id
+ * (single-sourcing the "which rows belong to this conversation" decision, like `countOpenEscalations`). It renders
+ * RAW transition history and computes NO effective status — the timeline's last event is a DISPLAY order
+ * (`compareConversationEvents`), NOT the max-`seq` effective-status fold (`effectiveTransitionByEscalation`); any
+ * current-status summary must come from that fold, never from "the last timeline event".
+ */
+export function buildConversationTimeline(
+  escalation: GuestEscalation,
+  resolutions: readonly EscalationResolution[],
+  replies: readonly EscalationReply[],
+): readonly ConversationEvent[] {
+  const id = escalation.escalation_id
+  const events: ConversationEvent[] = [
+    { kind: 'question', at: escalation.received_at, seq: 0, text: escalation.text, from_ref: escalation.from_ref, channel: escalation.channel },
+  ]
+  for (const reply of replies) {
+    if (reply.escalation_id !== id) continue
+    events.push({ kind: 'reply', at: reply.sent_at, seq: reply.seq, sender: reply.sender, body: reply.body })
+  }
+  for (const transition of resolutions) {
+    if (transition.escalation_id !== id) continue
+    events.push({ kind: 'transition', at: transition.resolved_at, seq: transition.seq, status: transition.status, by: transition.resolved_by })
+  }
+  return events.sort(compareConversationEvents)
+}
+
+/**
+ * The themed per-conversation TRANSCRIPT page (Phase 38) — the read-only legibility companion to the inbox. Shows
+ * ONE escalation's full chronological story: the original question, every reply turn (operator AND the Phase-35
+ * bi-directional `guest` follow-ups) and every status transition (resolved / dismissed / reopened, with who +
+ * when), interleaved by time via `buildConversationTimeline`. Pure render-time composition over the SAME scoped
+ * `GET /t/:slug/escalations` body the inbox reads (no new data path). READ-ONLY — no forms, so no CSRF token; the
+ * "← Back to all questions" link returns to the inbox where the Reply/Resolve/Reopen actions live. Every dynamic
+ * value (guest `text`/`body`, `from_ref`, timestamps, `resolved_by`) flows through `html` as escaped TEXT — a
+ * guest turn is never reflected to the guest. The page title is a CONSTANT (never the client `conversation` value).
+ */
+export function renderConversation(
+  theme: Tenant['theme'],
+  slug: string,
+  escalation: GuestEscalation,
+  resolutions: readonly EscalationResolution[],
+  replies: readonly EscalationReply[],
+): string {
+  const timeline = buildConversationTimeline(escalation, resolutions, replies)
+  const eventCard = (e: ConversationEvent): SafeHtml => {
+    if (e.kind === 'question') {
+      return html`<div class="card">
+    <div class="note">${e.at} · guest <code>${e.from_ref}</code> · via ${e.channel} · <strong>asked</strong></div>
+    <div><strong>“${e.text}”</strong></div>
+  </div>`
+    }
+    if (e.kind === 'reply') {
+      return html`<div class="card">
+    <div class="note">${e.at} · ${senderLabel(e.sender)} <strong>replied</strong></div>
+    <div>“${e.body}”</div>
+  </div>`
+    }
+    return html`<div class="note">${e.at} · <strong>${transitionLabel(e.status)}</strong> by ${e.by}</div>`
+  }
+  const cards = timeline.map(eventCard)
+  return themedShell(
+    theme,
+    slug,
+    'Guest conversation',
+    html`<p><a href="/t/${slug}?view=escalations">← Back to all questions</a></p>
+  <div class="card">
+    <h2>Conversation</h2>
+    <p class="note">The full history of this guest question — every message and status change, in order. <a href="/t/${slug}?wedding=${escalation.wedding_id}">Set the missing details →</a></p>
+  </div>
+  ${cards}`,
+  )
+}
+
+/**
+ * The themed "no such conversation" notice (Phase 38) — returned at status 200 when the scoped read succeeded but
+ * the requested `conversation` id is NOT in the principal's scoped escalations (ABSENT or a couple probing a
+ * sibling-wedding's escalation — byte-identical, since the scoped read already excluded the foreign row). It is a
+ * FROZEN themed fragment with ZERO interpolation of the client `conversation` value (the `renderDetail` "never
+ * reflect the id" rule), so absent ≡ foreign discloses nothing about other weddings. NOT a `GENERIC_404` (that is
+ * the unknown-tenant mask; the read already proved this tenant active — a 404 here would be leakier, not safer).
+ */
+export function renderConversationNotFound(theme: Tenant['theme'], slug: string): string {
+  return themedShell(
+    theme,
+    slug,
+    'Guest conversation',
+    html`<p><a href="/t/${slug}?view=escalations">← Back to all questions</a></p>
+  <div class="card">
+    <h2>Conversation</h2>
+    <p class="note">We couldn't find that conversation.</p>
+  </div>`,
+  )
+}
+
+/**
  * The themed escalation-inbox page (Phase 26 read + Phase 27 resolve + Phase 28/34 multi-turn reply): the
  * questions guests asked that the platform could not answer, split into OPEN (still to handle) and HANDLED
  * (resolved/dismissed). Each row shows its reply THREAD (the question→answer transcript — Phase 34 replaced the
@@ -424,10 +580,8 @@ export function renderEscalations(
 
   // The reply THREAD (Phase 34): each turn as a "Sender: body" line, escaped via `html` like every other value.
   // Phase 35: the thread is BI-DIRECTIONAL — a `guest` turn (an inbound follow-up) sits beside operator turns.
-  // The label is an EXHAUSTIVE three-way map (NOT a binary `planner`-else fallthrough, which would mislabel a
-  // guest turn as "Couple" — a trust-presentation bug). Empty when no turns yet.
-  const senderLabel = (sender: EscalationReply['sender']): string =>
-    sender === 'guest' ? 'Guest' : sender === 'planner' ? 'Planner' : 'Couple'
+  // The author label is the module-level `senderLabel` (shared with the Phase-38 transcript) — an EXHAUSTIVE
+  // three-way map so a guest turn is never mislabeled as "Couple". Empty when no turns yet.
   const threadView = (escalationId: string): SafeHtml => {
     const thread = threadOf.get(escalationId) ?? []
     if (thread.length === 0) return html``
@@ -448,7 +602,7 @@ export function renderEscalations(
     (e) => html`<div class="card">
     <div><strong>“${e.text}”</strong></div>
     <div class="note">From <code>${e.from_ref}</code> · ${e.received_at} · via ${e.channel}</div>
-    <div class="note">Wedding <code>${e.wedding_id}</code> · <a href="/t/${slug}?wedding=${e.wedding_id}">Set the missing details →</a></div>
+    <div class="note">Wedding <code>${e.wedding_id}</code> · <a href="/t/${slug}?wedding=${e.wedding_id}">Set the missing details →</a> · <a href="/t/${slug}?view=escalations&amp;conversation=${e.escalation_id}">View full conversation →</a></div>
     ${threadView(e.escalation_id)}
     ${replyForm(e.escalation_id)}
     <div class="inline">${actionForm(e.escalation_id, 'resolved', 'Mark resolved')} ${actionForm(e.escalation_id, 'dismissed', 'Dismiss')}</div>
@@ -467,7 +621,7 @@ export function renderEscalations(
     return html`<div class="card">
     <div><strong>“${e.text}”</strong> <span class="note">— ${badge} by ${r.resolved_by}</span></div>
     ${threadView(e.escalation_id)}
-    <div class="note">From <code>${e.from_ref}</code> · ${e.received_at}</div>
+    <div class="note">From <code>${e.from_ref}</code> · ${e.received_at} · <a href="/t/${slug}?view=escalations&amp;conversation=${e.escalation_id}">View full conversation →</a></div>
     <div class="inline">${actionForm(e.escalation_id, 'reopened', 'Reopen')}</div>
   </div>`
   })

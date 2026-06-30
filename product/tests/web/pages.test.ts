@@ -5,12 +5,16 @@ import { NEUTRAL_COLOR } from '../../src/web/html'
 import type { BillingActivityEntry } from '../../src/billing/billing_activity'
 import type { BillingSummary } from '../../src/billing/billing_summary'
 import type { AccountOverview } from '../../src/web/pages'
+import type { ConversationEvent } from '../../src/web/pages'
 import {
+  buildConversationTimeline,
   countOpenEscalations,
   ERROR_500,
   GENERIC_404,
   renderBilling,
   renderConsole,
+  renderConversation,
+  renderConversationNotFound,
   renderDetail,
   renderEscalations,
   renderGuests,
@@ -309,6 +313,125 @@ describe('generic constants', () => {
     // Phase 36: a reopened escalation (max-seq reopened) counts as OPEN again — the fold uses max-seq.
     const reopened: EscalationResolution = { ...resolution, resolution_id: 'res_2', seq: 1, status: 'reopened' }
     expect(countOpenEscalations([ESC_1, esc2], [resolution, reopened])).toBe(2) // esc_1 reopened → open again
+  })
+
+  // ----- Phase 38: the per-conversation transcript (buildConversationTimeline + renderConversation) -----
+
+  const kinds = (timeline: readonly ConversationEvent[]): string[] => timeline.map((e) => e.kind)
+  const mkReply = (seq: number, sender: EscalationReply['sender'], body: string, sent_at: string): EscalationReply => ({
+    reply_id: `rep_${seq}`, tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq, sender, body, sent_at,
+    ...(sender === 'guest' ? { provider_message_ref: `pm_g_${seq}` } : {}),
+  })
+  const mkTransition = (seq: number, status: EscalationResolution['status'], by: EscalationResolution['resolved_by'], at: string): EscalationResolution => ({
+    resolution_id: `res_${seq}`, tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq, status, resolved_by: by, resolved_at: at,
+  })
+
+  it('buildConversationTimeline orders the question, replies and transitions by timestamp (clock advancing)', () => {
+    const timeline = buildConversationTimeline(
+      ESC_1, // received_at 2027-05-01T00:00:00
+      [mkTransition(0, 'resolved', 'couple', '2027-05-01T00:02:00.000Z')],
+      [mkReply(0, 'couple', 'Lot B.', '2027-05-01T00:01:00.000Z')],
+    )
+    expect(kinds(timeline)).toEqual(['question', 'reply', 'transition'])
+    expect(timeline.map((e) => e.at)).toEqual([
+      '2027-05-01T00:00:00.000Z', '2027-05-01T00:01:00.000Z', '2027-05-01T00:02:00.000Z',
+    ])
+  })
+
+  it('buildConversationTimeline sorts multiple reply turns by seq (numeric, not lexicographic; input out of order)', () => {
+    const timeline = buildConversationTimeline(
+      ESC_1,
+      [],
+      [mkReply(10, 'planner', 'tenth', '2027-05-01T00:01:00.000Z'), mkReply(2, 'planner', 'second', '2027-05-01T00:01:00.000Z')],
+    )
+    // both replies share an instant → tie broken by seq ascending (2 before 10, NOT lexicographic '10' < '2').
+    expect(timeline.filter((e) => e.kind === 'reply').map((e) => (e.kind === 'reply' ? e.body : ''))).toEqual(['second', 'tenth'])
+  })
+
+  it('buildConversationTimeline filters OUT rows belonging to other escalations (joins on escalation.escalation_id)', () => {
+    const foreignReply: EscalationReply = { ...mkReply(0, 'planner', 'other thread', '2027-05-01T00:01:00.000Z'), escalation_id: 'esc_999' }
+    const foreignTransition: EscalationResolution = { ...mkTransition(0, 'resolved', 'planner', '2027-05-01T00:02:00.000Z'), escalation_id: 'esc_999' }
+    const timeline = buildConversationTimeline(ESC_1, [foreignTransition], [foreignReply])
+    // Only the question survives — no foreign reply/transition leaks into esc_1's transcript.
+    expect(kinds(timeline)).toEqual(['question'])
+  })
+
+  it('buildConversationTimeline of a never-handled escalation with no replies is just the question', () => {
+    expect(kinds(buildConversationTimeline(ESC_1, [], []))).toEqual(['question'])
+  })
+
+  it('SAME-INSTANT (Phase 37 auto-reopen): a reopened transition renders BEFORE the guest reply it enabled', () => {
+    // The inbound auto-reopen writes the `reopened` transition then the guest turn from the SAME un-advanced
+    // clock tick → identical `at`. The G-tuple puts reopened (G1) before the reply (G2), matching the write order.
+    const at = '2027-05-01T00:05:00.000Z'
+    const timeline = buildConversationTimeline(
+      ESC_1,
+      [mkTransition(0, 'resolved', 'couple', '2027-05-01T00:02:00.000Z'), mkTransition(1, 'reopened', 'guest', at)],
+      [mkReply(0, 'guest', 'still wondering about parking', at)],
+    )
+    const tail = kinds(timeline).slice(-2)
+    expect(tail).toEqual(['transition', 'reply']) // ADJACENT, reopen immediately before the guest turn
+    const reopenIdx = timeline.findIndex((e) => e.kind === 'transition' && e.status === 'reopened')
+    const guestIdx = timeline.findIndex((e) => e.kind === 'reply' && e.sender === 'guest')
+    expect(reopenIdx).toBeLessThan(guestIdx)
+  })
+
+  it('SAME-INSTANT (Phase 28 reply-then-resolve): the reply renders BEFORE the close transition it triggered', () => {
+    const at = '2027-05-01T00:03:00.000Z'
+    const timeline = buildConversationTimeline(
+      ESC_1,
+      [mkTransition(0, 'resolved', 'couple', at)],
+      [mkReply(0, 'couple', 'Parking is in lot B.', at)],
+    )
+    const replyIdx = timeline.findIndex((e) => e.kind === 'reply')
+    const closeIdx = timeline.findIndex((e) => e.kind === 'transition' && e.status === 'resolved')
+    expect(replyIdx).toBeLessThan(closeIdx) // reply (G2) before the close (G3) at the same instant
+  })
+
+  it('CHARACTERIZATION (deliberately unreachable): a same-instant resolved→reopened renders in G order (reopen before close)', () => {
+    // This fixture omits a clock advance between two SEPARATE transitions — a state production never reaches
+    // (each `transition()` call site is one-per-synchronous-context; SystemClock always advances). The order
+    // here is the G-tuple don't-care; the test FREEZES it so the behavior is characterized, never silently
+    // implementation-defined. NOTE: this display order is NOT the effective-status fold (which uses max-seq).
+    const at = '2027-05-01T00:09:00.000Z'
+    const timeline = buildConversationTimeline(
+      ESC_1,
+      [mkTransition(0, 'resolved', 'planner', at), mkTransition(1, 'reopened', 'planner', at)],
+      [],
+    )
+    const transitions = timeline.filter((e) => e.kind === 'transition')
+    expect(transitions.map((e) => (e.kind === 'transition' ? e.status : ''))).toEqual(['reopened', 'resolved'])
+  })
+
+  it('renderConversation shows the question, both senders and the transition history, all escaped', () => {
+    const out = renderConversation(
+      SAFE_THEME,
+      'acme',
+      ESC_1,
+      [mkTransition(0, 'resolved', 'couple', '2027-05-01T00:04:00.000Z'), mkTransition(1, 'reopened', 'guest', '2027-05-01T00:05:00.000Z')],
+      [mkReply(0, 'couple', 'Lot B.', '2027-05-01T00:03:00.000Z'), mkReply(1, 'guest', 'thanks!', '2027-05-01T00:06:00.000Z')],
+    )
+    expect(out).toContain('where do I park?')
+    expect(out).toContain('Lot B.')
+    expect(out).toContain('Marked resolved')
+    expect(out).toContain('Reopened')
+    expect(out).toContain('Guest') // the guest turn label (exhaustive, never "Couple")
+    expect(out).toContain('← Back to all questions')
+    expect(out).toContain('/t/acme?wedding=wedding_42') // set-the-details link
+  })
+
+  it('renderConversation escapes an UNTRUSTED guest question + reply body (no live markup)', () => {
+    const evilEsc: GuestEscalation = { ...ESC_1, text: '<script>alert("q")</script>', from_ref: '"><img src=x onerror=alert(1)>' }
+    const out = renderConversation(SAFE_THEME, 'acme', evilEsc, [], [mkReply(0, 'guest', '<script>alert("r")</script>', '2027-05-01T00:03:00.000Z')])
+    expect(out).not.toContain('<script>alert')
+    expect(out).toContain('&lt;script&gt;')
+  })
+
+  it('renderConversationNotFound is a themed notice that reflects NEITHER the conversation id nor anything user-supplied', () => {
+    const out = renderConversationNotFound(SAFE_THEME, 'acme')
+    expect(out).toContain("We couldn't find that conversation.")
+    expect(out).toContain('← Back to all questions')
+    expect(out).not.toContain('esc_') // no escalation/conversation id reflected
   })
 
   it('renderLanding is tenant-independent (no theme)', () => {
