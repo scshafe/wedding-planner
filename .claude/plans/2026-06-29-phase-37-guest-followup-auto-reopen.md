@@ -106,7 +106,7 @@ badges), so it is never displayed and the operator resolve/dismiss handler (`by:
     now shared). Else → `escalations.record` fresh (unchanged). Update the §B0 / selector header comments.
   - Green (`npm run build && npm test && npm run lint`).
 
-- [ ] **Step 3 — Tests.** Handler tests in the inbound/messaging suite:
+- [x] **Step 3 — Tests.** Handler tests in the inbound/messaging suite:
   - guest follow-up to a guest whose most-recent escalation is RESOLVED → the escalation is effective-`open`
     again (a `reopened` row, `resolved_by:'guest'`) AND the follow-up is a `sender:'guest'` thread turn; still
     202; NO send / NO charge (meter total unchanged).

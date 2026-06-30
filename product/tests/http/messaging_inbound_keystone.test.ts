@@ -336,6 +336,64 @@ describe('Phase 35 — guest-reply → thread correlation', () => {
     expect(w.service.usageView(w.tenantAId).message_count).toBe(0)
   })
 
+  it('Phase 37: a DISMISSED escalation is NOT reopened — a guest follow-up opens a FRESH escalation (operator dismissal is final)', () => {
+    const w = makeWorld()
+    const weddingId = seedGuestOnAlpha(w)
+    w.api.handle(inbound('alpha', payload(ESC1))) // E1
+    const e1 = w.escalations.list(w.ctxA)[0]!
+    w.resolutions.transition(w.ctxA, { escalation_id: e1.escalation_id, wedding_id: weddingId, status: 'dismissed', by: 'couple' })
+    expect(w.api.handle(inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED)
+    expect(w.escalations.list(w.ctxA)).toHaveLength(2) // a fresh escalation, NOT a reopen of the dismissed one
+    expect(w.replies.list(w.ctxA)).toHaveLength(0) // not threaded
+    // The SELECTOR policy (independent of transition()'s permissive direction rule): NO `reopened` row is
+    // appended to the dismissed escalation, and its effective status stays dismissed.
+    expect(w.resolutions.effectiveStatus(w.ctxA, e1.escalation_id)).toBe('dismissed')
+    expect(w.resolutions.list(w.ctxA).filter((r) => r.escalation_id === e1.escalation_id).some((r) => r.status === 'reopened')).toBe(false)
+  })
+
+  it('Phase 37 §B0: re-delivery of the auto-reopen follow-up is processed ONCE — exactly one reopened row and one guest turn', () => {
+    const w = makeWorld()
+    const weddingId = seedGuestOnAlpha(w)
+    w.api.handle(inbound('alpha', payload(ESC1))) // E1
+    const e1 = w.escalations.list(w.ctxA)[0]!
+    w.resolutions.transition(w.ctxA, { escalation_id: e1.escalation_id, wedding_id: weddingId, status: 'resolved', by: 'couple' })
+    w.api.handle(inbound('alpha', payload(ESC2))) // auto-reopen + thread (E1 is now effective-open)
+    // The SAME follow-up re-delivered AFTER the auto-reopen — now a DIFFERENT selector tier (open, not resolved)
+    // — must still no-op via the §B0 guard (guestTurnByProviderRef), never double-reopen / double-thread.
+    w.api.handle(inbound('alpha', payload(ESC2)))
+    expect(w.escalations.list(w.ctxA)).toHaveLength(1) // no fresh escalation
+    expect(w.resolutions.list(w.ctxA).filter((r) => r.escalation_id === e1.escalation_id && r.status === 'reopened')).toHaveLength(1) // EXACTLY one reopen
+    expect(w.replies.list(w.ctxA).filter((r) => r.provider_message_ref === ESC2.provider_message_ref)).toHaveLength(1) // one guest turn
+  })
+
+  it('Phase 37: OPEN is preferred over RESOLVED — with both present, the follow-up threads into the OPEN one and reopens nothing', () => {
+    const w = makeWorld()
+    const weddingId = seedGuestOnAlpha(w)
+    // Construct the cross-tier state directly: E1 resolved, E2 open (post-Phase-37 a follow-up would reopen E1,
+    // so the only way a guest holds BOTH an open and a resolved escalation is a directly-seeded pair).
+    const e1 = w.escalations.record(w.ctxA, { wedding_id: weddingId, from_ref: REF, text: 'q1', received_at: '2027-03-01T00:00:00.000Z', provider_message_ref: 'pmr_pre1', channel: 'sms' })
+    const e2 = w.escalations.record(w.ctxA, { wedding_id: weddingId, from_ref: REF, text: 'q2', received_at: '2027-03-01T00:00:01.000Z', provider_message_ref: 'pmr_pre2', channel: 'sms' })
+    w.resolutions.transition(w.ctxA, { escalation_id: e1.escalation_id, wedding_id: weddingId, status: 'resolved', by: 'couple' })
+    expect(w.api.handle(inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED)
+    expect(w.escalations.list(w.ctxA)).toHaveLength(2) // no fresh escalation, no reopen
+    const thread = w.replies.list(w.ctxA)
+    expect(thread).toHaveLength(1)
+    expect(thread[0]?.escalation_id).toBe(e2.escalation_id) // threaded into the OPEN E2
+    expect(w.resolutions.effectiveStatus(w.ctxA, e1.escalation_id)).toBe('resolved') // E1 untouched (never reopened)
+  })
+
+  it('Phase 37 (arch P2-C): no inbound path writes a resolved/dismissed row attributed to guest — `guest` appears ONLY on reopened', () => {
+    const w = makeWorld()
+    const weddingId = seedGuestOnAlpha(w)
+    w.api.handle(inbound('alpha', payload(ESC1)))
+    const e1 = w.escalations.list(w.ctxA)[0]!
+    w.resolutions.transition(w.ctxA, { escalation_id: e1.escalation_id, wedding_id: weddingId, status: 'resolved', by: 'couple' })
+    w.api.handle(inbound('alpha', payload(ESC2))) // auto-reopen writes a `guest` row
+    const guestRows = w.resolutions.list(w.ctxA).filter((r) => r.resolved_by === 'guest')
+    expect(guestRows.length).toBeGreaterThan(0) // the auto-reopen did attribute to guest
+    expect(guestRows.every((r) => r.status === 'reopened')).toBe(true) // ...and ONLY on a reopened row
+  })
+
   it('Phase 36: after an operator REOPENS a resolved escalation, a guest follow-up threads INTO it (effective-open), not a fresh one', () => {
     const w = makeWorld()
     const weddingId = seedGuestOnAlpha(w)

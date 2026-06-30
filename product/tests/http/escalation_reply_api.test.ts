@@ -302,6 +302,28 @@ describe('escalation reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
     expect(listReplies(w, 'alpha', planner).map((r) => r.body)).toEqual(['Parking is in lot B.'])
   })
 
+  it('Phase 37 keystone-CONDITIONAL: a GUEST follow-up auto-reopens a resolved escalation → an operator reply now sends one billed message', () => {
+    const planner = login(w, 'alpha', { role: 'planner' })
+    const wedA = makeWedding(w, 'alpha', planner)
+    registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
+    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1') // E1 OPEN
+    // Operator resolves → the Phase-28/36 no-bill gate blocks a reply (effectiveStatus !== 'open').
+    expect(w.api.handle(req('POST', `/t/alpha/escalations`, { token: planner, body: { escalation_id: escId, status: 'resolved' } })).body).toEqual({ resolved: true })
+    expect(reply(w, 'alpha', planner, escId, { seq: 0 }).body).toEqual({ replied: false })
+    expect(usage(w, 'alpha').message_count).toBe(0)
+    // A GUEST follow-up (a fresh provider_message_ref) AUTO-REOPENS E1 and threads in — uniform 202, no fresh
+    // escalation, no send. The thread now holds one guest turn (seq 0).
+    const followup = w.api.handle(
+      req('POST', `/t/alpha/messaging/inbound`, { token: WH, body: { channel: 'sms', from_ref: 'sms:+1', text: 'where do I park?', provider_message_ref: 'pm_followup' } }),
+    )
+    expect(followup.status).toBe(202)
+    expect(usage(w, 'alpha').message_count).toBe(0) // the guest turn carries NO send
+    expect(listReplies(w, 'alpha', planner)).toEqual([{ ...listReplies(w, 'alpha', planner)[0], escalation_id: escId, seq: 0, sender: 'guest', body: 'where do I park?' }])
+    // E1 is effective-open again → the operator reply (seq 1, after the guest turn) now sends EXACTLY one billed message.
+    expect(reply(w, 'alpha', planner, escId, { seq: 1 }).body).toEqual({ replied: true })
+    expect(usage(w, 'alpha').message_count).toBe(1)
+  })
+
   it('a malformed reply (missing/empty reply_text) is a masked 400 INDEPENDENT of existence (no oracle)', () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)

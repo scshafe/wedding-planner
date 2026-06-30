@@ -232,6 +232,21 @@ describe('generic constants', () => {
     expect(out).not.toContain('Reopen') // no reopen affordance on an already-open row
   })
 
+  it('Phase 37: a GUEST-reopened escalation (resolved_by:guest) renders in the OPEN column — the guest attribution is never displayed', () => {
+    const resolved: EscalationResolution = { resolution_id: 'res_0', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq: 0, status: 'resolved', resolved_by: 'couple', resolved_at: '2027-05-02T00:00:00.000Z' }
+    const reopened: EscalationResolution = { resolution_id: 'res_1', tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq: 1, status: 'reopened', resolved_by: 'guest', resolved_at: '2027-05-02T00:01:00.000Z' }
+    const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [reopened, resolved], [], 'csrf-xyz')
+    // Effective-open (max-seq reopened) → an OPEN row, never a handled badge — so `resolved_by:'guest'` is
+    // never read for a badge and the word 'guest' never reaches the page (pins arch P2-C's render side).
+    expect(out).toContain('value="resolved"') // open-row Resolve/Dismiss affordances
+    expect(out).toContain('action="/t/acme/escalations/reply"')
+    expect(out).not.toContain('Handled')
+    expect(out).not.toContain('Reopen')
+    // The handled badge ('Resolved/Dismissed by <role>') is the only place resolved_by is rendered; an
+    // effective-open row never shows it, so the guest attribution is never displayed.
+    expect(out).not.toContain('by guest')
+  })
+
   it('Phase 36: a resolved→reopened→dismissed escalation renders HANDLED (max-seq dismissed)', () => {
     const mk = (seq: number, status: EscalationResolution['status']): EscalationResolution => ({ resolution_id: `res_${seq}`, tenant_id: 't1', escalation_id: 'esc_1', wedding_id: 'wedding_42', seq, status, resolved_by: 'planner', resolved_at: '2027-05-02T00:00:00.000Z' })
     const out = renderEscalations(SAFE_THEME, 'acme', [ESC_1], [mk(0, 'resolved'), mk(1, 'reopened'), mk(2, 'dismissed')], [], 'csrf-xyz')
