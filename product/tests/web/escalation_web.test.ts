@@ -48,6 +48,7 @@ interface World {
   api: ProductApi
   messaging: MessagingService
   store: TenantStore
+  clock: ManualClock
 }
 
 function makeWorld(): World {
@@ -86,7 +87,7 @@ function makeWorld(): World {
     },
     escalations: { escalations, resolutions, replies, authorizer: guestAuthorizer, service: messaging },
   })
-  return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store), csrf: sessions }), api, messaging, store }
+  return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store), csrf: sessions }), api, messaging, store, clock }
 }
 
 function get(ui: ProductWebUi, path: string, cookie?: string): HttpResult {
@@ -362,5 +363,176 @@ describe('escalation inbox web page — guest-reply thread correlation (Phase 35
     expect(get(w.ui, '/t/acme?view=escalations', cookie).body).toContain('name="seq" value="0"') // empty thread
     followUp(w.api, 'acme', 'Any update?', 'pm_seq')
     expect(get(w.ui, '/t/acme?view=escalations', cookie).body).toContain('name="seq" value="1"') // the guest turn occupies slot 0
+  })
+})
+
+describe('per-conversation transcript page (?view=escalations&conversation=ID) — Phase 38', () => {
+  /** A planner Bearer token (whole-tenant scope) — used to read escalation ids back out of the JSON layer. */
+  function plannerToken(api: ProductApi, slug: string): string {
+    const login = api.handle({ method: 'POST', path: `/t/${slug}/sessions`, headers: {}, rawBody: JSON.stringify({ role: 'planner' }) })
+    return (login.body as { token: string }).token
+  }
+  type EscRow = { escalation_id: string; provider_message_ref?: string; wedding_id: string }
+  function escalationsOf(api: ProductApi, slug: string, token: string): EscRow[] {
+    const res = api.handle({ method: 'GET', path: `/t/${slug}/escalations`, headers: { authorization: `Bearer ${token}` } })
+    return (res.body as { escalations: EscRow[] }).escalations
+  }
+  /** Create a wedding + register a guest + drive one UNANSWERABLE inbound; return {weddingId, escalationId}. */
+  function seedConversation(
+    api: ProductApi,
+    slug: string,
+    opts: { couple: string; ref: string; guestId: string; text: string; pm: string },
+  ): { weddingId: string; escalationId: string } {
+    const token = plannerToken(api, slug)
+    const create = api.handle({
+      method: 'POST',
+      path: `/t/${slug}/weddings`,
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      rawBody: JSON.stringify({ couple_display_name: opts.couple, event_date: '2029-06-06' }),
+    })
+    const weddingId = (create.body as { wedding: { wedding_id: string } }).wedding.wedding_id
+    api.handle({
+      method: 'POST',
+      path: `/t/${slug}/guests`,
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      rawBody: JSON.stringify({ recipient_ref: opts.ref, wedding_id: weddingId, guest_id: opts.guestId }),
+    })
+    api.handle({
+      method: 'POST',
+      path: `/t/${slug}/messaging/inbound`,
+      headers: { authorization: `Bearer ${WH}`, 'content-type': 'application/json' },
+      rawBody: JSON.stringify({ channel: 'sms', from_ref: opts.ref, text: opts.text, provider_message_ref: opts.pm }),
+    })
+    const escalationId = escalationsOf(api, slug, token).find((e) => e.provider_message_ref === opts.pm)!.escalation_id
+    return { weddingId, escalationId }
+  }
+
+  it('the inbox row links to the transcript at the right conversation id', () => {
+    const { ui, api } = makeWorld()
+    seedEscalation(api, 'acme')
+    const cookie = loginCookie(ui, 'acme', 'planner')
+    const page = get(ui, '/t/acme?view=escalations', cookie).body as string
+    const escId = escalationIdFrom(page)
+    expect(page).toContain(`/t/acme?view=escalations&amp;conversation=${escId}`)
+    expect(page).toContain('View full conversation')
+  })
+
+  it('a planner sees the transcript: the question + reply turns + transition history, interleaved', () => {
+    const { ui, api, store, clock } = makeWorld()
+    seedEscalation(api, 'acme')
+    const cookie = loginCookie(ui, 'acme', 'planner')
+    const escId = escalationIdFrom(get(ui, '/t/acme?view=escalations', cookie).body as string)
+    const tenantId = store.findBySlug('acme')!.tenant_id
+    expect(tenantId).toBeTruthy()
+    // Reply, then resolve — advancing the clock so the transcript orders by REAL time (production reality).
+    const p1 = get(ui, '/t/acme?view=escalations', cookie).body as string
+    clock.advance(60_000)
+    postForm(ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(p1), escalation_id: escId, reply_text: 'Lot B.', seq: '0' }, cookie)
+    const p2 = get(ui, '/t/acme?view=escalations', cookie).body as string
+    clock.advance(60_000)
+    postForm(ui, '/t/acme/escalations/resolve', { _csrf: csrfFrom(p2), escalation_id: escId, status: 'resolved' }, cookie)
+
+    const tx = get(ui, `/t/acme?view=escalations&conversation=${escId}`, cookie)
+    expect(tx.status).toBe(200)
+    const body = tx.body as string
+    expect(body).toContain('where do I park?') // the question
+    expect(body).toContain('Lot B.') // the reply turn
+    expect(body).toContain('Marked resolved') // the transition history
+    expect(body).toContain('← Back to all questions')
+    // Chronological order: question, then the reply, then the resolution.
+    expect(body.indexOf('where do I park?')).toBeLessThan(body.indexOf('Lot B.'))
+    expect(body.indexOf('Lot B.')).toBeLessThan(body.indexOf('Marked resolved'))
+  })
+
+  it('end-to-end auto-reopen (Phase 37): the transcript shows question → reply → resolved → guest follow-up → reopened, in order', () => {
+    const { ui, api, clock } = makeWorld()
+    seedEscalation(api, 'acme') // E1: "where do I park?"
+    const cookie = loginCookie(ui, 'acme', 'planner')
+    const escId = escalationIdFrom(get(ui, '/t/acme?view=escalations', cookie).body as string)
+
+    clock.advance(60_000)
+    const p1 = get(ui, '/t/acme?view=escalations', cookie).body as string
+    postForm(ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(p1), escalation_id: escId, reply_text: 'Lot B.', seq: '0' }, cookie)
+    clock.advance(60_000)
+    const p2 = get(ui, '/t/acme?view=escalations', cookie).body as string
+    postForm(ui, '/t/acme/escalations/resolve', { _csrf: csrfFrom(p2), escalation_id: escId, status: 'resolved' }, cookie)
+    // The guest re-engages the RESOLVED conversation → auto-reopen (the reopen + guest turn share this instant).
+    clock.advance(60_000)
+    api.handle({
+      method: 'POST',
+      path: '/t/acme/messaging/inbound',
+      headers: { authorization: `Bearer ${WH}`, 'content-type': 'application/json' },
+      rawBody: JSON.stringify({ channel: 'sms', from_ref: 'sms:+15550100', text: 'is there overflow parking?', provider_message_ref: 'pm_reopen' }),
+    })
+
+    const body = get(ui, `/t/acme?view=escalations&conversation=${escId}`, cookie).body as string
+    const iQ = body.indexOf('where do I park?')
+    const iReply = body.indexOf('Lot B.')
+    const iResolved = body.indexOf('Marked resolved')
+    const iFollow = body.indexOf('is there overflow parking?')
+    const iReopen = body.indexOf('Reopened')
+    expect([iQ, iReply, iResolved, iFollow, iReopen].every((i) => i >= 0)).toBe(true)
+    // Real-time order: Q < reply < resolved < (reopen, follow-up). The reopen + the guest turn share one instant
+    // → the G-tuple renders the reopen BEFORE the guest turn it enabled (Phase-37 write order).
+    expect(iQ).toBeLessThan(iReply)
+    expect(iReply).toBeLessThan(iResolved)
+    expect(iResolved).toBeLessThan(iReopen)
+    expect(iReopen).toBeLessThan(iFollow)
+  })
+
+  it('NO ORACLE: a couple gets the byte-identical not-found notice for a SIBLING wedding conversation AND an absent id', () => {
+    const { ui, api } = makeWorld()
+    const a = seedConversation(api, 'acme', { couple: 'A & A', ref: 'sms:+15550111', guestId: 'ga', text: 'Q-A', pm: 'pm_a' })
+    const b = seedConversation(api, 'acme', { couple: 'B & B', ref: 'sms:+15550222', guestId: 'gb', text: 'Q-B', pm: 'pm_b' })
+    // A couple bound to wedding A.
+    const coupleA = loginCookie(ui, 'acme', 'couple', a.weddingId)
+    // Their OWN conversation renders.
+    const own = get(ui, `/t/acme?view=escalations&conversation=${a.escalationId}`, coupleA)
+    expect(own.status).toBe(200)
+    expect(own.body).toContain('Q-A')
+    // A sibling-wedding conversation (B) → not-found notice; an absent id → not-found notice; BYTE-IDENTICAL.
+    const sibling = get(ui, `/t/acme?view=escalations&conversation=${b.escalationId}`, coupleA)
+    const absent = get(ui, '/t/acme?view=escalations&conversation=esc_does_not_exist', coupleA)
+    expect(sibling.status).toBe(200)
+    expect(sibling.body).toContain("We couldn't find that conversation.")
+    expect(sibling.body).not.toContain('Q-B') // no leak of the sibling's question
+    expect(sibling.body).toBe(absent.body) // foreign ≡ absent — no cross-wedding existence oracle
+  })
+
+  it('NO REFLECTION: the not-found notice never echoes the submitted conversation id', () => {
+    const { ui, api } = makeWorld()
+    seedEscalation(api, 'acme')
+    const cookie = loginCookie(ui, 'acme', 'planner')
+    const res = get(ui, '/t/acme?view=escalations&conversation=esc_PROBE_12345', cookie)
+    expect(res.status).toBe(200)
+    expect(res.body).toContain("We couldn't find that conversation.")
+    expect(res.body).not.toContain('esc_PROBE_12345')
+  })
+
+  it('a malformed/encoded conversation id never throws — it is a pure filter key (no 500 oracle)', () => {
+    const { ui, api } = makeWorld()
+    seedEscalation(api, 'acme')
+    const cookie = loginCookie(ui, 'acme', 'planner')
+    for (const probe of ['..%2F..%2Fetc', '', '%00', 'a'.repeat(5000)]) {
+      const res = get(ui, `/t/acme?view=escalations&conversation=${probe}`, cookie)
+      expect(res.status).toBe(200)
+      expect(res.body).toContain("We couldn't find that conversation.")
+    }
+  })
+
+  it('unauthenticated / unknown-tenant requests for a transcript mask BYTE-IDENTICALLY to the inbox', () => {
+    const { ui, api } = makeWorld()
+    const { escalationId } = seedConversation(api, 'acme', { couple: 'A & A', ref: 'sms:+15550100', guestId: 'g1', text: 'where do I park?', pm: 'pm_1' })
+    // No cookie → unauthenticated: the transcript reuses #renderNonData, so it is byte-identical to the
+    // unauthenticated inbox (no transcript content leaks — the read's 401 mask wins before any selection).
+    const anonInbox = get(ui, '/t/acme?view=escalations')
+    const anonTx = get(ui, `/t/acme?view=escalations&conversation=${escalationId}`)
+    expect(anonTx.body).toBe(anonInbox.body)
+    expect(anonTx.body).not.toContain('where do I park?')
+    // Unknown tenant → GENERIC_404, byte-identical to the inbox's unknown-tenant mask.
+    const ghostInbox = get(ui, '/t/ghosttenant?view=escalations')
+    const ghostTx = get(ui, '/t/ghosttenant?view=escalations&conversation=esc_x')
+    expect(ghostTx.status).toBe(404)
+    expect(ghostTx.body).toBe(ghostInbox.body)
   })
 })
