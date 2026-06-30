@@ -85,13 +85,49 @@ whole tenant; couple → their bound wedding) and **selects the escalation by id
 
 ## Steps
 
-- [ ] **Step 0 — Design review (doddy + architect lenses).** Two `general-purpose` agents carrying the persona
-  lens (the named specialists are not provisioned here — handoff). doddy: attack Crux 2 (can a couple learn a
-  foreign/absent conversation exists? can the `conversation` filter widen disclosure? XSS round-trip? any 500
-  oracle from a malformed id?). architect: validate Crux 1 (is the status-aware tiebreak correct + worth it, or
-  prefer the flat rule? is `buildConversationTimeline` the right seam? does open-count / inbox single-sourcing
-  stay intact — the transcript must NOT re-derive effective status differently from `effectiveTransitionByEscalation`).
-  Fold findings into the steps; record the tiebreak + masking decisions here.
+- [x] **Step 0 — Design review (doddy + architect lenses).** Both `general-purpose` agents (persona lens; the
+  named specialists are not provisioned here — handoff) returned **APPROVE-WITH-FIXES** — no design change, all
+  hardening + spec-pinning. **Resolved decisions folded below:**
+  - **(Crux 1 — the comparator, architect P1 + my self-caught non-transitivity)** Use a **total lexicographic
+    tuple `(at, G, seq)`**, `G = {question:0, reopened:1, reply:2, resolved|dismissed:3}`, compared
+    lexicographically. The architect's first proposal (same-source-by-`seq`, group-order only cross-source) is
+    NON-TRANSITIVE — `{T_close(seq5), R(seq0), T_reopen(seq6)}` at equal `at` cycles
+    `T_reopen < R < T_close < T_reopen` (an inconsistent JS comparator → implementation-defined sort) — so it is
+    DROPPED (architect re-confirmed). The tuple is total + transitive by construction AND causally faithful to
+    BOTH real same-instant flows: Phase-37 auto-reopen (reopen `G1` before guest reply `G2` — `product_api.ts:1140`
+    writes reopen STRICTLY before the thread turn in one block) and Phase-28 reply-then-resolve (reply `G2` before
+    close `G3`). **Invariant (documented in the comparator):** production never writes two transitions at one `at`
+    (exactly two `.transition()` call sites — `product_api.ts:801` one-per-request, `:1141` one reopened + a
+    *reply*), so `G` only ever disambiguates cross-source reply↔transition ties; the transition↔transition `G`
+    order is an unreached don't-care. Tests advance the clock between distinct operator actions (matches
+    SystemClock); ONE **characterization test** pins the deliberately-unreachable same-instant `resolved→reopened`
+    fixture (renders in `G` order) so the behavior is frozen, not implementation-defined-adjacent.
+  - **(Crux 1 — single-sourcing, architect P1)** The transcript renders RAW transition history only and computes
+    **NO effective status** — no current-status badge derived from "last timeline event" (the display comparator's
+    `G`-order is NOT the max-`seq` effective fold and could disagree in the unreachable tie). If a current-status
+    line is ever wanted it must come from the shared `effectiveTransitionByEscalation` + `isEffectiveOpen` fold.
+  - **(Crux 1 — the seam, architect P2 + doddy P2-1)** `buildConversationTimeline(escalation, resolutions,
+    replies)` takes the **escalation OBJECT** (type-enforces the join key) and filters resolutions/replies on
+    `escalation.escalation_id` (server data, NEVER the client `conversation` string). It normalizes each source's
+    own timestamp field (`received_at`/`resolved_at`/`sent_at`) into the union's single `at` at construction;
+    discriminated union with per-kind required fields. ONE documented pure comparator; the two real-flow tie tests
+    assert pairwise **adjacency/order**, not just set membership.
+  - **(Crux 2 — masking, doddy P2-2/P2-3, confirmed)** The not-found render is a **themed-200 frozen "no such
+    conversation" notice** (NOT `GENERIC_404`): the `#detail`→`GENERIC_404` precedent does NOT apply because there
+    the JSON read itself returns non-200, whereas here the scoped read already returned **200** (tenant proven
+    active) — a `GENERIC_404` would be the *unknown-tenant* mask, leakier not safer. Produced ONLY inside the 200
+    branch (theme undefined → `GENERIC_404`, mirroring `#escalationsPage`). The notice and the page title carry
+    **ZERO interpolation of the client `conversation` value** (the `#detail` "never reflect the id" rule); the
+    found-page title derives from escaped server data (the question `text`). A Step-3 test asserts the notice does
+    NOT contain the submitted id (locks no-reflection against regression).
+  - **(Crux 2 — render hygiene, doddy attack 3/4/5)** `renderConversation` builds **entirely** through the `html`
+    SafeHtml template (no concatenation into `SafeHtml`, no new attribute/`src`/`href` context for any guest
+    value); links interpolate only the validated `slug` + server-data `escalation_id`/`wedding_id`. Read-only ⇒
+    **NO CSRF issuance** (matches `#strategy`/billing-read). The `conversation` id is `queryParam`-decoded (never
+    throws, never enters `splitPath`/a route), used only as a `===`/filter key ⇒ no 500 oracle.
+  - **(scope, architect P2)** ADR 0038 records the deferred **reply-on-transcript** affordance (a guest-auto-
+    reopened conversation is effective-open and needs a reply, but actions stay on the inbox this rung — the
+    "← Back to all questions" link bridges it).
 
 - [ ] **Step 1 — The pure timeline + render function (`pages.ts`).**
   - `buildConversationTimeline(escalation, resolutions, replies)` → an ordered `readonly ConversationEvent[]`
