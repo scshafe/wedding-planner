@@ -316,15 +316,24 @@ describe('Phase 35 — guest-reply → thread correlation', () => {
     expect(w.replies.list(w.ctxA)).toHaveLength(1)
   })
 
-  it('a RESOLVED escalation does not receive the follow-up — a new conversation opens a fresh escalation', () => {
+  it('Phase 37: a RESOLVED escalation is AUTO-REOPENED by a guest follow-up — it threads in (no fresh escalation, no send)', () => {
     const w = makeWorld()
     const weddingId = seedGuestOnAlpha(w)
     w.api.handle(inbound('alpha', payload(ESC1))) // E1
-    const e1 = w.escalations.list(w.ctxA)[0]
-    w.resolutions.transition(w.ctxA, { escalation_id: e1!.escalation_id, wedding_id: weddingId, status: 'resolved', by: 'couple' })
-    expect(w.api.handle(inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED) // no OPEN escalation -> fresh
-    expect(w.escalations.list(w.ctxA)).toHaveLength(2) // E2 opened
-    expect(w.replies.list(w.ctxA)).toHaveLength(0) // not threaded
+    const e1 = w.escalations.list(w.ctxA)[0]!
+    w.resolutions.transition(w.ctxA, { escalation_id: e1.escalation_id, wedding_id: weddingId, status: 'resolved', by: 'couple' })
+    expect(w.resolutions.effectiveStatus(w.ctxA, e1.escalation_id)).toBe('resolved')
+    // The guest follow-up reopens E1 and threads in — NOT a fresh escalation (Phase 37, the migrated Phase-35 case).
+    expect(w.api.handle(inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED)
+    expect(w.escalations.list(w.ctxA)).toHaveLength(1) // E1 reopened, not a second escalation
+    expect(w.resolutions.effectiveStatus(w.ctxA, e1.escalation_id)).toBe('open') // effective-open again
+    // The reopen row is attributed to the guest (honest provenance for an inbound auto-reopen).
+    expect(w.resolutions.effectiveTransition(w.ctxA, e1.escalation_id)).toMatchObject({ status: 'reopened', resolved_by: 'guest' })
+    // The follow-up landed as a guest thread turn on E1; a guest turn is RECEIVED — no metered send.
+    const thread = w.replies.list(w.ctxA).filter((r) => r.escalation_id === e1.escalation_id)
+    expect(thread).toHaveLength(1)
+    expect(thread[0]).toMatchObject({ sender: 'guest', body: ESC2.text, provider_message_ref: ESC2.provider_message_ref })
+    expect(w.service.usageView(w.tenantAId).message_count).toBe(0)
   })
 
   it('Phase 36: after an operator REOPENS a resolved escalation, a guest follow-up threads INTO it (effective-open), not a fresh one', () => {

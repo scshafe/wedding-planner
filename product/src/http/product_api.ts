@@ -24,7 +24,7 @@ import type { GuestQaResponder } from '../messaging/guest_qa_responder'
 import { projectGuestVisibleFacts } from '../messaging/guest_qa_responder'
 import type { EscalationLog } from '../messaging/escalation_log'
 import type { EscalationReplyLog } from '../messaging/escalation_reply_log'
-import type { EscalationResolutionLog } from '../messaging/escalation_resolution_log'
+import type { EffectiveEscalationStatus, EscalationResolutionLog } from '../messaging/escalation_resolution_log'
 import type { GuestRegistry } from '../messaging/guest_registry'
 import type { InboundReceiptLog } from '../messaging/inbound_receipt_log'
 import type { MessagingPort } from '../messaging/messaging_port'
@@ -162,14 +162,15 @@ export interface MessagingHandlerDeps {
   readonly service: MessagingService
   readonly escalations: EscalationLog
   /**
-   * Phase 35 — guest-reply → thread correlation. The inbound edge READS these to decide whether an
-   * `escalated` follow-up threads into the guest's most-recent OPEN escalation (vs opening a new one):
-   * `resolutions` is NARROWED to the read-only `effectiveStatus` fold (the open-status join; Phase 36 replaced
-   * the single-record `getByEscalationId` with this fold); inbound NEVER transitions, so the narrowing makes
-   * that structural, mirroring BillingHandlerDeps. The full `replies` log is the write target
-   * (`recordGuestReply`) + the re-delivery guard (`guestTurnByProviderRef`).
+   * Phase 35/37 — guest-reply → thread correlation + AUTO-REOPEN. The inbound edge READS `effectiveStatus` to
+   * decide whether an `escalated` follow-up threads into the guest's most-recent OPEN escalation, and (Phase 37)
+   * WRITES a `reopened` `transition` when the most-recent is effective-RESOLVED — auto-reopening it so the
+   * follow-up threads in rather than spawning a fresh escalation. Narrowed to exactly those two methods
+   * (`effectiveStatus` read + `transition` write — the only resolution-log capability the inbound path needs;
+   * it never reads the rows or lists), keeping the surface minimal. The full `replies` log is the thread write
+   * target (`recordGuestReply`) + the re-delivery guard (`guestTurnByProviderRef`).
    */
-  readonly resolutions: Pick<EscalationResolutionLog, 'effectiveStatus'>
+  readonly resolutions: Pick<EscalationResolutionLog, 'effectiveStatus' | 'transition'>
   readonly replies: EscalationReplyLog
 }
 
@@ -1095,29 +1096,58 @@ function handleInbound(context: TenantContext, req: ApiRequest, deps: MessagingH
     // Commit-after-success: only now is the ref a no-op for future re-deliveries.
     deps.receipts.markReplied(context, message.provider_message_ref, replyId)
   } else if (outcome.action === 'escalated') {
-    // Phase 35 — guest-reply → thread correlation. An `escalated` follow-up from a guest who already has an
-    // OPEN escalation in their CURRENTLY-BOUND wedding lands in THAT escalation's thread (a `sender:'guest'`
-    // turn) instead of opening a new one; only a genuinely new conversation opens a fresh escalation. The
-    // target is inferred ENTIRELY from trusted state (the live binding's wedding_id + the registry-vetoed
-    // sender_ref), never the inbound body. Like the record path, this is a server-side write invisible to the
-    // guest (every branch returns the uniform 202) and carries NO send / NO charge — a guest turn is a
-    // RECEIVED message we file into the conversation.
+    // Phase 35/37 — guest-reply → thread correlation, with AUTO-REOPEN. An `escalated` follow-up from a guest
+    // who already has a conversation in their CURRENTLY-BOUND wedding lands in THAT escalation's thread (a
+    // `sender:'guest'` turn) instead of opening a new one. The target is chosen by EFFECTIVE STATUS, PREFERRING
+    // an open conversation, then a RESOLVED one to auto-reopen, else opening fresh:
+    //   - effective-OPEN exists  → thread into it (Phase 35);
+    //   - else effective-RESOLVED → AUTO-REOPEN it (a `reopened` transition, attributed `resolved_by:'guest'`)
+    //                              then thread into it (Phase 37 — the resolved conversation becomes live again);
+    //   - else (only effective-DISMISSED, or none) → open a FRESH escalation (Phase 26).
+    // DISMISSED is deliberately NOT a reopen candidate (an operator dismissal is a final "no" to the guest —
+    // see escalation_resolution_log.ts); the policy lives in the SELECTOR (it only ever returns open/resolved),
+    // NOT in `transition()`'s direction rule (which would permit reopening a dismissed one). The target is
+    // inferred ENTIRELY from trusted state (the live binding's wedding_id + the registry-vetoed sender_ref),
+    // never the inbound body. Every branch is a server-side write invisible to the guest (uniform 202) and
+    // carries NO send / NO charge — a guest turn (and the reopen it may trigger) is a RECEIVED message we file
+    // into the conversation; only an OPERATOR console reply bills.
     //
     // PROCESS-ONCE gate (§B0): the split routing makes a per-thread ref-scan insufficient, because the
     // selector's output can change between provider re-deliveries (a freshly-recorded escalation is OPEN, so a
     // re-delivery of the SAME message would otherwise thread into it; a since-resolved escalation would drop a
-    // re-delivered follow-up to a fresh escalation). So gate on TWO "already processed?" reads BEFORE routing:
+    // re-delivered follow-up to a fresh escalation; and now a since-AUTO-REOPENED escalation would re-select a
+    // different tier — open instead of resolved). So gate on TWO "already processed?" reads BEFORE routing:
     const ref = message.provider_message_ref
     if (
       deps.escalations.getByProviderRef(context, ref) === undefined && // (1) ref didn't already CREATE an escalation
       deps.replies.guestTurnByProviderRef(context, ref) === undefined // (2) ref didn't already land as a guest turn
     ) {
-      const target = mostRecentOpenEscalationForGuest(context, deps, binding.wedding_id, message.sender_ref)
+      // OPEN is strictly preferred over RESOLVED (the `??`), never compared by recency across tiers — so the
+      // operator-manual-reopen "two opens" case threads into the most-recent open and opens nothing new.
+      const openTarget = mostRecentEscalationForGuest(context, deps, binding.wedding_id, message.sender_ref, 'open')
+      const target =
+        openTarget ?? mostRecentEscalationForGuest(context, deps, binding.wedding_id, message.sender_ref, 'resolved')
       if (target !== undefined) {
-        // Thread the follow-up. escalation_id/wedding_id COPIED from the live escalation (never the body);
-        // body/ref from the already-validated inbound message. recordGuestReply allocates the slot above the
-        // thread's high-water mark and dedups by ref; the schema body has no maxLength so a long guest message
-        // can never fail validation here (no 500 oracle), exactly as escalation.record cannot.
+        // Phase 37: if we fell through to a RESOLVED target (no open conversation), AUTO-REOPEN it FIRST so it
+        // returns to the Open inbox and the Phase-28/36 reply gate (`effectiveStatus !== 'open'`) re-admits
+        // billed operator replies — THEN thread the guest turn into it. The reopen-BEFORE-thread order is
+        // load-bearing: a threaded guest turn is never observed on a still-effective-resolved escalation, and
+        // the two writes are inseparable inside this one §B0-gated, synchronous critical section. escalation_id/
+        // wedding_id are COPIED from the live `target` (never the body); `by:'guest'` is a server literal — the
+        // honest provenance of the follow-up. `transition()` is directional-idempotent (a second `reopened`
+        // from effective-open is a no-op) and contract-valid (the enum now includes `guest`), so it can neither
+        // double-append nor throw a 400 — the 202 stays uniform.
+        if (openTarget === undefined) {
+          deps.resolutions.transition(context, {
+            escalation_id: target.escalation_id,
+            wedding_id: target.wedding_id,
+            status: 'reopened',
+            by: 'guest',
+          })
+        }
+        // Thread the follow-up. recordGuestReply allocates the slot above the thread's high-water mark and dedups
+        // by ref; the schema body has no maxLength so a long guest message can never fail validation here (no 500
+        // oracle), exactly as escalation.record cannot.
         deps.replies.recordGuestReply(context, {
           escalation_id: target.escalation_id,
           wedding_id: target.wedding_id,
@@ -1125,10 +1155,11 @@ function handleInbound(context: TenantContext, req: ApiRequest, deps: MessagingH
           body: message.body,
         })
       } else {
-        // A new conversation: record the unanswerable question for the couple/planner inbox (Phase 26).
-        // Idempotent by provider_message_ref; sourced from TRUSTED state + the validated message ONLY, never
-        // the raw body. NOT swallowed to 202: record() cannot be provoked to throw by guest input that passed
-        // the inbound edge (its `text` constraint matches inbound_webhook.text), so a throw is a genuine bug.
+        // A new conversation (no open or resolved escalation to continue — only dismissed, or none): record the
+        // unanswerable question for the couple/planner inbox (Phase 26). Idempotent by provider_message_ref;
+        // sourced from TRUSTED state + the validated message ONLY, never the raw body. NOT swallowed to 202:
+        // record() cannot be provoked to throw by guest input that passed the inbound edge (its `text`
+        // constraint matches inbound_webhook.text), so a throw is a genuine bug.
         deps.escalations.record(context, {
           wedding_id: binding.wedding_id,
           from_ref: message.sender_ref,
@@ -1144,28 +1175,37 @@ function handleInbound(context: TenantContext, req: ApiRequest, deps: MessagingH
 }
 
 /**
- * Phase 35 — the guest-reply correlation selector. Returns the guest's MOST-RECENT OPEN escalation in their
- * CURRENTLY-BOUND wedding, or `undefined` if none. The DUAL match (from_ref AND wedding_id) is the
- * cross-wedding mis-segmentation defense (doddy): a `recipient_ref` re-bound from wedding A to B carries stale
- * A-escalations, but filtering candidates by `binding.wedding_id` (the CURRENT trusted binding) excludes them,
- * so a re-bound guest's message can only ever reach an open escalation in their current wedding. Both axes are
- * TRUSTED state (the live binding + the recorded escalation), never the inbound body. OPEN = no resolution
- * (the same join the inbox uses). The `received_at` max-by pick breaks ties on `escalation_id` FOR
- * DETERMINISM ONLY (not a recency guarantee — both are that guest's open conversation, so the choice is
- * immaterial). All reads are tenant-scoped by the minted context.
+ * Phase 35/37 — the guest-reply correlation selector. Returns the guest's MOST-RECENT escalation with the given
+ * EFFECTIVE `status` in their CURRENTLY-BOUND wedding, or `undefined` if none. Called twice by the inbound edge:
+ * with `'open'` (thread into an active conversation — Phase 35) and, on a miss, with `'resolved'` (the
+ * auto-reopen candidate — Phase 37). DISMISSED is never passed (an operator dismissal is final to the guest), so
+ * the reopen-candidate policy is enforced HERE, not in `transition()`'s permissive direction rule.
+ *
+ * The DUAL match (from_ref AND wedding_id) is the cross-wedding mis-segmentation defense (doddy): a
+ * `recipient_ref` re-bound from wedding A to B carries stale A-escalations, but filtering candidates by
+ * `binding.wedding_id` (the CURRENT trusted binding) excludes them, so a re-bound guest's message can only ever
+ * reach an escalation in their current wedding. Both axes are TRUSTED state (the live binding + the recorded
+ * escalation), never the inbound body. Effective status is the same fold the inbox uses. All reads are
+ * tenant-scoped by the minted context.
+ *
+ * The `received_at` max-by pick breaks ties on `escalation_id`. For the `'open'` tier the choice is immaterial
+ * (all candidates are that guest's open conversation). For the `'resolved'` tier the pick IS the conversation
+ * being reopened — recency selects the guest's latest resolved thread to continue (still deterministic; ties
+ * remain immaterial).
  */
-function mostRecentOpenEscalationForGuest(
+function mostRecentEscalationForGuest(
   context: TenantContext,
   deps: MessagingHandlerDeps,
   wedding_id: string,
   from_ref: string,
+  status: EffectiveEscalationStatus,
 ): GuestEscalation | undefined {
-  const open = deps.escalations
+  const candidates = deps.escalations
     .listForWedding(context, wedding_id)
     .filter((escalation) => escalation.from_ref === from_ref)
-    .filter((escalation) => deps.resolutions.effectiveStatus(context, escalation.escalation_id) === 'open')
+    .filter((escalation) => deps.resolutions.effectiveStatus(context, escalation.escalation_id) === status)
   let best: GuestEscalation | undefined
-  for (const escalation of open) {
+  for (const escalation of candidates) {
     if (
       best === undefined ||
       escalation.received_at > best.received_at ||

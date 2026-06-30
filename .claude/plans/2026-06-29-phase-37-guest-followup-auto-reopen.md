@@ -88,12 +88,12 @@ badges), so it is never displayed and the operator resolve/dismiss handler (`by:
     escalation effective-open (a DIFFERENT selector tier than first delivery) → §B0 still no-ops it (no second
     `reopened`, no second thread). Don't re-describe the §B0 gate prose — only append the routing-tier note.
 
-- [ ] **Step 1 — Schema MODIFY + types.** `escalation_resolution_schema.json`: `resolved_by` enum
+- [x] **Step 1 — Schema MODIFY + types.** `escalation_resolution_schema.json`: `resolved_by` enum
   `+= "guest"`; update its `description` (a `reopened` transition MAY be attributed to `guest` for an inbound
   auto-reopen — the guest follow-up that triggered it; still never read for a decision). `npm run gen:types`.
   Manifest stays **21** (MODIFY, not a new schema). Green.
 
-- [ ] **Step 2 — Inbound handler (the routing).** `product_api.ts`:
+- [x] **Step 2 — Inbound handler (the routing).** `product_api.ts`:
   - Widen `MessagingHandlerDeps.resolutions` Pick to `'effectiveStatus' | 'transition'` (inbound now WRITES a
     reopen) + refresh the doc comment. `compose.ts` wiring follows the Pick (same instance).
   - Generalize the Phase-35 selector to `mostRecentEscalationForGuestWithStatus(context, deps, wedding_id,
