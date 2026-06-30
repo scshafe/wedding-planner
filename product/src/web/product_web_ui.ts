@@ -16,6 +16,8 @@ import {
   GENERIC_404,
   renderBilling,
   renderConsole,
+  renderConversation,
+  renderConversationNotFound,
   renderDetail,
   renderEscalations,
   renderForbidden,
@@ -191,7 +193,12 @@ export class ProductWebUi {
     // ?view=guests — the guest-management page (Phase 21 planner; Phase 24 couple, scoped to their wedding).
     if (queryParam(req.path, 'view') === 'guests') return this.#guestsPage(req, slug)
     // ?view=escalations — the read-only escalation inbox (Phase 26; planner whole-tenant, couple their wedding).
-    if (queryParam(req.path, 'view') === 'escalations') return this.#escalationsPage(req, slug)
+    // ?view=escalations&conversation=ID (Phase 38) — the per-conversation chronological transcript. The presence
+    // of a `conversation` param (even empty) routes to the transcript page; absent → the inbox.
+    if (queryParam(req.path, 'view') === 'escalations') {
+      const conversation = queryParam(req.path, 'conversation')
+      return conversation === undefined ? this.#escalationsPage(req, slug) : this.#conversationPage(req, slug, conversation)
+    }
     // ?view=billing — the planner billing & usage summary (Phase 30; planner-only, a couple is themed Forbidden).
     if (queryParam(req.path, 'view') === 'billing') return this.#billingPage(req, slug)
 
@@ -329,6 +336,33 @@ export class ProductWebUi {
       )
     }
     return this.#renderNonData(slug, apiRes.status)
+  }
+
+  /**
+   * GET /t/:slug?view=escalations&conversation=ID — the per-conversation TRANSCRIPT (Phase 38). A READ-ONLY
+   * legibility page: the full chronological story of ONE escalation (question + reply turns + status
+   * transitions, interleaved by time). Pure composition over the SAME scoped JSON read the inbox uses — ONE
+   * `api.handle(GET /escalations)`, no new data path. NO oracle:
+   *   - non-200 → `#renderNonData` (byte-identical masking as the inbox: unknown/suspended/unauthenticated).
+   *   - 200 → SELECT the escalation by id FROM the principal's already-scoped `escalations` array (never an
+   *     independent lookup; the `conversation` value is a pure filter key). An id NOT in the scoped array covers
+   *     BOTH "absent" AND "a couple probing a sibling-wedding's escalation" IDENTICALLY (the scoped read already
+   *     excluded the foreign row) → the frozen themed-200 `renderConversationNotFound` notice (NOT a `GENERIC_404`,
+   *     which is the unknown-tenant mask — the read already proved this tenant active). Read-only ⇒ no CSRF token.
+   */
+  #conversationPage(req: ApiRequest, slug: string, conversationId: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const apiRes = this.#api.handle(bearerGet(`/t/${slug}/escalations`, token))
+    if (apiRes.status !== 200) return this.#renderNonData(slug, apiRes.status)
+    const theme = this.#themes.resolveActiveTheme(slug)
+    // A 200 means the session resolved, so the active theme must exist in the same store (mirrors #escalationsPage).
+    if (theme === undefined) return GENERIC_404
+    const escalations = readEscalations(apiRes.body)
+    const escalation = escalations.find((e) => e.escalation_id === conversationId)
+    // Found → the transcript joins resolutions/replies on `escalation.escalation_id` (server data, never the
+    // client `conversation` string). Not found → the frozen no-such-conversation notice (absent ≡ foreign).
+    if (escalation === undefined) return htmlResult(200, renderConversationNotFound(theme, slug))
+    return htmlResult(200, renderConversation(theme, slug, escalation, readResolutions(apiRes.body), readReplies(apiRes.body)))
   }
 
   /**
