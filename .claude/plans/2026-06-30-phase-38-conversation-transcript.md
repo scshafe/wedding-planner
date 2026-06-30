@@ -129,7 +129,7 @@ whole tenant; couple → their bound wedding) and **selects the escalation by id
     reopened conversation is effective-open and needs a reply, but actions stay on the inbox this rung — the
     "← Back to all questions" link bridges it).
 
-- [ ] **Step 1 — The pure timeline + render function (`pages.ts`).**
+- [x] **Step 1 — The pure timeline + render function (`pages.ts`).**
   - `buildConversationTimeline(escalation, resolutions, replies)` → an ordered `readonly ConversationEvent[]`
     (discriminated union: `{kind:'question'|'reply'|'transition', at, ...}`), using the Crux-1 comparator.
     `resolutions`/`replies` are the FULL scoped arrays; the builder filters each to `escalation.escalation_id`
@@ -143,7 +143,7 @@ whole tenant; couple → their bound wedding) and **selects the escalation by id
     OTHER escalations' rows; empty thread / never-handled escalation.
   - Green (`npm run build && npm test && npm run lint`).
 
-- [ ] **Step 2 — The web route + inbox link (`product_web_ui.ts` + `pages.ts`).**
+- [x] **Step 2 — The web route + inbox link (`product_web_ui.ts` + `pages.ts`).**
   - `#console`: when `view==='escalations'` AND `queryParam(req.path,'conversation') !== undefined` →
     `#conversationPage(req, slug, conversationId)`; else the existing inbox. (Keeps the 2-seg console route; no
     new path segment.)
@@ -154,7 +154,7 @@ whole tenant; couple → their bound wedding) and **selects the escalation by id
     `/t/${slug}?view=escalations&conversation=${escalation_id}`.
   - Green.
 
-- [ ] **Step 3 — Web / e2e tests (mirror the source path).**
+- [x] **Step 3 — Web / e2e tests (mirror the source path).**
   - couple sees the transcript ONLY for their own wedding's conversation; a couple requesting a sibling-wedding's
     escalation id gets the byte-identical not-found notice (Crux 2 no-oracle: foreign ≡ absent).
   - planner sees any conversation in the tenant.
@@ -166,7 +166,7 @@ whole tenant; couple → their bound wedding) and **selects the escalation by id
   - the inbox row's "View full conversation →" link is present and points at the right id.
   - Green.
 
-- [ ] **Step 4 — Docs.** ADR 0038 (the transcript surface, the two cruxes + their resolved decisions, the
+- [x] **Step 4 — Docs.** ADR 0038 (the transcript surface, the two cruxes + their resolved decisions, the
   read-only/follow-up boundary); memory [[guest-conversation-transcript]] + MEMORY.md index; tick these boxes;
   refresh `.claude/handoff.local.md` (Phase 38 complete; next levers). Commit per step.
 
