@@ -121,7 +121,7 @@ badges), so it is never displayed and the operator resolve/dismiss handler (`by:
   - Migrate any existing inbound test that assumed a resolved-escalation follow-up opens a fresh escalation.
   - Green.
 
-- [ ] **Step 4 — Docs.** ADR 0037 (the routing rule, the dismissed-stays-closed decision, `resolved_by:'guest'`,
+- [x] **Step 4 — Docs.** ADR 0037 (the routing rule, the dismissed-stays-closed decision, `resolved_by:'guest'`,
   the coexistence-closure of ADR 0036's interim note + the residual operator-manual-reopen-of-dismissed case
   left out of scope); memory [[guest-followup-auto-reopen]] + MEMORY.md index; tick these boxes; refresh
   `.claude/handoff.local.md` (Phase 37 complete; next levers). Commit per step.
