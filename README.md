@@ -125,3 +125,5 @@ verify; **it is never pushed — going live stays human-reserved**. See
 - **Agent strategy-autonomy scope** — whether/how agents may ideate and ship *growth* (e.g. setting
   pricing or signing planner contracts for the white-label platform), with irreversible business
   commitments still human-reserved. A design thread, not yet decided.
+
+<!-- autodeploy round-trip proof 2026-08-13 -->
