@@ -134,3 +134,11 @@ clock/ids (no ambient time/RNG). The repo already embodies these; match the surr
 - `.claude/memory/` — durable cross-session knowledge (committed, portable).
 - `ops/` — how the autonomous loop runs (human-reserved); `ops/AUTONOMOUS_OPERATION.md` explains it.
 - `docs/adr/` — architecture decision records.
+
+## Agent identity
+
+This repository has its own agent user, `agent-wedding-planner`, on the owner's
+Arch workstation (scshafe/infra `docs/platform/agent-identity.md`). It works in
+its own clone and commits, opens PRs and merges as `scshafe-agent[bot]`, with
+one-hour tokens for `scshafe/wedding-planner` only. Merging to `main` deploys
+(mc-autodeploy), exactly as for the owner.
