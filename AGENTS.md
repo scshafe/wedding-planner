@@ -17,18 +17,28 @@ The agent contract for this repository. `CLAUDE.md` imports it (`@AGENTS.md`); r
   `scripts/conductor-gate.sh test` and the loop's `npm run build && npm test && npm run lint`
   (`build` is the same `tsc --noEmit`). GitHub Actions does not run for this private repo today
   (account billing), so run it locally before proposing a merge.
-- **Production:** `dev.toml [deploy]` lane `autodeploy`, stack `wedding-planner`, host `lubuntu`.
-  **Merging to `main` deploys:** Lubuntu's mc-autodeploy (5-minute timer) fast-forwards its
-  `~/src/wedding-planner` checkout and the Conductor runs `tools/stack deploy wedding-planner`
-  (builds the root Dockerfile, pins `WEDDING_PLANNER_IMAGE_TAG`, `compose up`, checks `/healthz`,
-  rolls back on failure). It serves tailnet-only at `https://wedding-planner.colobus-stargazer.ts.net`
-  (deployed on the operator's explicit call, 2026-08-13). State is in memory only: every deploy or
-  restart resets to the demo seed. CI never deploys (SERVICE-02); nothing here pushes images.
+- **Production:** `dev.toml [deploy]` lane `runner`, layout `app`, stack `wedding-planner`, host
+  `laptop` (cole-laptop). **Merging to `main` deploys** through the runner lane:
+  `.github/workflows/deploy.yml` runs `verify`, then the `wedding-planner-prod` self-hosted runner
+  calls the host entrypoint (`scshafe-deploy`: fetches `main`, backs up, then `tools/stack deploy`
+  builds the root Dockerfile, pins `WEDDING_PLANNER_IMAGE`, validates and materialises
+  `deploy/stack/` into `/srv/stacks/wedding-planner`, `compose up`, checks `/healthz` through the
+  tailnet, rolls back on failure), then `health` re-checks the live commit. Watch it with
+  `gh run watch`. The stack itself is `deploy/stack/` here (compose, serve config, `stack.toml`);
+  infra keeps only `stacks/wedding-planner/host.conf`, the host's allowances. It serves
+  tailnet-only at `https://wedding-planner.<tailnet>.ts.net` (deployed on the operator's explicit
+  call, 2026-08-13). State is in memory only: every deploy or restart resets to the demo seed. CI
+  never deploys (SERVICE-02); nothing here pushes images.
+  **While this repository is private** the hosted `verify` job cannot run (account billing), so a
+  push run stops at `verify` and deploys nothing: run `[verify]` locally, merge, then deploy with
+  `gh workflow run deploy.yml -f sha=<merge commit> -f allow_rollback=true` and watch that run.
+  Once the repository is public, a merge deploys on its own.
 - **Secrets:** `WP_OPERATOR_TOKEN` and `WP_PROVIDER_WEBHOOK_TOKEN` (>= 16 characters, fail closed)
-  live only in the stack's `.env` on Lubuntu: never in the repository, the image (no `ARG`/`ENV`),
-  CI or tests. CI has only its read-only job token; tests use injected fakes, no real services.
-- **Related:** `~/src/infra` `stacks/wedding-planner/` (compose, tailnet serve config),
-  `autodeploy/README.md` (mc-autodeploy) and `NEW-SITES-RUNBOOK.md` §3; `docs/adr/` (decisions);
+  live only in the stack's `.env` on the host (`[env] owner` in `deploy/stack/stack.toml`): never
+  in the repository, the image (no `ARG`/`ENV`), CI or tests. CI has only its read-only job token;
+  tests use injected fakes, no real services.
+- **Related:** `deploy/stack/` (the stack), scshafe/infra `docs/platform/agent-deploy.md` (the
+  runner lane) and `stacks/wedding-planner/host.conf`; `docs/adr/` (decisions);
   `ops/` (the autonomous loop, human-reserved); `.claude/` (handoff, plans, memory).
 
 ---
@@ -141,7 +151,7 @@ This repository has its own agent user, `agent-wedding-planner`, on the owner's
 Arch workstation (scshafe/infra `docs/platform/agent-identity.md`). It works in
 its own clone and commits, opens PRs and merges as `scshafe-agent[bot]`, with
 one-hour tokens for `scshafe/wedding-planner` only. Merging to `main` deploys
-(mc-autodeploy), exactly as for the owner.
+(the runner lane), exactly as for the owner.
 
 <!-- scshafe-dev:begin landing -->
 ## Verify and landing
