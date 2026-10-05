@@ -15,8 +15,8 @@ The agent contract for this repository. `CLAUDE.md` imports it (`@AGENTS.md`); r
 - **Verify:** `npm ci && npm run typecheck && npm run lint && npm test` (`dev.toml [verify]`;
   `.github/workflows/ci.yml` runs the same on Node 22). It is the same gate as
   `scripts/conductor-gate.sh test` and the loop's `npm run build && npm test && npm run lint`
-  (`build` is the same `tsc --noEmit`). GitHub Actions does not run for this private repo today
-  (account billing), so run it locally before proposing a merge.
+  (`build` is the same `tsc --noEmit`). The repository is public (since 2026-10-05), so hosted
+  GitHub Actions runs it on every PR: run it locally too, and wait for CI to be green before merging.
 - **Production:** `dev.toml [deploy]` lane `runner`, layout `app`, stack `wedding-planner`, host
   `laptop` (cole-laptop). **Merging to `main` deploys** through the runner lane:
   `.github/workflows/deploy.yml` runs `verify`, then the `wedding-planner-prod` self-hosted runner
@@ -28,14 +28,9 @@ The agent contract for this repository. `CLAUDE.md` imports it (`@AGENTS.md`); r
   infra keeps only `stacks/wedding-planner/host.conf`, the host's allowances. It serves
   tailnet-only at `https://wedding-planner.<tailnet>.ts.net` (deployed on the operator's explicit
   call, 2026-08-13). State is in memory only: every deploy or restart resets to the demo seed. CI
-  never deploys (SERVICE-02); nothing here pushes images.
-  **While this repository is private** the hosted `verify` job cannot run (account billing): since
-  2026-10-05 it waits in `queued` instead of failing, and that run holds the `deploy-wedding-planner`
-  concurrency group. So run `[verify]` locally, merge, cancel the push run's `deploy` workflow
-  (`gh run cancel <id>`), then deploy with
-  `gh workflow run deploy.yml -f sha=<merge commit> -f allow_rollback=true` and watch that run (its
-  `health` job is skipped on such a dispatch; the deploy job's own witness still gates it). Once
-  the repository is public, a merge deploys on its own.
+  never deploys (SERVICE-02); nothing here pushes images. The repository is public, so **a plain
+  merge deploys**: the push run goes `verify` (hosted) → `deploy` → `health`; nothing is dispatched
+  by hand. The stack's `.env` (the owner tokens) is in `[backup] paths`.
 - **Secrets:** `WP_OPERATOR_TOKEN` and `WP_PROVIDER_WEBHOOK_TOKEN` (>= 16 characters, fail closed)
   live only in the stack's `.env` on the host (`[env] owner` in `deploy/stack/stack.toml`): never
   in the repository, the image (no `ARG`/`ENV`), CI or tests. CI has only its read-only job token;
