@@ -16,15 +16,19 @@ kind = "service"
 [verify]
 command = "npm ci && npm run typecheck && npm run lint && npm test"
 
-# SERVICE-01: how this service reaches production. lane = "autodeploy"
-# (Lubuntu's mc-autodeploy redeploys main), "runner" (a deploy workflow on a
-# self-hosted runner: the project's own file, reviewed by hand) or "none"
-# (not deployed); stack = its infra stack, host = where it runs (both
-# optional). SERVICE-02: ci.yml never deploys; the lane does.
+# DEPLOY-01: how this project reaches production (references, never secrets).
+# The runner lane: a merge to main runs .github/workflows/deploy.yml (verify,
+# then the host entrypoint on the wedding-planner-prod runner, then health);
+# the stack is deploy/stack/ in this repository (layout app). SERVICE-02:
+# ci.yml never deploys; the lane does.
 [deploy]
-lane = "autodeploy"
+lane = "runner"
 stack = "wedding-planner"
-host = "lubuntu"
+layout = "app"
+host = "laptop"
+tailnet_node = "wedding-planner"
+door = "none"
+verify_on = "hosted"
 
 [skills]
 # BASE-05 asks for .agents/skills; the catalog is M4. Recorded gap.

@@ -21,6 +21,7 @@ coverage/
 *.log
 .env
 .env.*
+!deploy/stack/.env.example
 
 # Keep implementation plans under version control:
 # .claude/plans/ is intentionally NOT ignored.
