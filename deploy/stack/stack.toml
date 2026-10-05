@@ -20,7 +20,7 @@ required_health_services = ["app"]
 
 [backup]
 tailscale = true                     # the node identity (always, with a sidecar)
-paths = []                           # stateless: the demo is reseeded at every boot
+paths = [".env"]                     # the owner tokens; app state is in memory (reseeded at boot)
 
 [env]
 required = ["TS_AUTHKEY"]

@@ -73,6 +73,9 @@ jobs:
 
   health:
     needs: deploy
+    # Explicit, or a rollback's skipped verify would skip this job too (the
+    # implicit success() looks at the whole needs chain).
+    if: ${{ !cancelled() && github.repository == 'scshafe/wedding-planner' && github.ref == 'refs/heads/main' && needs.deploy.result == 'success' }}
     runs-on: [self-hosted, wedding-planner-prod]
     timeout-minutes: 15
     steps:
