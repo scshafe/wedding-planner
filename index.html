@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<style>:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); } body { margin: 0; }</style>
+</head>
+<body>
+<title>Wedding Planner Engineering</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Libre+Caslon+Text:wght@400;700&family=Public+Sans:wght@400;500;600&display=swap">
+<style>
+:root {
+  /* Layout: a two-lane board. The work (what is waiting, moving, next, shipped) on the left; the system (health, milestones, the run of show) on the right. One lane under 60rem. */
+  --paper: #f4f6f9;
+  --surface: #ffffff;
+  --ink: #18202e;
+  --ink-soft: #465066;
+  --ink-faint: #616b7f;
+  --rule: #dce1e9;
+  --accent: #2c4a7c;
+  --accent-wash: #e7edf7;
+  --good: #1e7048;
+  --good-wash: #e2f1e8;
+  --warn: #855600;
+  --warn-wash: #faefd7;
+  --bad: #b0261e;
+  --bad-wash: #fae5e3;
+  --owner: #5a3c94;
+  --owner-wash: #efe9f8;
+  --font-display: "Libre Caslon Text", "Iowan Old Style", Georgia, serif;
+  --font-body: "Public Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --step--1: 0.75rem;
+  --step-0: 0.875rem;
+  --step-1: 1rem;
+  --step-2: 1.25rem;
+  --step-3: 1.75rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #0f131a; --surface: #161c26; --ink: #e5e9f0; --ink-soft: #b0b8c6; --ink-faint: #8a94a6;
+    --rule: #283040; --accent: #9bb4e4; --accent-wash: #1c2840; --good: #6fcb98; --good-wash: #13281d;
+    --warn: #e3b65e; --warn-wash: #2b2311; --bad: #f28b80; --bad-wash: #331917; --owner: #bda6ec; --owner-wash: #251c37;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #0f131a; --surface: #161c26; --ink: #e5e9f0; --ink-soft: #b0b8c6; --ink-faint: #8a94a6;
+  --rule: #283040; --accent: #9bb4e4; --accent-wash: #1c2840; --good: #6fcb98; --good-wash: #13281d;
+  --warn: #e3b65e; --warn-wash: #2b2311; --bad: #f28b80; --bad-wash: #331917; --owner: #bda6ec; --owner-wash: #251c37;
+}
+body { background: var(--paper); color: var(--ink); font-family: var(--font-body); font-size: var(--step-0); line-height: 1.5; }
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.page { max-width: 76rem; margin: 0 auto; padding-inline: max(16px, 3vw); padding-block: 1.75rem 3rem; display: flex; flex-direction: column; gap: 1.75rem; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.faint { color: var(--ink-faint); }
+.eyebrow { font-family: var(--font-body); font-size: var(--step--1); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); margin: 0; }
+.masthead { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 0.75rem 2rem; border-bottom: 1px solid var(--rule); padding-bottom: 1rem; }
+.masthead h1 { font-family: var(--font-display); font-weight: 400; font-size: var(--step-3); line-height: 1.15; margin: 0.25rem 0 0; text-wrap: balance; }
+.masthead-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; color: var(--ink-soft); }
+.digest { max-width: 65ch; display: flex; flex-direction: column; gap: 0.4rem; }
+.digest p { margin: 0; font-size: var(--step-1); color: var(--ink); }
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+.figure { background: var(--surface); padding: 0.85rem 1rem; display: flex; flex-direction: column; gap: 0.15rem; }
+.figure-value { font-family: var(--font-display); font-size: var(--step-3); line-height: 1.1; font-variant-numeric: tabular-nums lining-nums; }
+.figure-label { font-size: var(--step--1); color: var(--ink-soft); }
+.figure-owner { background: var(--owner-wash); }
+.figure-owner .figure-value { color: var(--owner); }
+.figure-bad { background: var(--bad-wash); }
+.figure-bad .figure-value { color: var(--bad); }
+.board { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 2.5rem; align-items: start; }
+.lane { display: flex; flex-direction: column; gap: 2rem; min-width: 0; }
+.block h2 { font-family: var(--font-display); font-weight: 400; font-size: var(--step-2); line-height: 1.25; margin: 0 0 0.5rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--rule); display: flex; align-items: baseline; gap: 0.6rem; text-wrap: balance; }
+.count { font-family: var(--font-mono); font-size: var(--step--1); color: var(--ink-faint); }
+.block-owner { background: var(--owner-wash); border-radius: 6px; padding: 0.9rem 1rem 0.4rem; }
+.block-owner h2 { border-bottom-color: color-mix(in srgb, var(--owner) 30%, transparent); }
+.block-incident { background: var(--bad-wash); border-radius: 6px; padding: 0.9rem 1rem 0.4rem; }
+.items, .runs, .milestones { list-style: none; margin: 0; padding: 0; }
+.item { padding: 0.55rem 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.item + .item { border-top: 1px solid var(--rule); }
+.item-title { font-weight: 500; overflow-wrap: anywhere; }
+.item-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75rem; color: var(--ink-faint); font-size: var(--step--1); }
+.num { font-family: var(--font-mono); }
+.chip { display: inline-flex; align-items: center; padding: 0.05rem 0.45rem; border-radius: 999px; font-size: var(--step--1); font-weight: 600; line-height: 1.5; white-space: nowrap; background: var(--accent-wash); color: var(--accent); }
+.chip-good { background: var(--good-wash); color: var(--good); }
+.chip-bad { background: var(--bad-wash); color: var(--bad); }
+.chip-warn { background: var(--warn-wash); color: var(--warn); }
+.chip-owner { background: var(--owner-wash); color: var(--owner); }
+.block-owner .chip-plain, .block-incident .chip-plain { background: var(--surface); }
+.empty { margin: 0.4rem 0; color: var(--ink-faint); }
+.health-row { display: grid; grid-template-columns: 4.5rem auto minmax(0, 1fr); align-items: baseline; gap: 0.5rem; padding: 0.45rem 0; }
+.health-row + .health-row { border-top: 1px solid var(--rule); }
+.health-label { font-weight: 600; }
+.health-row .chip { justify-self: start; }
+.health-detail { min-width: 0; overflow-wrap: anywhere; }
+.milestone { padding: 0.45rem 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.milestone-head { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; }
+.milestone-title { font-weight: 500; }
+.meter { height: 6px; border-radius: 3px; background: var(--accent-wash); overflow: hidden; }
+.meter span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.run { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: 0.75rem; padding: 0.55rem 0; }
+.run + .run { border-top: 1px solid var(--rule); }
+.run-time { font-size: var(--step--1); color: var(--ink-soft); padding-top: 0.1rem; }
+.run-body { min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.run-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem; }
+.role { font-weight: 600; }
+.run-summary { margin: 0; color: var(--ink-soft); overflow-wrap: anywhere; }
+.table-wrap { overflow-x: auto; }
+.beats { width: 100%; border-collapse: collapse; font-size: var(--step--1); }
+.beats th, .beats td { text-align: left; padding: 0.4rem 0.5rem 0.4rem 0; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+.beats thead th { color: var(--ink-faint); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.beats tbody th { font-weight: 600; }
+.spend { width: 100%; height: auto; max-width: 100%; display: block; }
+.spend .bar { fill: var(--accent); }
+.spend .bar-hit { fill: transparent; }
+.spend g:hover .bar { fill: var(--ink); }
+.spend .grid { stroke: var(--rule); stroke-width: 1; stroke-dasharray: 2 3; }
+.spend .baseline { stroke: var(--ink-faint); stroke-width: 1; }
+.spend .axis { fill: var(--ink-faint); font-family: var(--font-mono); font-size: 9px; }
+.spend-total { display: flex; justify-content: space-between; gap: 1rem; color: var(--ink-soft); margin-top: 0.35rem; }
+footer { border-top: 1px solid var(--rule); padding-top: 1rem; color: var(--ink-faint); font-size: var(--step--1); max-width: 80ch; }
+footer p { margin: 0 0 0.35rem; }
+code { font-family: var(--font-mono); font-size: 0.95em; }
+@media (max-width: 60rem) { .board { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 26rem) { .run { grid-template-columns: minmax(0, 1fr); gap: 0.15rem; } .health-row { grid-template-columns: auto minmax(0, 1fr); } .health-detail { grid-column: 1 / -1; } }
+</style>
+<div class="page">
+<header class="masthead">
+<div><p class="eyebrow"><a href="https://github.com/scshafe/wedding-planner" target="_blank" rel="noopener noreferrer">scshafe/wedding-planner</a> · engineering loop</p><h1>Wedding Planner Engineering</h1></div>
+<div class="masthead-meta"><span class="chip chip-good">Production healthy</span><span>Updated <time datetime="2026-10-13T19:32:58.499Z">13 Oct, 19:32 UTC</time></span></div>
+</header>
+<section class="digest" aria-label="Reporter's note"><h2 class="eyebrow">Reporter's note</h2><p>This is the first report. Two pull requests merged today: #17 added the engineering loop&#39;s agent roles and dashboard, and #18 publishes the dashboard to GitHub Pages. Nothing is reported broken. Three issues wait on the owner: #16 (protect main with a required PR and verify check), #15 (confirm the old Mac build loop is off) and #14 (install the loop timers and turn on the Pages site). Six ready M1 issues are queued, led by durable storage (#8), the email outbox (#9) and real planner accounts (#10). The loop has only just been set up, so it has not yet advanced M1; that starts once the builder picks up those issues.</p></section>
+<section class="summary" aria-label="At a glance"><div class="figure figure-owner"><span class="figure-value">3</span><span class="figure-label">Waiting on you</span></div><div class="figure"><span class="figure-value">0</span><span class="figure-label">Open incidents</span></div><div class="figure"><span class="figure-value">0</span><span class="figure-label">In progress</span></div><div class="figure"><span class="figure-value">6</span><span class="figure-label">Ready to build</span></div><div class="figure"><span class="figure-value">2</span><span class="figure-label">Shipped, 7 days</span></div><div class="figure"><span class="figure-value">$0.08</span><span class="figure-label">Loop spend, 7 days</span></div></section>
+<div class="board">
+<div class="lane"><section class="block block-owner"><h2>Waiting on you<span class="count">3</span></h2><ul class="items"><li class="item"><a class="item-title" href="https://github.com/scshafe/wedding-planner/issues/14" target="_blank" rel="noopener noreferrer">Install the engineering loop&#39;s timers and turn on the dashboard page</a><div class="item-meta"><span class="num">#14</span><span class="chip chip-plain">P1</span><span>updated 3 min ago</span></div></li><li class="item"><a class="item-title" href="https://github.com/scshafe/wedding-planner/issues/15" target="_blank" rel="noopener noreferrer">Confirm the old Mac build loop is switched off</a><div class="item-meta"><span class="num">#15</span><span class="chip chip-plain">P1</span><span>updated 31 min ago</span></div></li><li class="item"><a class="item-title" href="https://github.com/scshafe/wedding-planner/issues/16" target="_blank" rel="noopener noreferrer">Protect main: require a PR and the verify check</a><div class="item-meta"><span class="num">#16</span><span class="chip chip-plain">P1</span><span>updated 10 min ago</span></div></li></ul></section><section class="block"><h2>In progress<span class="count">0</span></h2><p class="empty">Nothing is being built right now.</p></section><section class="block"><h2>Next up<span class="count">6</span></h2><ul class="items"><li class="item"><a class="item-title" href="https://github.com/scshafe/wedding-planner/issues/8" target="_blank" rel="noopener noreferrer">Keep data across deploys: durable storage</a><div class="item-meta"><span class="num">#8</span><span class="chip chip-plain">P1</span><span>M1: Real foundations</span><span>updated 32 min ago</span></div></li><li class="item"><a class="item-title" href="https://github.com/scshafe/wedding-planner/issues/9" target="_blank" rel="noopener noreferrer">Email outbox: a simulated email channel the operator can read</a><div class="item-meta"><span class="num">#9</span><span class="chip chip-plain">P1</span><span>M1: Real foundations</span><span>updated 32 min ago</span></div></li><li class="item"><a class="item-title" href="https://github.com/scshafe/wedding-planner/issues/10" target="_blank" rel="noopener noreferrer">Real planner accounts: email and password sign-in</a><div class="item-meta"><span class="num">#10</span><span class="chip chip-plain">P1</span><span>M1: Real foundations</span><span>updated 32 min ago</span></div></li><li class="item"><a class="item-title" href="https://github.com/scshafe/wedding-planner/issues/11" target="_blank" rel="noopener noreferrer">Invite teammates and couples</a><div class="item-meta"><span class="num">#11</span><span class="chip chip-plain">P2</span><span>M1: Real foundations</span><span>updated 32 min ago</span></div></li><li class="item"><a class="item-title" href="https://github.com/scshafe/wedding-planner/issues/12" target="_blank" rel="noopener noreferrer">Send feedback from inside the app</a><div class="item-meta"><span class="num">#12</span><span class="chip chip-plain">P2</span><span>M1: Real foundations</span><span>updated 32 min ago</span></div></li><li class="item"><a class="item-title" href="https://github.com/scshafe/wedding-planner/issues/13" target="_blank" rel="noopener noreferrer">Request logs, an error page and the build commit in /healthz</a><div class="item-meta"><span class="num">#13</span><span class="chip chip-plain">P3</span><span>M1: Real foundations</span><span>updated 31 min ago</span></div></li></ul></section><section class="block"><h2>Shipped this week<span class="count">2</span></h2><ul class="items"><li class="item"><a class="item-title" href="https://github.com/scshafe/wedding-planner/pull/18" target="_blank" rel="noopener noreferrer">Engineering loop: publish the dashboard to GitHub Pages</a><div class="item-meta"><span class="num">PR #18</span><span>merged 2 min ago</span><span>by app/scshafe-agent</span></div></li><li class="item"><a class="item-title" href="https://github.com/scshafe/wedding-planner/pull/17" target="_blank" rel="noopener noreferrer">Engineering loop: agent roles over GitHub Issues, with a dashboard</a><div class="item-meta"><span class="num">PR #17</span><span>merged 8 min ago</span><span>by app/scshafe-agent</span></div></li></ul></section></div>
+<div class="lane"><section class="block"><h2>Production and CI</h2><div class="health-row"><span class="health-label">Deploy</span><span class="chip chip-good">passing</span><div class="health-detail"><a href="https://github.com/scshafe/wedding-planner/actions/runs/38455477201" target="_blank" rel="noopener noreferrer">Merge #18: Engineering loop: publish the dashboard to GitHub Pages</a><span class="faint"> · <span class="mono">fec8675</span> · 2 min ago</span></div></div><div class="health-row"><span class="health-label">CI</span><span class="chip chip-good">passing</span><div class="health-detail"><a href="https://github.com/scshafe/wedding-planner/actions/runs/38455477137" target="_blank" rel="noopener noreferrer">Merge #18: Engineering loop: publish the dashboard to GitHub Pages</a><span class="faint"> · <span class="mono">fec8675</span> · 2 min ago</span></div></div></section><section class="block"><h2>Milestones</h2><ul class="milestones"><li class="milestone"><div class="milestone-head"><a class="milestone-title" href="https://github.com/scshafe/wedding-planner/milestone/1" target="_blank" rel="noopener noreferrer">M1: Real foundations</a><span class="mono faint">0/6</span></div><div class="meter" role="img" aria-label="0% of 6 issues closed"><span style="width:0%"></span></div></li><li class="milestone"><div class="milestone-head"><a class="milestone-title" href="https://github.com/scshafe/wedding-planner/milestone/2" target="_blank" rel="noopener noreferrer">M2: Planning core</a><span class="mono faint">0/0</span></div><div class="meter" role="img" aria-label="0% of 0 issues closed"><span style="width:0%"></span></div></li><li class="milestone"><div class="milestone-head"><a class="milestone-title" href="https://github.com/scshafe/wedding-planner/milestone/3" target="_blank" rel="noopener noreferrer">M3: Event day and guest experience</a><span class="mono faint">0/0</span></div><div class="meter" role="img" aria-label="0% of 0 issues closed"><span style="width:0%"></span></div></li><li class="milestone"><div class="milestone-head"><a class="milestone-title" href="https://github.com/scshafe/wedding-planner/milestone/4" target="_blank" rel="noopener noreferrer">M4: AI planning assistant</a><span class="mono faint">0/0</span></div><div class="meter" role="img" aria-label="0% of 0 issues closed"><span style="width:0%"></span></div></li><li class="milestone"><div class="milestone-head"><a class="milestone-title" href="https://github.com/scshafe/wedding-planner/milestone/5" target="_blank" rel="noopener noreferrer">M5: Launch readiness</a><span class="mono faint">0/0</span></div><div class="meter" role="img" aria-label="0% of 0 issues closed"><span style="width:0%"></span></div></li><li class="milestone"><div class="milestone-head"><a class="milestone-title" href="https://github.com/scshafe/wedding-planner/milestone/6" target="_blank" rel="noopener noreferrer">Business readiness</a><span class="mono faint">0/0</span></div><div class="meter" role="img" aria-label="0% of 0 issues closed"><span style="width:0%"></span></div></li></ul></section><section class="block"><h2>Run of show<span class="count">1</span></h2><ul class="runs"><li class="run"><time class="run-time mono" datetime="2026-10-13T19:27:02Z" data-format="weekday">13 Oct, 19:27 UTC</time><div class="run-body"><div class="run-head"><span class="role">reporter</span><span class="chip chip-bad">failed</span><span class="mono faint">1 min · $0.08</span></div><p class="run-summary">Dashboard built locally but not published because the Artifact tool is unavailable in this session.</p></div></li></ul></section><section class="block"><h2>Roles</h2><div class="table-wrap"><table class="beats"><thead><tr><th scope="col">Role</th><th scope="col">Last tick</th><th scope="col">Result</th><th scope="col">Last real run</th></tr></thead><tbody><tr><th scope="row">builder</th><td><span class="faint">never</span></td><td></td><td><span class="faint">never</span></td></tr><tr><th scope="row">sre</th><td><span class="faint">never</span></td><td></td><td><span class="faint">never</span></td></tr><tr><th scope="row">triage</th><td><span class="faint">never</span></td><td></td><td><span class="faint">never</span></td></tr><tr><th scope="row">feedback</th><td><span class="faint">never</span></td><td></td><td><span class="faint">never</span></td></tr><tr><th scope="row">synthetic</th><td><span class="faint">never</span></td><td></td><td><span class="faint">never</span></td></tr><tr><th scope="row">reporter</th><td>6 min ago</td><td><span class="chip chip-bad">failed</span></td><td>6 min ago</td></tr></tbody></table></div></section><section class="block"><h2>Loop spend</h2><svg class="spend" viewBox="0 0 280 96" role="img" aria-label="Loop spend per day for the last 14 days; the highest day was $0.08"><line class="grid" x1="0" x2="280" y1="14" y2="14"></line><text class="axis" x="0" y="10">$0.08</text><line class="baseline" x1="0" x2="280" y1="78" y2="78"></line><rect class="bar-hit" x="3.0" y="14" width="14.0" height="64"><title>2026-09-30: $0 across 0 runs</title></rect><rect class="bar-hit" x="23.0" y="14" width="14.0" height="64"><title>2026-10-01: $0 across 0 runs</title></rect><rect class="bar-hit" x="43.0" y="14" width="14.0" height="64"><title>2026-10-02: $0 across 0 runs</title></rect><rect class="bar-hit" x="63.0" y="14" width="14.0" height="64"><title>2026-10-03: $0 across 0 runs</title></rect><rect class="bar-hit" x="83.0" y="14" width="14.0" height="64"><title>2026-10-04: $0 across 0 runs</title></rect><rect class="bar-hit" x="103.0" y="14" width="14.0" height="64"><title>2026-10-05: $0 across 0 runs</title></rect><rect class="bar-hit" x="123.0" y="14" width="14.0" height="64"><title>2026-10-06: $0 across 0 runs</title></rect><rect class="bar-hit" x="143.0" y="14" width="14.0" height="64"><title>2026-10-07: $0 across 0 runs</title></rect><rect class="bar-hit" x="163.0" y="14" width="14.0" height="64"><title>2026-10-08: $0 across 0 runs</title></rect><rect class="bar-hit" x="183.0" y="14" width="14.0" height="64"><title>2026-10-09: $0 across 0 runs</title></rect><rect class="bar-hit" x="203.0" y="14" width="14.0" height="64"><title>2026-10-10: $0 across 0 runs</title></rect><rect class="bar-hit" x="223.0" y="14" width="14.0" height="64"><title>2026-10-11: $0 across 0 runs</title></rect><rect class="bar-hit" x="243.0" y="14" width="14.0" height="64"><title>2026-10-12: $0 across 0 runs</title></rect><g><rect class="bar-hit" x="263.0" y="14" width="14.0" height="64"></rect><path class="bar" d="M263.0,78 V18.0 Q263.0,14.0 267.0,14.0 H273.0 Q277.0,14.0 277.0,18.0 V78 Z"></path><title>2026-10-13: $0.08 across 1 run</title></g><text class="axis" x="0" y="94">09-30</text><text class="axis" x="280" y="94" text-anchor="end">10-13</text></svg><div class="spend-total"><span>Last 7 days</span><span class="mono">$0.08 · 1 run</span></div></section><section class="block"><h2>Feedback inbox<span class="count">0</span></h2><p class="empty">No unprocessed feedback.</p></section></div>
+</div>
+<footer>
+<p>Built from GitHub issues, pull requests and Actions runs, plus the loop journal. The reporter republishes it twice a day.</p>
+<p>To pause every agent, open any issue on <a href="https://github.com/scshafe/wedding-planner" target="_blank" rel="noopener noreferrer">scshafe/wedding-planner</a> with the label <code>loop:paused</code>; close it to resume.</p>
+</footer>
+</div>
+<script>
+(function () {
+  var weekday = { weekday: 'short', hour: 'numeric', minute: '2-digit' };
+  var full = { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
+  document.querySelectorAll('time[datetime]').forEach(function (el) {
+    var d = new Date(el.getAttribute('datetime'));
+    if (isNaN(d.getTime())) return;
+    el.title = d.toISOString();
+    el.textContent = d.toLocaleString(undefined, el.getAttribute('data-format') === 'weekday' ? weekday : full);
+  });
+})();
+</script>
+</body>
+</html>
