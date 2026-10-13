@@ -6,11 +6,12 @@ import { parseArgs } from 'node:util'
 import { collectDashboardSnapshot } from './collect_dashboard_snapshot'
 import type { DashboardSnapshot } from './dashboard_snapshot'
 import { deriveDashboardView } from './dashboard_snapshot'
-import { renderDashboard } from './render_dashboard'
+import { renderDashboard, renderDashboardDocument } from './render_dashboard'
 
 /**
  * @canonical loop_dashboard_build -- the reporter's command: collect a snapshot, derive the view,
- * write `data.json` and `index.html`. The one imperative shell of the dashboard (it reads the
+ * write `data.json`, `index.html` (the page body, for a claude.ai artifact) and `site/index.html`
+ * (a complete document, for GitHub Pages). The one imperative shell of the dashboard (it reads the
  * wall clock, the environment and the disk; everything it calls is pure or does GitHub I/O).
  *
  *   npx tsx ops/loop/dashboard/build_dashboard.ts [--out DIR] [--journal FILE] [--digest FILE]
@@ -38,7 +39,9 @@ const snapshot: DashboardSnapshot =
     : { ...(JSON.parse(readFileSync(values['from-snapshot'], 'utf8')) as DashboardSnapshot), digest }
 const generatedAt = new Date(snapshot.generated_at)
 
-mkdirSync(values.out, { recursive: true })
+const view = deriveDashboardView(snapshot, generatedAt)
+mkdirSync(join(values.out, 'site'), { recursive: true })
 writeFileSync(join(values.out, 'data.json'), `${JSON.stringify(snapshot, null, 2)}\n`)
-writeFileSync(join(values.out, 'index.html'), renderDashboard(deriveDashboardView(snapshot, generatedAt), generatedAt))
+writeFileSync(join(values.out, 'index.html'), renderDashboard(view, generatedAt))
+writeFileSync(join(values.out, 'site', 'index.html'), renderDashboardDocument(view, generatedAt))
 process.stdout.write(`dashboard written to ${join(values.out, 'index.html')}\n`)

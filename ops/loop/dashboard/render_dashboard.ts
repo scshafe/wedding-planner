@@ -479,3 +479,23 @@ ${digestBlock(view.digest)}
 <script>${LOCAL_TIME_SCRIPT}</script>
 `
 }
+
+/**
+ * The same page as a complete HTML document, for hosts that serve the file as-is (GitHub Pages).
+ * The artifact host wraps {@link renderDashboard}'s output in its own skeleton; this adds the
+ * equivalent: doctype, charset, viewport and the safe-area padding.
+ */
+export function renderDashboardDocument(view: DashboardView, now: Date): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<style>:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); } body { margin: 0; }</style>
+</head>
+<body>
+${renderDashboard(view, now)}</body>
+</html>
+`
+}

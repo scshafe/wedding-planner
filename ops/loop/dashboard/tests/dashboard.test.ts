@@ -3,7 +3,15 @@ import { describe, expect, it } from 'vitest'
 import { parseJournal } from '../collect_dashboard_snapshot'
 import type { DashboardSnapshot, IssueRecord, JournalEntry, PullRecord, WorkflowRunRecord } from '../dashboard_snapshot'
 import { deriveDashboardView, LoopDashboardError, priorityRank } from '../dashboard_snapshot'
-import { escapeHtml, formatUsd, relativeTime, renderDashboard, safeGithubUrl, spendChart } from '../render_dashboard'
+import {
+  escapeHtml,
+  formatUsd,
+  relativeTime,
+  renderDashboard,
+  renderDashboardDocument,
+  safeGithubUrl,
+  spendChart,
+} from '../render_dashboard'
 
 const NOW = new Date('2026-10-13T19:40:00Z')
 const REPO = 'scshafe/wedding-planner'
@@ -240,6 +248,15 @@ describe('renderDashboard', () => {
     const html = renderDashboard(deriveDashboardView(snapshot({ issues: [forged] }), NOW), NOW)
     expect(html).not.toContain('<b>1</b>')
     expect(html).toContain('<span class="num">#0</span>')
+  })
+
+  it('wraps the same page in a complete document for GitHub Pages', () => {
+    const view = deriveDashboardView(snapshot(), NOW)
+    const doc = renderDashboardDocument(view, NOW)
+    expect(doc.startsWith('<!doctype html>')).toBe(true)
+    expect(doc).toContain('<meta charset="utf-8">')
+    expect(doc).toContain(renderDashboard(view, NOW))
+    expect(doc.trimEnd().endsWith('</html>')).toBe(true)
   })
 
   it('renders a complete page at rest with empty states', () => {

@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
-# Reporter precheck: needs the dashboard artifact's URL (set WP_DASHBOARD_URL in config.env).
+# Reporter precheck: always runs; says where the dashboard goes.
 set -uo pipefail
 
-if [ -z "${WP_DASHBOARD_URL:-}" ]; then
-  echo "WP_DASHBOARD_URL is not set in \$WP_LOOP_HOME/config.env; the reporter has nowhere to publish."
-  exit 11
-fi
 last_report="$(jq -r 'select(.role == "reporter" and .outcome == "reported") | .started_at' \
-  "$WP_LOOP_HOME/journal.jsonl" 2>/dev/null | tail -n 1)"
+  "${WP_LOOP_HOME:-$HOME/.wedding-planner-loop}/journal.jsonl" 2>/dev/null | tail -n 1)"
 
 echo "### dashboard"
-echo "- artifact: $WP_DASHBOARD_URL"
+echo "- GitHub Pages: https://scshafe.github.io/wedding-planner/ (the gh-pages branch)"
+echo "- claude.ai artifact (interactive sessions only): ${WP_DASHBOARD_URL:-not configured}"
 echo "- last successful report: ${last_report:-never}"
