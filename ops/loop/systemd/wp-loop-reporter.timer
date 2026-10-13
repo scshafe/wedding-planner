@@ -1,0 +1,12 @@
+# twice daily
+[Unit]
+Description=wedding-planner engineering loop: reporter (twice daily)
+
+[Timer]
+OnCalendar=*-*-* 07,19:40:00
+RandomizedDelaySec=5min
+Persistent=true
+Unit=wp-loop@reporter.service
+
+[Install]
+WantedBy=timers.target

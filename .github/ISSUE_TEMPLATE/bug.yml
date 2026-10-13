@@ -1,0 +1,33 @@
+# Intake labels only (see feedback.yml).
+name: Bug report
+description: Something in the planner is broken.
+title: "Bug: "
+labels: ["type:bug", "status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: This repository is public. Leave out personal details and never paste tokens or passwords.
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Sign in as a planner on /t/demo\n2. Open a wedding\n3. ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Where (page or URL path)
+      placeholder: "/t/demo?view=guests"

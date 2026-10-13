@@ -1,110 +1,120 @@
-# Autonomous operation
+# Autonomous operation: the engineering loop
 
-This repository is **built, maintained, and operated by an autonomous Claude Code loop.** This
-document explains how the loop runs and how to deploy it on a headless server. The files in `ops/`
-are the **human-set operational rails** — the autonomous agent does not modify them (see `CLAUDE.md`).
+This repository is built, debugged and operated by a team of headless Claude Code roles that run
+on a schedule on cole-arch-pc as the project's agent user, `agent-wedding-planner`. GitHub Issues
+are the system of record and a claude.ai artifact is the dashboard. The files in `ops/` are the
+owner's operational rails: the agents do not change them to widen their own autonomy (AGENTS.md).
 
-## What one run does
+This replaces the June 2026 loop (`ops/run.sh` on a Mac LaunchDaemon), which fast-forwarded and
+pushed `main` directly. Since merging to `main` deploys to production, every change now lands
+through a PR with CI green.
 
-A scheduler fires `ops/run.sh` every ~3 hours. Each run:
+## The roles
 
-1. Takes a single-flight lock (skips if a previous run is still going; self-heals a hung lock).
-2. Runs `claude` headless from the repo with `ops/kickoff-prompt.md`. The agent reads
-   `.claude/handoff.local.md` (the continuation state) + `.claude/memory/`, then **continues the
-   active plan or writes and builds the next phase itself** — committing per verified step on a
-   `build/*` branch.
-3. **Merge-keeper:** fast-forwards `main` to the build-branch tip, but **only if** the tree is clean
-   AND `npm run build && npm test && npm run lint` all pass. So `main` only ever advances to a green,
-   verified state, and never drifts more than one run behind.
-4. **Pushes** `main` and the build branch to `origin`.
+| Role | When | Model | What it does |
+|---|---|---|---|
+| builder | every 3 h at :15 | opus, high | Takes the best `status:ready` issue, builds it on a `build/*` branch with tests and review agents, opens a PR (`Closes #N`), waits for CI, merges `Merge #N: <title>`, watches the deploy, reverts on failure |
+| sre | hourly at :45 | sonnet | Only when main's CI or the latest deploy is red, or an incident is open: reverts a broken merge, files incidents, asks the owner for host problems |
+| feedback | 06:30 daily, **off until you enable it** | sonnet, limited tools | Turns raw feedback (untrusted, from anyone) into sanitized, deduplicated issues that only you can promote |
+| triage | 07:00 daily | opus, medium, limited tools | Shapes new issues (acceptance criteria, priority, milestone), keeps 3–6 ready, writes the next milestone's issues from `ROADMAP.md`, keeps the owner's queue clear |
+| synthetic | 10:00 daily | sonnet | Plays a planner, couple or guest against a local build and files what got in the way |
+| reporter | 07:40 and 19:40 | sonnet, low, limited tools | Rebuilds the dashboard from GitHub and the journal, writes a short digest, republishes the artifact |
 
-The whole loop is **offline and deterministic by construction**: the system has no production, no
-integration credentials, and no external side effects. The worst case of a bad run is a revertible
-commit on a branch — never a real-world action.
+Each role's instructions are `ops/loop/roles/<role>.md`, after the shared `_common.md`. The
+builder and the SRE share a lock, so only one of them lands on `main` at a time. Every session has
+a spend cap (`--max-budget-usd`: builder $40, triage and SRE and synthetic $8, feedback $4,
+reporter $3; `WP_LOOP_MAX_USD_<ROLE>` overrides). Roles that read text strangers can influence
+and don't change code (triage, feedback, reporter) run with a tool allowlist instead of every tool.
 
-## Safety model (why this is safe to run unattended)
+## How one run works (`ops/loop/run-role.sh <role>`)
 
-- **Agents own the buildout; humans own the rails.** The agent decides what to build and how; humans
-  set the goals and the constraints in `CLAUDE.md` + `ops/`. The agent does not modify `ops/` or
-  `CLAUDE.md`.
-- **`main` is always green.** The merge-keeper re-verifies build+test+lint before advancing `main`.
-- **Everything is revertible.** Per-step commits on a branch; `main` only fast-forwards.
-- **Offline-first.** No real money, booking, comms, deploys, or other irreversible external actions.
-  The only external action the loop takes is `git push` to this repo's `origin`. If real progress
-  needs a human-reserved action (credentials, real comms, production), the agent writes it in the
-  handoff and stops rather than faking it.
-- **Specialist verification.** Consequential work is adversarially reviewed by sub-agents (`doddy`
-  for security, `testineer` for tests, etc.) before it lands.
+1. **Lock** the role's group (`flock`); a run still going means this tick is skipped.
+2. **Refresh the role's own clone** (`~/.wedding-planner-loop/work/<role>`) to `origin/main`, and
+   run *that* clone's copy of the runner. What runs is always merged code, never a branch someone
+   has checked out in the interactive clone.
+3. **Gates**, all failing closed:
+   - *pause:* any open issue labeled `loop:paused` stops every role;
+   - *budget:* when `WP_LOOP_DAILY_BUDGET_USD` is set, every role but the SRE stops once the
+     day's recorded spend reaches it;
+   - *precheck:* `ops/loop/prechecks/<role>.sh` gathers context from GitHub with no model call
+     and exits 10 when there is nothing to do, so an idle tick costs nothing.
+4. **The session:** a clean `npm ci --ignore-scripts` with no credential in its environment,
+   then `claude -p` with the role's prompt and the precheck's context, a time limit, a spend cap,
+   and `stream-json` output into `~/.wedding-planner-loop/logs/`.
+5. **The journal:** one JSON line per run in `~/.wedding-planner-loop/journal.jsonl`: role,
+   outcome, summary, cost, turns, duration, issues and PRs touched. Skips are recorded too; they
+   are the heartbeat the dashboard shows. Each session ends with a `LOOP-RESULT: {...}` line, which
+   the runner parses.
 
-## Deploy on a headless server
+## Trust: a public repository with agents that act
 
-### Prerequisites
-- **Git** + an SSH key on the server authorized for this repo (`git@github.com:scshafe/wedding-planner.git`).
-- **Node.js 20+** (for `npm`).
-- **Claude Code CLI**, authenticated non-interactively. Install per the official docs, then
-  authenticate so headless `claude -p` works without a prompt — either a subscription login that
-  persists (`claude login` once, interactively, on the server) or an API key in the environment
-  (`ANTHROPIC_API_KEY`). Verify with:
-  `claude --dangerously-skip-permissions -p "say OK" </dev/null` → prints `OK`.
-- **The specialist sub-agents and workflow skills the loop relies on.** The loop adversarially
-  verifies consequential work with sub-agents (`doddy`, `testineer`, `rigorous-architect`, `wolf`,
-  `proofreader`, `makeover`, `codd`, `cartographer`) and uses workflow skills (`executing-plans`,
-  `writing-plans`, `agent-first-engineering`, `session-handoff`). These live in your Claude Code
-  config, **not** in this repo. Provision them on the server one of two ways:
-  - **Sync your `~/.claude`** to the server (the simplest — brings agents *and* skills, plus your
-    auth). Most dotfile setups already do this.
-  - **or bundle them into the repo** under `.claude/agents/` (project-scoped) if you'd rather the
-    repo be fully self-contained — the loop will find them there. (Not done by default, to avoid
-    publishing your personal agent prompts without your say-so.)
+Anyone can open an issue, comment or pull request. What stops a stranger from steering an agent
+that merges to production:
 
-  The loop degrades gracefully if a *skill* is missing (CLAUDE.md describes the same workflows), but a
-  missing *specialist agent* means that review is skipped — so make sure at least the agents are
-  present for the loop's safety reviews to run.
+- **Labels confer authority, and strangers can't apply them.** The issue forms apply intake labels
+  only (`status:triage`). The builder works an issue only when a trusted actor (`scshafe`, the bot)
+  wrote it **and** applied `status:ready` (an author can edit the body after it was labeled). If
+  the issue ever carried `source:customer` (work derived from a stranger's feedback), only the
+  owner's `status:ready` counts. The builder reads only trusted comments and resumes only the
+  bot's own `loop:pr` PRs. The trusted list is hard-coded in `ops/loop/lib.sh`.
+- **Stranger text reaches one role only.** The triage precheck labels strangers' issues
+  `type:feedback` in the shell, without a model reading them. The feedback role is the only one
+  that reads them, with a tool allowlist, and it is **off by default** (its timer is not enabled
+  below). Turn it on once there are real people filing feedback.
+- **"Main is red" means main.** Health counts only runs that `main` triggered (push or dispatch),
+  so a fork PR from a branch named `main` cannot send the builder or SRE to read its logs.
+- **No credential reaches installed code.** Dependencies install with `--ignore-scripts` and
+  without the agent's tokens in the environment; `node_modules` is rebuilt every run.
+- **The agents hold no long-lived credential.** git and `gh` get one-hour tokens from the broker,
+  scoped to this repository. The agents cannot reach the tailnet or production; production signal
+  arrives through the deploy workflow's health job.
 
-### One-time setup
-```bash
-# 1. Clone and install
-git clone git@github.com:scshafe/wedding-planner.git ~/wedding-planner
-cd ~/wedding-planner
-npm install
+What remains is the model resisting injected text. Two cheap owner-side controls close most of
+it (issue #16):
+- a ruleset on `main` requiring a pull request and the `verify` check, so nothing reaches
+  production by a direct push;
+- optionally, CODEOWNERS on `ops/`, `.github/`, `deploy/`, `AGENTS.md`, `Dockerfile` and the npm
+  manifests, so the loop cannot change its own gates or the deploy path without you.
 
-# 2. Verify it's green and the run script works (does a real build session — Ctrl-C to abort early)
-npm run build && npm test && npm run lint
-bash ops/run.sh            # first run; logs to ~/.wedding-planner-build/logs/
+## The dashboard
 
-# 3a. Schedule with systemd (preferred on Linux). Copy the user units and enable the timer:
-mkdir -p ~/.config/systemd/user
-cp ops/systemd/wedding-planner-build.{service,timer} ~/.config/systemd/user/
-#   (edit paths/Environment in the .service if you cloned elsewhere or claude isn't on PATH)
-systemctl --user daemon-reload
-systemctl --user enable --now wedding-planner-build.timer
-loginctl enable-linger "$USER"     # so the timer runs without an active login session
+`ops/loop/dashboard/build_dashboard.ts` collects issues, PRs, Actions runs, milestones and the
+journal, and writes `data.json` and a self-contained `index.html` under
+`~/.wedding-planner-loop/dashboard/`. The reporter publishes it to the claude.ai artifact named
+by `WP_DASHBOARD_URL` in `~/.wedding-planner-loop/config.env`. It shows what is waiting on you,
+incidents, work in progress, the ready queue, what shipped this week, CI and deploy health,
+milestone progress, the run of show (recent runs), role heartbeats, spend and the feedback inbox.
 
-#   ...or 3b. Schedule with cron instead (every 3 hours):
-# crontab -e
-# 0 */3 * * * /usr/bin/env bash $HOME/wedding-planner/ops/run.sh >> $HOME/.wedding-planner-build/cron.log 2>&1
+To preview it locally: `npx tsx ops/loop/dashboard/build_dashboard.ts --out /tmp/wp-dash`.
+
+## Install (the owner, once)
+
+```sh
+cd ~/src/wedding-planner && git pull --ff-only
+sudo install -m 0644 -t /etc/systemd/system ops/loop/systemd/wp-loop@.service ops/loop/systemd/wp-loop-*.timer
+sudo systemctl daemon-reload
+sudo systemctl start wp-loop@reporter.service          # smoke test: one run, then read the journal
+sudo -u agent-wedding-planner tail -n 1 /home/agent-wedding-planner/.wedding-planner-loop/journal.jsonl
+sudo systemctl enable --now wp-loop-{builder,sre,triage,synthetic,reporter}.timer
+# Later, when real people file feedback: sudo systemctl enable --now wp-loop-feedback.timer
 ```
 
-### Configuration (optional env vars, see `ops/run.sh`)
-`CLAUDE_BIN` (path to the CLI), `WP_MODEL` (default `opus`), `WP_EFFORT` (`low|medium|high|max`,
-default `high`), `WP_STATE_DIR` (lock + logs location, default `~/.wedding-planner-build`).
+The units are root-owned so the agent cannot change its own schedule; they run each role as
+`agent-wedding-planner` through a login shell (its node, PATH and broker helpers). Run exactly one
+loop against this repository: the old Mac LaunchDaemon must stay unloaded. The agent user owns its
+home, so anything the units run there (the profile, the clones) is agent-writable; the owner-side
+controls above are what an agent cannot undo.
 
-### Operating it
-```bash
-# Watch the newest run live:
-tail -f "$(ls -t ~/.wedding-planner-build/logs/build-*.log | head -1)"
-# Trigger a run now:
-systemctl --user start wedding-planner-build.service     # (or: bash ops/run.sh)
-# Pause / resume the schedule:
-systemctl --user disable --now wedding-planner-build.timer
-systemctl --user enable  --now wedding-planner-build.timer
-# See progress (the real heartbeat is commits):
-git -C ~/wedding-planner log --oneline -15 main
-```
+## Operate
 
-## ⚠️ Run exactly ONE loop against this repo
+| To | Do |
+|---|---|
+| Pause every role | Open any issue with the label `loop:paused` (close it to resume), or `sudo systemctl stop 'wp-loop-*.timer'` |
+| Run a role now | `sudo systemctl start wp-loop@<role>.service` |
+| See the schedule | `systemctl list-timers 'wp-loop-*'` |
+| Read a run | `journalctl -u wp-loop@<role>.service`, then the log named in its journal line |
+| Cap spend | `WP_LOOP_DAILY_BUDGET_USD=<usd>` in `~/.wedding-planner-loop/config.env` |
+| Change a model or effort | `WP_LOOP_MODEL_<ROLE>` / `WP_LOOP_EFFORT_<ROLE>` in the same file |
+| Roll production back | Merge a `git revert`, or `gh workflow run deploy.yml -f sha=<older sha> -f allow_rollback=true` |
 
-Two schedulers (e.g. a laptop AND this server) both building and pushing will diverge `main` and
-fight. Pick one runner. If you previously ran it locally, pause that one before enabling the server.
-If `main` ever diverges from the build branch, the merge-keeper safely stops advancing `main` and
-logs "manual reconciliation needed" until you reconcile by hand.
+`config.env` holds settings only, never secrets (`ops/loop/config.env.example`).

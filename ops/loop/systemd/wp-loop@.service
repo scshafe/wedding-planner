@@ -1,0 +1,21 @@
+# One engineering-loop role, run once (the timers start it; %i is the role).
+# Installed by the owner into /etc/systemd/system (root-owned), so the agent cannot change its own
+# trigger. It runs as the project's agent user. See ops/AUTONOMOUS_OPERATION.md.
+[Unit]
+Description=wedding-planner engineering loop: %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=agent-wedding-planner
+Group=agent-wedding-planner
+WorkingDirectory=/home/agent-wedding-planner
+# A login shell, so the agent user's profile (node, PATH, the broker's helpers) is in place. The
+# outer stage runs from the role's own clone (merged code as of its last run), falling back to the
+# interactive clone only for the very first run. `$$` is a literal `$` for the shell (systemd
+# expands `$` itself).
+ExecStart=/bin/bash -lc 'r="$$HOME/.wedding-planner-loop/work/%i/ops/loop/run-role.sh"; [ -f "$$r" ] || r="$$HOME/src/wedding-planner/ops/loop/run-role.sh"; exec bash "$$r" "%i"'
+# Above the longest role limit (builder: 150 min) plus clone, npm ci, the prechecks and the kill grace.
+TimeoutStartSec=3h30min
+Nice=10

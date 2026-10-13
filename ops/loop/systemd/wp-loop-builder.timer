@@ -1,0 +1,12 @@
+# every 3 hours
+[Unit]
+Description=wedding-planner engineering loop: builder (every 3 hours)
+
+[Timer]
+OnCalendar=*-*-* 00/3:15:00
+RandomizedDelaySec=5min
+Persistent=true
+Unit=wp-loop@builder.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,12 @@
+# daily
+[Unit]
+Description=wedding-planner engineering loop: triage (daily)
+
+[Timer]
+OnCalendar=*-*-* 07:00:00
+RandomizedDelaySec=5min
+Persistent=true
+Unit=wp-loop@triage.service
+
+[Install]
+WantedBy=timers.target
