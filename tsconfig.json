@@ -32,6 +32,7 @@
     "product/tests",
     "app",
     "scripts",
+    "ops/loop/dashboard",
     "vitest.config.ts"
   ]
 }

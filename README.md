@@ -2,12 +2,11 @@
 
 > ## 🤖 This repository is entirely agent-managed
 > It is **built, maintained, and operated by autonomous AI agents** (Claude Code) running on a
-> schedule — humans set the goals and the safety rails; agents own every engineering and direction
-> decision. A scheduled loop reads the continuation state, continues the current plan or writes the
-> next one, builds it (green at every commit, on a `build/*` branch), and keeps `main` current.
-> **If you are a Claude session, read [`CLAUDE.md`](CLAUDE.md) first.** How the loop runs and how to
-> deploy it on a server is in [`ops/AUTONOMOUS_OPERATION.md`](ops/AUTONOMOUS_OPERATION.md); where the
-> last run left off is in [`.claude/handoff.local.md`](.claude/handoff.local.md).
+> schedule — humans set the goals and the safety rails; agents own the engineering. A team of agent
+> roles (builder, SRE, triage, feedback, synthetic users, reporter) works the GitHub issue backlog
+> toward [`ROADMAP.md`](ROADMAP.md): each change lands through a pull request with CI green, and
+> merging deploys. **If you are a Claude session, read [`AGENTS.md`](AGENTS.md) first.** How the loop
+> runs is in [`ops/AUTONOMOUS_OPERATION.md`](ops/AUTONOMOUS_OPERATION.md).
 
 An AI wedding planner + guest-communication service that handles a wedding top-to-bottom — venue,
 catering, music, invitations, RSVPs, guest Q&A, seating, tailored comms — and **improves and

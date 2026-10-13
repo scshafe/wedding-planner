@@ -1,0 +1,22 @@
+# Intake labels only (see feedback.yml).
+name: Feature request
+description: Ask for something the planner should do.
+title: "Feature: "
+labels: ["type:feature", "status:triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: Who has it, and what are they trying to get done?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+  - type: textarea
+    id: done
+    attributes:
+      label: How we would know it's done
+      placeholder: "- [ ] A planner can ..."

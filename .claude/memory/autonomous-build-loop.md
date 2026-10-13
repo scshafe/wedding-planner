@@ -1,11 +1,13 @@
 ---
 name: autonomous-build-loop
-description: A macOS system LaunchDaemon (user 'cole') runs autonomous build sessions every 3h via ops/run.sh — expect agent-authored commits on build/* branches and main getting pushed to origin between manual sessions
+description: SUPERSEDED 2026-10-13 by engineering-loop-v2. Was: a macOS system LaunchDaemon (user 'cole') runs autonomous build sessions every 3h via ops/run.sh — expect agent-authored commits on build/* branches and main getting pushed to origin between manual sessions
 metadata: 
   node_type: memory
   type: project
   originSessionId: e797abb3-1adc-4d2b-9538-a31f279a8220
 ---
+
+**SUPERSEDED (2026-10-13)** by [[engineering-loop-v2]]: `ops/run.sh` and its merge-keeper are deleted; a push to `main` now deploys, so every change lands through a PR. The LaunchDaemon below must stay unloaded (issue #15). Kept for history.
 
 The user set up a **recurring autonomous build** (2026-06-24). A macOS **`launchd` system
 LaunchDaemon**, `com.coleshaffer.wedding-planner-build`, runs `claude` headless **every 3 hours**

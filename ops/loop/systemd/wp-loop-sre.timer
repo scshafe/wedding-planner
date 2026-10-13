@@ -1,0 +1,12 @@
+# hourly; skips at no cost unless main or a deploy is red
+[Unit]
+Description=wedding-planner engineering loop: sre (hourly; skips at no cost unless main or a deploy is red)
+
+[Timer]
+OnCalendar=*-*-* *:45:00
+RandomizedDelaySec=5min
+Persistent=true
+Unit=wp-loop@sre.service
+
+[Install]
+WantedBy=timers.target

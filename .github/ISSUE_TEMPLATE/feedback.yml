@@ -1,0 +1,41 @@
+# Labels set here apply for anyone who files the form, so they are intake labels only. Never add
+# status:ready (the builder's authority) or loop:paused here.
+name: Feedback
+description: Tell us what was hard, confusing or missing while planning a wedding.
+title: "Feedback: "
+labels: ["type:feedback", "status:triage", "source:customer"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying the planner. This repository is public: please leave out names, phone numbers, emails and anything else personal.
+  - type: dropdown
+    id: role
+    attributes:
+      label: You are a
+      options:
+        - Wedding planner
+        - Couple
+        - Guest
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: What were you trying to do?
+      placeholder: "Add 40 guests from my spreadsheet to Alex & Sam's wedding."
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened instead?
+      placeholder: "I could only add guests one at a time, and each one needed a phone handle."
+    validations:
+      required: true
+  - type: textarea
+    id: matters
+    attributes:
+      label: How much does it matter to you?
+      placeholder: "I'd switch tools over this / annoying but fine / just a thought"

@@ -1,0 +1,12 @@
+# daily
+[Unit]
+Description=wedding-planner engineering loop: synthetic (daily)
+
+[Timer]
+OnCalendar=*-*-* 10:00:00
+RandomizedDelaySec=5min
+Persistent=true
+Unit=wp-loop@synthetic.service
+
+[Install]
+WantedBy=timers.target
