@@ -1,6 +1,6 @@
 ---
 name: engineering-loop-v2
-description: "The role-based engineering loop (2026-10-13): GitHub Issues as the system of record, six scheduled headless roles on cole-arch-pc, labels as the trust boundary on a public repo, a claude.ai artifact dashboard; why not OpenProject or a GitHub Project board"
+description: "The role-based engineering loop (2026-10-13): GitHub Issues as the system of record, six scheduled headless roles on cole-arch-pc, labels as the trust boundary on a public repo, a GitHub Pages dashboard (headless runs have no Artifact tool); why not OpenProject or a GitHub Project board"
 metadata:
   type: project
 ---
@@ -19,7 +19,11 @@ synthetic (daily), reporter (twice daily). Every change lands as a PR with CI gr
   merge autonomy, and loop changes go to the owner as `area:loop` + `status:needs-owner` issues.
 - *Moderate cadence*, as above; per-role model/effort and a daily budget cap live in
   `~/.wedding-planner-loop/config.env`, not in the repo.
-- *GitHub Issues + a claude.ai artifact dashboard*, not OpenProject. Why: the agents cannot reach
+- *GitHub Issues + a dashboard page*, not OpenProject. The owner picked a claude.ai artifact with
+  GitHub Pages as the fallback; **headless `claude -p` sessions have no Artifact tool** (and no
+  claude.ai connectors; verified 2026-10-13 from a reporter run's init event), so the reporter
+  publishes to Pages (`gh-pages`, one force-pushed commit; no workflows in it, so no CI) and the
+  artifact is refreshed only by interactive sessions. Why: the agents cannot reach
   the tailnet by design, and the broker mints only short-lived GitHub tokens. A self-hosted tracker
   would need a public endpoint and a long-lived API key, and two systems of record drift.
 - A GitHub Project board can't be the dashboard either: GitHub Apps (the bot) cannot access

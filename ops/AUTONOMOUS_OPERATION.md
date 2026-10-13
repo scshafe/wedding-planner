@@ -2,7 +2,8 @@
 
 This repository is built, debugged and operated by a team of headless Claude Code roles that run
 on a schedule on cole-arch-pc as the project's agent user, `agent-wedding-planner`. GitHub Issues
-are the system of record and a claude.ai artifact is the dashboard. The files in `ops/` are the
+are the system of record, and the dashboard is a page on GitHub Pages (with a private claude.ai
+copy that interactive sessions refresh). The files in `ops/` are the
 owner's operational rails: the agents do not change them to widen their own autonomy (AGENTS.md).
 
 This replaces the June 2026 loop (`ops/run.sh` on a Mac LaunchDaemon), which fast-forwarded and
@@ -18,7 +19,7 @@ through a PR with CI green.
 | feedback | 06:30 daily, **off until you enable it** | sonnet, limited tools | Turns raw feedback (untrusted, from anyone) into sanitized, deduplicated issues that only you can promote |
 | triage | 07:00 daily | opus, medium, limited tools | Shapes new issues (acceptance criteria, priority, milestone), keeps 3–6 ready, writes the next milestone's issues from `ROADMAP.md`, keeps the owner's queue clear |
 | synthetic | 10:00 daily | sonnet | Plays a planner, couple or guest against a local build and files what got in the way |
-| reporter | 07:40 and 19:40 | sonnet, low, limited tools | Rebuilds the dashboard from GitHub and the journal, writes a short digest, republishes the artifact |
+| reporter | 07:40 and 19:40 | sonnet, low, limited tools | Rebuilds the dashboard from GitHub and the journal, writes a short digest, publishes it to GitHub Pages |
 
 Each role's instructions are `ops/loop/roles/<role>.md`, after the shared `_common.md`. The
 builder and the SRE share a lock, so only one of them lands on `main` at a time. Every session has
@@ -79,11 +80,18 @@ it (issue #16):
 ## The dashboard
 
 `ops/loop/dashboard/build_dashboard.ts` collects issues, PRs, Actions runs, milestones and the
-journal, and writes `data.json` and a self-contained `index.html` under
-`~/.wedding-planner-loop/dashboard/`. The reporter publishes it to the claude.ai artifact named
-by `WP_DASHBOARD_URL` in `~/.wedding-planner-loop/config.env`. It shows what is waiting on you,
+journal, and writes `data.json`, the page body (`index.html`) and a standalone copy
+(`site/index.html`) under `~/.wedding-planner-loop/dashboard/`. It shows what is waiting on you,
 incidents, work in progress, the ready queue, what shipped this week, CI and deploy health,
 milestone progress, the run of show (recent runs), role heartbeats, spend and the feedback inbox.
+
+- **GitHub Pages (what the reporter publishes):** `ops/loop/dashboard/publish_pages.sh`
+  force-pushes the standalone page as the single commit of the `gh-pages` branch, served at
+  https://scshafe.github.io/wedding-planner/ once Pages is on. It is public, like the repository.
+  The commit has no workflow files, so it starts no CI.
+- **The claude.ai artifact** (private, in your claude.ai sidebar) is updated only by interactive
+  sessions: headless `claude -p` runs have no Artifact tool (verified 2026-10-13). Ask any
+  interactive session to "refresh the dashboard artifact" (URL in `WP_DASHBOARD_URL`).
 
 To preview it locally: `npx tsx ops/loop/dashboard/build_dashboard.ts --out /tmp/wp-dash`.
 

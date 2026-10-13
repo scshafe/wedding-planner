@@ -59,7 +59,8 @@ case "$ROLE" in
              TOOLS=("${ISSUE_TOOLS[@]}") ;;
   synthetic) MODEL=sonnet; EFFORT=medium; TIMEOUT_MIN=75;  MAX_USD=8;  GROUP=synthetic ;;
   reporter)  MODEL=sonnet; EFFORT=low;    TIMEOUT_MIN=30;  MAX_USD=3;  GROUP=reporter
-             TOOLS=(Read Write ToolSearch Artifact PushNotification "Bash(npx tsx ops/loop/dashboard/build_dashboard.ts:*)") ;;
+             TOOLS=(Read Write ToolSearch Artifact PushNotification "Bash(npx tsx ops/loop/dashboard/build_dashboard.ts:*)"
+                    "Bash(bash ops/loop/dashboard/publish_pages.sh:*)") ;;
   *) echo "usage: run-role.sh <builder|sre|triage|feedback|synthetic|reporter>" >&2; exit 2 ;;
 esac
 ROLE_UPPER="$(printf '%s' "$ROLE" | tr '[:lower:]' '[:upper:]')"

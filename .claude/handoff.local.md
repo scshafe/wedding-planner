@@ -9,13 +9,16 @@ Interactive-session context. The loop's roles keep their continuity on GitHub (i
   dashboard"): six roles in `ops/loop/`, explained in `ops/AUTONOMOUS_OPERATION.md`, memory
   [[engineering-loop-v2]]. Labels, milestones (M1–M5, Business readiness) and the seed backlog exist on
   GitHub.
-- **Waiting on the owner:** #14 install the systemd timers (and run the reporter smoke test), #15
-  confirm the old Mac LaunchDaemon is unloaded. Until #14, nothing runs on a schedule.
+- **Waiting on the owner:** #14 install the systemd timers, #15 confirm the old Mac LaunchDaemon is
+  unloaded, #16 a ruleset protecting `main`, and turning on GitHub Pages for the dashboard. Until #14,
+  nothing runs on a schedule.
 - **Product direction:** full planner workspace, `ROADMAP.md` ([[product-direction-full-planner-workspace]]).
   M1 is shaped and ready: #8 durable storage → #9 email outbox → #10 accounts → #11 invites,
   #12 in-app feedback, #13 operability.
-- **Dashboard:** a claude.ai artifact; its URL is `WP_DASHBOARD_URL` in the agent user's
-  `~/.wedding-planner-loop/config.env`. The reporter republishes it.
+- **Dashboard:** the reporter publishes it to GitHub Pages (https://scshafe.github.io/wedding-planner/,
+  the `gh-pages` branch) once the owner turns Pages on. A private claude.ai copy
+  (`WP_DASHBOARD_URL` in `~/.wedding-planner-loop/config.env`) can only be refreshed from an
+  interactive session: headless runs have no Artifact tool.
 - **Last product work:** Phase 38, the guest-conversation transcript (ADR 0038,
   [[guest-conversation-transcript]]). The queued June ideas (couple-register oracle, reply on transcript,
   price-book unification) are superseded by the roadmap; triage may resurrect them as issues if they serve
