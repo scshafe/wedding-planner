@@ -47,6 +47,12 @@ export function safeGithubUrl(url: string): string | null {
   }
 }
 
+/** A count or id as text. Numbers from a saved snapshot are not trusted to be numbers. */
+function int(value: number): string {
+  const n = Number(value)
+  return Number.isFinite(n) ? String(Math.trunc(n)) : '0'
+}
+
 function link(url: string, text: string, className = ''): string {
   const safe = safeGithubUrl(url)
   const cls = className === '' ? '' : ` class="${className}"`
@@ -132,7 +138,7 @@ function productionPill(deploy: RunHealth): string {
 function issueItem(issue: IssueRecord, now: Date): string {
   const priority = priorityName(issue)
   const meta = [
-    `<span class="num">#${issue.number}</span>`,
+    `<span class="num">#${int(issue.number)}</span>`,
     priority === null ? '' : chip(priority, priority === 'P0' ? 'bad' : 'plain'),
     issue.milestone === null ? '' : `<span>${escapeHtml(issue.milestone)}</span>`,
     `<span>updated ${escapeHtml(relativeTime(issue.updated_at, now))}</span>`,
@@ -142,7 +148,7 @@ function issueItem(issue: IssueRecord, now: Date): string {
 
 function pullItem(pr: PullRecord, now: Date, when: 'opened' | 'merged'): string {
   const at = when === 'merged' ? (pr.merged_at ?? pr.created_at) : pr.created_at
-  return `<li class="item">${link(pr.url, pr.title, 'item-title')}<div class="item-meta"><span class="num">PR #${pr.number}</span><span>${when} ${escapeHtml(relativeTime(at, now))}</span><span>by ${escapeHtml(pr.author)}</span></div></li>`
+  return `<li class="item">${link(pr.url, pr.title, 'item-title')}<div class="item-meta"><span class="num">PR #${int(pr.number)}</span><span>${when} ${escapeHtml(relativeTime(at, now))}</span><span>by ${escapeHtml(pr.author)}</span></div></li>`
 }
 
 function list(items: readonly string[], empty: string): string {
@@ -167,9 +173,9 @@ function healthRow(label: string, health: RunHealth, now: Date): string {
 
 function milestoneRow(progress: MilestoneProgress): string {
   const { milestone, total, fraction } = progress
-  const pct = Math.round(fraction * 100)
+  const pct = Number(int(fraction * 100))
   const state = milestone.state === 'closed' ? ' · closed' : ''
-  return `<li class="milestone"><div class="milestone-head">${link(milestone.url, milestone.title, 'milestone-title')}<span class="mono faint">${milestone.closed_issues}/${total}${state}</span></div><div class="meter" role="img" aria-label="${pct}% of ${total} issues closed"><span style="width:${pct}%"></span></div></li>`
+  return `<li class="milestone"><div class="milestone-head">${link(milestone.url, milestone.title, 'milestone-title')}<span class="mono faint">${int(milestone.closed_issues)}/${int(total)}${state}</span></div><div class="meter" role="img" aria-label="${pct}% of ${int(total)} issues closed"><span style="width:${pct}%"></span></div></li>`
 }
 
 function runRow(entry: JournalEntry): string {

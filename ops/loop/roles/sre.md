@@ -5,13 +5,17 @@ Keep main green and production healthy. The runner started you because something
 GitHub Actions (`ci.yml`; `deploy.yml` and its verify, deploy and health jobs) and the incident
 issues.
 
+Only runs that main itself triggered count (push or workflow_dispatch). Never act on a pull
+request's failing run, whatever its branch is called.
+
 1. **Read the evidence.** `gh run view <id> --log-failed`; on this public repository a deploy log
    is a summary only, so read the job names and the summary lines carefully.
 2. **Classify and act.**
    - *The code on main is broken* (verify failed, or a deploy failed because of the change):
-     revert the offending merge with a PR (`git revert -m 1 <merge sha>`), land it per AGENTS.md
-     (CI green, `Merge #<pr>: <title>`), watch the deploy. Reopen the original issue with a
-     comment linking the revert.
+     follow the revert policy in `ops/loop/roles/builder.md` (verify failures only, at most one
+     automatic revert in 24 hours). Land the revert per AGENTS.md (CI green, `--match-head-commit`,
+     `Merge #<pr>: <title>`), watch the deploy, and reopen the original issue with a comment
+     linking the revert.
    - *A flaky test*: open `type:bug`, `priority:P1` with the evidence (two runs, same commit,
      different results). Don't disable or loosen the test.
    - *The host, runner, tailnet or broker* (a self-hosted runner offline, a disk full, a refused

@@ -123,14 +123,29 @@ describe('deriveDashboardView', () => {
         pulls: [
           pull(1, { merged_at: '2026-10-13T08:00:00Z' }),
           pull(2, { merged_at: '2026-10-01T08:00:00Z' }),
-          pull(3, { state: 'OPEN', merged_at: null }),
+          pull(3, { state: 'OPEN', merged_at: null, labels: ['loop:pr'] }),
           pull(4, { state: 'CLOSED', merged_at: null }),
+          pull(5, { state: 'OPEN', merged_at: null, author: 'stranger' }),
         ],
       }),
       NOW,
     )
     expect(view.shipped.map((p) => p.number)).toEqual([1])
     expect(view.open_loop_prs.map((p) => p.number)).toEqual([3])
+  })
+
+  it("ignores a fork pull request whose branch is also called main", () => {
+    const view = deriveDashboardView(
+      snapshot({
+        runs: [
+          run(1, 'CI', 'success', '2026-10-13T09:00:00Z'),
+          { ...run(2, 'CI', 'failure', '2026-10-13T10:00:00Z'), event: 'pull_request' },
+        ],
+      }),
+      NOW,
+    )
+    expect(view.ci.verdict).toBe('healthy')
+    expect(view.ci.run?.id).toBe(1)
   })
 
   it('takes the health verdict from the latest decided run on main', () => {
@@ -218,6 +233,13 @@ describe('renderDashboard', () => {
     )
     expect(html).not.toContain('javascript:')
     expect(html).toContain('<span class="item-title">Issue 1</span>')
+  })
+
+  it('renders numbers from an untrusted snapshot as numbers only', () => {
+    const forged = issue(1, ['status:in-progress'], { number: '<b>1</b>' as unknown as number })
+    const html = renderDashboard(deriveDashboardView(snapshot({ issues: [forged] }), NOW), NOW)
+    expect(html).not.toContain('<b>1</b>')
+    expect(html).toContain('<span class="num">#0</span>')
   })
 
   it('renders a complete page at rest with empty states', () => {

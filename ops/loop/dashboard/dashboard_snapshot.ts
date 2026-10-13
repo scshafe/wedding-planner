@@ -189,9 +189,16 @@ function newestFirst<T>(items: readonly T[], at: (item: T) => string): T[] {
 
 function runHealth(runs: readonly WorkflowRunRecord[], workflowFile: string): RunHealth {
   // gh reports the workflow's display name ("CI", "deploy"); match on either the name or the file.
+  // Only runs main itself triggered: a fork's pull request from its own branch named "main" also
+  // reports branch "main", and must not be able to paint production red (or green).
   const wanted = workflowFile.replace(/\.ya?ml$/, '').toLowerCase()
   const onMain = newestFirst(
-    runs.filter((run) => run.workflow.toLowerCase() === wanted && run.branch === 'main'),
+    runs.filter(
+      (run) =>
+        run.workflow.toLowerCase() === wanted &&
+        run.branch === 'main' &&
+        (run.event === 'push' || run.event === 'workflow_dispatch'),
+    ),
     (run) => run.created_at,
   )
   const latest = onMain[0] ?? null
@@ -267,7 +274,8 @@ export function deriveDashboardView(snapshot: DashboardSnapshot, now: Date): Das
     waiting_on_owner: open.filter((i) => hasLabel(i, 'status:needs-owner')).sort(byPriority),
     incidents: open.filter((i) => hasLabel(i, 'type:incident')).sort(byPriority),
     in_progress: open.filter((i) => hasLabel(i, 'status:in-progress')).sort(byPriority),
-    open_loop_prs: snapshot.pulls.filter((pr) => pr.state === 'OPEN'),
+    // The loop's PRs only (only the owner and the bot can apply loop:pr); strangers' PRs are not work in progress.
+    open_loop_prs: snapshot.pulls.filter((pr) => pr.state === 'OPEN' && hasLabel(pr, 'loop:pr')),
     next_up: open
       .filter((i) => hasLabel(i, 'status:ready') && !hasLabel(i, 'type:feedback'))
       .sort((a, b) => priorityRank(a) - priorityRank(b) || milestoneOrder(a, b) || a.number - b.number),

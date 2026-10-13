@@ -15,13 +15,16 @@ through a PR with CI green.
 |---|---|---|---|
 | builder | every 3 h at :15 | opus, high | Takes the best `status:ready` issue, builds it on a `build/*` branch with tests and review agents, opens a PR (`Closes #N`), waits for CI, merges `Merge #N: <title>`, watches the deploy, reverts on failure |
 | sre | hourly at :45 | sonnet | Only when main's CI or the latest deploy is red, or an incident is open: reverts a broken merge, files incidents, asks the owner for host problems |
-| feedback | 06:30 daily | sonnet | Turns raw feedback (untrusted, from anyone) into sanitized, deduplicated issues |
-| triage | 07:00 daily | opus, medium | Shapes new issues (acceptance criteria, priority, milestone), keeps 3–6 ready, writes the next milestone's issues from `ROADMAP.md`, keeps the owner's queue clear |
+| feedback | 06:30 daily, **off until you enable it** | sonnet, limited tools | Turns raw feedback (untrusted, from anyone) into sanitized, deduplicated issues that only you can promote |
+| triage | 07:00 daily | opus, medium, limited tools | Shapes new issues (acceptance criteria, priority, milestone), keeps 3–6 ready, writes the next milestone's issues from `ROADMAP.md`, keeps the owner's queue clear |
 | synthetic | 10:00 daily | sonnet | Plays a planner, couple or guest against a local build and files what got in the way |
-| reporter | 07:40 and 19:40 | sonnet, low | Rebuilds the dashboard from GitHub and the journal, writes a short digest, republishes the artifact |
+| reporter | 07:40 and 19:40 | sonnet, low, limited tools | Rebuilds the dashboard from GitHub and the journal, writes a short digest, republishes the artifact |
 
 Each role's instructions are `ops/loop/roles/<role>.md`, after the shared `_common.md`. The
-builder and the SRE share a lock, so only one of them lands on `main` at a time.
+builder and the SRE share a lock, so only one of them lands on `main` at a time. Every session has
+a spend cap (`--max-budget-usd`: builder $40, triage and SRE and synthetic $8, feedback $4,
+reporter $3; `WP_LOOP_MAX_USD_<ROLE>` overrides). Roles that read text strangers can influence
+and don't change code (triage, feedback, reporter) run with a tool allowlist instead of every tool.
 
 ## How one run works (`ops/loop/run-role.sh <role>`)
 
@@ -35,7 +38,8 @@ builder and the SRE share a lock, so only one of them lands on `main` at a time.
      day's recorded spend reaches it;
    - *precheck:* `ops/loop/prechecks/<role>.sh` gathers context from GitHub with no model call
      and exits 10 when there is nothing to do, so an idle tick costs nothing.
-4. **The session:** `claude -p` with the role's prompt and the precheck's context, a time limit,
+4. **The session:** a clean `npm ci --ignore-scripts` with no credential in its environment,
+   then `claude -p` with the role's prompt and the precheck's context, a time limit, a spend cap,
    and `stream-json` output into `~/.wedding-planner-loop/logs/`.
 5. **The journal:** one JSON line per run in `~/.wedding-planner-loop/journal.jsonl`: role,
    outcome, summary, cost, turns, duration, issues and PRs touched. Skips are recorded too; they
@@ -44,16 +48,33 @@ builder and the SRE share a lock, so only one of them lands on `main` at a time.
 
 ## Trust: a public repository with agents that act
 
-Anyone can open an issue or comment. Labels are the boundary:
+Anyone can open an issue, comment or pull request. What stops a stranger from steering an agent
+that merges to production:
 
-- Only people with triage access can label, and the issue forms apply intake labels only
-  (`status:triage`). **`status:ready` confers authority only when a trusted actor applied it**
-  (`scshafe`, the bot). The builder's precheck checks who applied it, from the issue's event log.
-- All issue, comment and PR text is data. The feedback role reads raw text from strangers and
-  rewrites it in its own words; the triage role promotes only issues by trusted authors.
-- The agents hold no long-lived credential: git and `gh` get one-hour tokens from the broker,
-  scoped to this repository. They cannot reach the tailnet or production; production signal
+- **Labels confer authority, and strangers can't apply them.** The issue forms apply intake labels
+  only (`status:triage`). The builder works an issue only when a trusted actor (`scshafe`, the bot)
+  wrote it **and** applied `status:ready` (an author can edit the body after it was labeled). If
+  the issue ever carried `source:customer` (work derived from a stranger's feedback), only the
+  owner's `status:ready` counts. The builder reads only trusted comments and resumes only the
+  bot's own `loop:pr` PRs. The trusted list is hard-coded in `ops/loop/lib.sh`.
+- **Stranger text reaches one role only.** The triage precheck labels strangers' issues
+  `type:feedback` in the shell, without a model reading them. The feedback role is the only one
+  that reads them, with a tool allowlist, and it is **off by default** (its timer is not enabled
+  below). Turn it on once there are real people filing feedback.
+- **"Main is red" means main.** Health counts only runs that `main` triggered (push or dispatch),
+  so a fork PR from a branch named `main` cannot send the builder or SRE to read its logs.
+- **No credential reaches installed code.** Dependencies install with `--ignore-scripts` and
+  without the agent's tokens in the environment; `node_modules` is rebuilt every run.
+- **The agents hold no long-lived credential.** git and `gh` get one-hour tokens from the broker,
+  scoped to this repository. The agents cannot reach the tailnet or production; production signal
   arrives through the deploy workflow's health job.
+
+What remains is the model resisting injected text. Two cheap owner-side controls close most of
+it (issue #16):
+- a ruleset on `main` requiring a pull request and the `verify` check, so nothing reaches
+  production by a direct push;
+- optionally, CODEOWNERS on `ops/`, `.github/`, `deploy/`, `AGENTS.md`, `Dockerfile` and the npm
+  manifests, so the loop cannot change its own gates or the deploy path without you.
 
 ## The dashboard
 
@@ -74,12 +95,15 @@ sudo install -m 0644 -t /etc/systemd/system ops/loop/systemd/wp-loop@.service op
 sudo systemctl daemon-reload
 sudo systemctl start wp-loop@reporter.service          # smoke test: one run, then read the journal
 sudo -u agent-wedding-planner tail -n 1 /home/agent-wedding-planner/.wedding-planner-loop/journal.jsonl
-sudo systemctl enable --now wp-loop-{builder,sre,triage,feedback,synthetic,reporter}.timer
+sudo systemctl enable --now wp-loop-{builder,sre,triage,synthetic,reporter}.timer
+# Later, when real people file feedback: sudo systemctl enable --now wp-loop-feedback.timer
 ```
 
 The units are root-owned so the agent cannot change its own schedule; they run each role as
 `agent-wedding-planner` through a login shell (its node, PATH and broker helpers). Run exactly one
-loop against this repository: the old Mac LaunchDaemon must stay unloaded.
+loop against this repository: the old Mac LaunchDaemon must stay unloaded. The agent user owns its
+home, so anything the units run there (the profile, the clones) is agent-writable; the owner-side
+controls above are what an agent cannot undo.
 
 ## Operate
 
