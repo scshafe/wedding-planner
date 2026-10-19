@@ -55,6 +55,8 @@ export function createProductApiServer(api: ProductApi): http.Server {
         }
         const response = api.handle(apiReq)
         writeJson(res, response.status, response.body)
+        // Issue #10: work whose cost must not show in the response's timing runs after the response is written.
+        setImmediate(() => api.runDeferredWork())
       } catch {
         // The pure handler never throws, but the adapter stays fail-closed regardless.
         writeJson(res, 500, { error: 'internal_error' })

@@ -2,7 +2,9 @@ import type { CsrfGuard } from '../auth/csrf_guard'
 import type { OutboxMessage } from '../email/simulated_email_adapter'
 import type { ApiRequest } from '../http/api_message'
 import type { ProductApi } from '../http/product_api'
-import { renderOperatorLogin, renderOutbox } from './admin_pages'
+import type { Tenant } from '@wedding-planner/shared'
+
+import { renderOperatorLogin, renderOutbox, renderTenants, type TenantsNotice } from './admin_pages'
 import { readCookie } from './cookies'
 import { ERROR_500 } from './pages'
 import { htmlResult, type HttpResult, redirect } from './web_response'
@@ -20,6 +22,8 @@ import { htmlResult, type HttpResult, redirect } from './web_response'
  *   GET  /admin/outbox          the outbox page (a request WITH an Authorization header is a script: it gets the
  *                               JSON API instead, so `/admin/outbox` serves both)
  *   POST /admin/outbox/send     CSRF-checked test send, then PRG back to the outbox
+ *   GET  /admin/tenants         every tenant (issue #10); JSON for a Bearer request, the page for a browser
+ *   POST /admin/tenants/owner   CSRF-checked owner setup (api `POST /admin/tenants/:id/owner`), then PRG back
  *
  * Like the tenant UI, its ONLY data path is `api.handle()`: the cookie is forwarded verbatim as the Bearer and the
  * pipeline's operator gate decides. `csrf` is the operator store narrowed to {@link CsrfGuard} (issue/verify
@@ -59,6 +63,8 @@ export class OperatorConsole {
     if (page === 'logout' && req.method === 'POST') return this.#logout(req)
     if (page === 'outbox' && req.method === 'GET' && req.headers.authorization === undefined) return this.#outbox(req)
     if (page === 'outbox/send' && req.method === 'POST') return this.#outboxSend(req)
+    if (page === 'tenants' && req.method === 'GET' && req.headers.authorization === undefined) return this.#tenants(req)
+    if (page === 'tenants/owner' && req.method === 'POST') return this.#ownerSetup(req)
     return undefined
   }
 
@@ -110,6 +116,45 @@ export class OperatorConsole {
     return htmlResult(status, renderOutbox(messages, csrf, shown))
   }
 
+  #tenants(req: ApiRequest): HttpResult {
+    const token = readCookie(req.headers.cookie, OPERATOR_COOKIE)
+    const res = this.#api.handle({
+      method: 'GET',
+      path: '/admin/tenants',
+      headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
+    })
+    if (res.status === 401) return redirect(303, '/admin/login')
+    if (res.status !== 200) return ERROR_500
+    const csrf = this.#csrf.issueCsrf(token)
+    if (csrf === undefined) return redirect(303, '/admin/login')
+    const tenants = (res.body as { tenants?: Tenant[] }).tenants ?? []
+    const raw = queryParam(req.path, 'notice')
+    const notice = TENANTS_NOTICE_VALUES.find((value) => value === raw)
+    return htmlResult(200, renderTenants(tenants, csrf, notice))
+  }
+
+  #ownerSetup(req: ApiRequest): HttpResult {
+    const token = readCookie(req.headers.cookie, OPERATOR_COOKIE)
+    const form = new URLSearchParams(req.rawBody ?? '')
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return redirect(303, '/admin/login')
+    const tenantId = form.get('tenant_id') ?? ''
+    const res = this.#api.handle({
+      method: 'POST',
+      path: `/admin/tenants/${encodeURIComponent(tenantId)}/owner`,
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      rawBody: JSON.stringify({ email: form.get('email') ?? '' }),
+    })
+    const notice: TenantsNotice =
+      res.status === 201
+        ? 'owner_sent'
+        : res.status === 409
+          ? 'owner_conflict'
+          : res.status === 404
+            ? 'owner_inactive'
+            : 'owner_invalid'
+    return redirect(303, `/admin/tenants?notice=${notice}`)
+  }
+
   #outboxSend(req: ApiRequest): HttpResult {
     const token = readCookie(req.headers.cookie, OPERATOR_COOKIE)
     const form = new URLSearchParams(req.rawBody ?? '')
@@ -124,6 +169,8 @@ export class OperatorConsole {
     return this.#outbox({ ...req, method: 'GET', path: '/admin/outbox' }, 400, 'invalid')
   }
 }
+
+const TENANTS_NOTICE_VALUES: readonly TenantsNotice[] = ['owner_sent', 'owner_invalid', 'owner_conflict', 'owner_inactive']
 
 /** Extract a single query parameter value from a path, or undefined. */
 function queryParam(path: string, name: string): string | undefined {

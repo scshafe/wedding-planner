@@ -48,6 +48,8 @@ export interface ServerConfig {
   readonly webhookTokenSource: TokenSource
   /** Issue #8: the SQLite database file, or undefined for the in-memory demo store. */
   readonly databasePath: string | undefined
+  /** Issue #10: the public base URL for links in emails, or undefined for site-relative links. */
+  readonly publicUrl: string | undefined
 }
 
 /** A readonly view of the process environment (just the subset the entrypoint reads). */
@@ -86,6 +88,7 @@ export function resolveServerConfig(env: Env, generateToken: () => string): Serv
   if (databasePath === undefined && parseBool(env.WP_REQUIRE_DATABASE, false)) {
     throw new Error('WP_DATABASE_PATH is required because WP_REQUIRE_DATABASE is set. Set WP_DATABASE_PATH and retry.')
   }
+  const publicUrl = parsePublicUrl(env.WP_PUBLIC_URL)
 
   return {
     port,
@@ -97,7 +100,21 @@ export function resolveServerConfig(env: Env, generateToken: () => string): Serv
     providerWebhookToken: webhook.token,
     webhookTokenSource: webhook.source,
     databasePath,
+    publicUrl,
   }
+}
+
+/**
+ * Parse WP_PUBLIC_URL (issue #10): unset -> undefined (site-relative links in emails); set must be an http(s)
+ * origin with no path, query or trailing slash, else fail closed — a wrong base would mail broken or foreign links.
+ */
+function parsePublicUrl(raw: string | undefined): string | undefined {
+  const value = nonEmpty(raw)
+  if (value === undefined) return undefined
+  if (!/^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/.test(value)) {
+    throw new Error(`WP_PUBLIC_URL must be an http(s) origin with no path or trailing slash, got '${value}'.`)
+  }
+  return value
 }
 
 /**
@@ -142,6 +159,7 @@ export function buildBootLog(config: ServerConfig, demo: DemoSeed | undefined): 
       ? 'storage: in-memory (offline demo; every restart resets to the demo seed)'
       : `storage: sqlite at ${config.databasePath}`,
   )
+  parts.push(config.publicUrl === undefined ? 'email links: site-relative' : `email links: ${config.publicUrl}`)
   if (demo !== undefined) parts.push(`demo tenant '${demo.slug}' at /t/${demo.slug}`)
   else if (config.seedDemo) parts.push('demo seed skipped: the store already holds data')
   if (config.tokenSource === 'generated') {

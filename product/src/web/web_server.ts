@@ -49,6 +49,8 @@ export function createProductWebUiServer(ui: ProductWebUi): http.Server {
         if (res.headersSent) return
         res.writeHead(result.status, result.headers)
         res.end(result.body)
+        // Issue #10: work whose cost must not show in the response's timing runs after the response is written.
+        setImmediate(() => ui.runDeferredWork())
       } catch {
         // The pure handler never throws (it maps slips to a constant 500), but stay fail-closed.
         if (!res.headersSent) {

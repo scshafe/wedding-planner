@@ -141,6 +141,28 @@ describe('resolveServerConfig — the storage policy (issue #8, fail-closed)', (
   })
 })
 
+describe('resolveServerConfig — WP_PUBLIC_URL (issue #10, links in emails)', () => {
+  it('accepts an http(s) origin and leaves it unset by default', () => {
+    expect(resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG }, constGen('g')).publicUrl).toBeUndefined()
+    for (const ok of ['https://planner.example', 'http://localhost:8080', 'https://wedding-planner.tail1234.ts.net']) {
+      expect(resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG, WP_PUBLIC_URL: ok }, constGen('g')).publicUrl).toBe(ok)
+    }
+  })
+
+  it('FAILS CLOSED on a path, a trailing slash, another scheme, or junk', () => {
+    for (const bad of ['https://planner.example/', 'https://planner.example/app', 'ftp://planner.example', 'planner.example', 'https://a b']) {
+      expect(() => resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG, WP_PUBLIC_URL: bad }, constGen('g'))).toThrow(/WP_PUBLIC_URL/)
+    }
+  })
+
+  it('the boot log names the link base', () => {
+    expect(buildBootLog(resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG }, constGen('g')), undefined)).toContain('email links: site-relative')
+    expect(
+      buildBootLog(resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG, WP_PUBLIC_URL: 'https://planner.example' }, constGen('g')), undefined),
+    ).toContain('email links: https://planner.example')
+  })
+})
+
 describe('buildBootLog — the disclosure allow-list', () => {
   const demo: DemoSeed = {
     slug: 'demo',

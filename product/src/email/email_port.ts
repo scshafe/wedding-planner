@@ -37,6 +37,12 @@ export interface OutboundEmail {
   readonly purpose: EmailPurpose
   /** The tenant the mail is sent on behalf of; absent for a platform mail. */
   readonly tenant_id?: string
+  /**
+   * The single-use link token the body carries, and when it lapses (issue #10). An adapter that keeps messages (the
+   * simulated outbox) redacts the token from the stored body once it has lapsed, so a database or backup does not
+   * hold a usable link past its lifetime.
+   */
+  readonly secret?: { readonly value: string; readonly expires_at: string }
 }
 
 /** The adapter's acknowledgement of a send. `message_ref` is the adapter's opaque handle for status lookups. */

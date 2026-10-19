@@ -60,6 +60,7 @@ The `/admin` provisioning surface is operator-gated — present the operator tok
 | `WP_PROVIDER_WEBHOOK_TOKEN` | *(unset)* | The inbound-messaging webhook credential, under the same policy as the operator token. |
 | `WP_DATABASE_PATH`  | *(unset)*   | The SQLite database file (issue #8). Created and migrated at boot (an existing database gets a `.pre-vN.sqlite` snapshot beside it first); a database migrated by a newer build with a change this build cannot read is refused. Unset is allowed only under the demo default (in-memory, reset on restart); a non-demo build without it **fails closed**. |
 | `WP_REQUIRE_DATABASE` | `false`   | When true, boot fails closed without `WP_DATABASE_PATH` even in demo mode (the deployed stack sets it). |
+| `WP_PUBLIC_URL`     | *(unset)*   | The site's public origin (e.g. `https://planner.example`, no path or trailing slash) used in links inside emails (password reset, account setup). Unset ⇒ site-relative links. Never derived from a request's Host header. |
 
 ## Data and backups
 

@@ -1,3 +1,5 @@
+import type { Tenant } from '@wedding-planner/shared'
+
 import type { OutboxMessage } from '../email/simulated_email_adapter'
 import { html, render, type SafeHtml } from './html'
 
@@ -34,7 +36,8 @@ function operatorShell(title: string, content: SafeHtml, csrf?: string): string 
   const nav =
     csrf === undefined
       ? html``
-      : html`<a href="/admin/outbox">Outbox</a>
+      : html`<a href="/admin/tenants">Tenants</a>
+    <a href="/admin/outbox">Outbox</a>
     <span class="spacer"></span>
     <form class="inline" method="post" action="/admin/logout">
       <input type="hidden" name="_csrf" value="${csrf}">
@@ -112,6 +115,53 @@ ${banner}
   </form>
 </div>
 ${list}`,
+    csrf,
+  )
+}
+
+/** Notices on the tenants page after an owner setup. */
+export type TenantsNotice = 'owner_sent' | 'owner_invalid' | 'owner_conflict' | 'owner_inactive'
+
+const TENANTS_NOTICES: Readonly<Record<TenantsNotice, string>> = Object.freeze({
+  owner_sent: 'Owner account set up. The set-your-password link is in the outbox.',
+  owner_invalid: 'That email address was not accepted.',
+  owner_conflict: 'That email already belongs to a non-owner member of the workspace.',
+  owner_inactive: 'Only an active workspace can have its owner set up.',
+})
+
+/** Every tenant, with a form to set up (or re-invite) the workspace owner of each active one (issue #10). */
+export function renderTenants(tenants: readonly Tenant[], csrf: string, notice?: TenantsNotice): string {
+  const banner =
+    notice === undefined
+      ? html``
+      : html`<p class="${notice === 'owner_sent' ? 'note' : 'error'}">${TENANTS_NOTICES[notice]}</p>`
+  const rows =
+    tenants.length === 0
+      ? html`<div class="card"><p class="note">No tenants yet.</p></div>`
+      : tenants.map(
+          (tenant) => html`<div class="card">
+  <div><strong>${tenant.display_name}</strong> · <code>/t/${tenant.slug}</code></div>
+  <div class="meta">${tenant.lifecycle_status} · ${tenant.plan_tier} · ${tenant.tenant_id} · created ${tenant.created_at}</div>
+  ${
+    tenant.lifecycle_status === 'active'
+      ? html`<form method="post" action="/admin/tenants/owner">
+    <input type="hidden" name="_csrf" value="${csrf}">
+    <input type="hidden" name="tenant_id" value="${tenant.tenant_id}">
+    <label for="owner_${tenant.tenant_id}">Set up the owner account (or send a new setup link)</label>
+    <input id="owner_${tenant.tenant_id}" name="email" type="email" required autocomplete="off">
+    <button type="submit">Send setup link</button>
+  </form>`
+      : html``
+  }
+</div>`,
+        )
+  return operatorShell(
+    'Tenants',
+    html`<h1>Tenants</h1>
+<p class="note">Every workspace. Setting up an owner creates their account and sends a set-your-password link
+through the (simulated) email outbox.</p>
+${banner}
+${rows}`,
     csrf,
   )
 }

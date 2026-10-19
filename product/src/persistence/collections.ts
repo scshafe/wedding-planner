@@ -8,9 +8,12 @@ import type {
   Wedding,
 } from '@wedding-planner/shared'
 
+import type { AccountEmailIndex, UserAccount } from '../accounts/account_store'
+import type { StoredOneTimeToken } from '../accounts/one_time_token_store'
+import type { PendingReset } from '../accounts/pending_reset_queue'
 import type { StoredOperatorSession } from '../auth/operator_credential'
 import type { StoredSession } from '../auth/session_store'
-import type { OutboxMessage } from '../email/simulated_email_adapter'
+import type { StoredOutboxMessage } from '../email/simulated_email_adapter'
 import type { InboundReceipt } from '../messaging/inbound_receipt_log'
 import type { SendResult } from '../messaging/messaging_service'
 import { collection } from './record_store'
@@ -56,5 +59,15 @@ export const COLLECTIONS = Object.freeze({
   /** Key sha256(operator console session token) (issue #9). */
   operatorSession: collection<StoredOperatorSession>('operator_session', 'global'),
   /** Key message_id: the simulated email outbox, a platform log only the operator reads (issue #9). */
-  emailOutbox: collection<OutboxMessage>('email_outbox', 'global'),
+  emailOutbox: collection<StoredOutboxMessage>('email_outbox', 'global'),
+  /** Key user_id: a person who can sign in to the workspace (issue #10). The password is a scrypt hash only. */
+  userAccount: collection<UserAccount>('user_account', 'tenant'),
+  /** Key normalized email -> user_id (email uniqueness per workspace) (issue #10). */
+  userEmail: collection<AccountEmailIndex>('user_email', 'tenant'),
+  /** Key sha256(token): single-use, expiring links sent by email (issue #10). */
+  oneTimeToken: collection<StoredOneTimeToken>('one_time_token', 'tenant'),
+  /** Key request_id: password-reset requests awaiting processing after the response (issue #10). */
+  pendingReset: collection<PendingReset>('pending_reset', 'global'),
+  /** Key setting name: platform settings, e.g. `demo_tenant` -> the tenant the demo seed created (issue #10). */
+  platformSetting: collection<{ readonly value: string }>('platform_setting', 'global'),
 })

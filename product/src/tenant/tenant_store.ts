@@ -100,6 +100,11 @@ export class TenantStore implements TenantLivenessCheck {
     return this.#store.get(COLLECTIONS.tenant, GLOBAL_PARTITION, tenant_id)
   }
 
+  /** Every tenant, in creation order (the operator's tenant list). */
+  list(): readonly Tenant[] {
+    return this.#store.list(COLLECTIONS.tenant, GLOBAL_PARTITION)
+  }
+
   /** Whether no tenant exists yet (the demo seed runs only into an empty store). */
   isEmpty(): boolean {
     return this.#store.isEmpty(COLLECTIONS.tenant)

@@ -182,7 +182,7 @@ describe('session_store — persisted sessions expire, can be revoked, and carry
     })
     expect(JSON.stringify(stored)).not.toContain(token)
     // A record of a kind this build does not issue (e.g. written by a later build) does not authenticate.
-    w.backing.put(COLLECTIONS.session, GLOBAL_PARTITION, sha256Hex(token), { ...stored, auth: 'password' } as never)
+    w.backing.put(COLLECTIONS.session, GLOBAL_PARTITION, sha256Hex(token), { ...stored, auth: 'oauth' } as never)
     expect(w.sessions.resolve(token)).toBeUndefined()
   })
 })

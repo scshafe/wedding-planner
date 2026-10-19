@@ -4,10 +4,15 @@ import { describe, expect, it } from 'vitest'
 import {
   assertValidOutboundEmail,
   EMAIL_LIMITS,
+  InMemoryRecordStore,
   isEmailAddress,
   type OutboundEmail,
+  REDACTED_LINK,
   SimulatedEmailAdapter,
 } from '@wedding-planner/product'
+
+import { COLLECTIONS } from '../../src/persistence/collections'
+import { GLOBAL_PARTITION } from '../../src/persistence/record_store'
 
 /**
  * Issue #9: the email port's shared shape check and the offline adapter that records every message in the outbox
@@ -120,5 +125,19 @@ describe('SimulatedEmailAdapter — every message lands in the outbox', () => {
     const { email } = adapter()
     expect(codeOfThrow(() => email.send({ ...MESSAGE, subject: 'a\nb' }))).toBe('PRODUCT.BAD_REQUEST')
     expect(email.recent(10)).toEqual([])
+  })
+
+  it('redacts a link secret once it lapses: never shown after, and removed from the stored body on the next send', () => {
+    const clock = new ManualClock('2027-06-01T09:00:00.000Z')
+    const backing = new InMemoryRecordStore()
+    const email = new SimulatedEmailAdapter(clock, new SequentialIdGenerator('sec'), backing)
+    email.send({ ...MESSAGE, text_body: 'Open /t/acme/reset?token=reset_abc to continue.', secret: { value: 'reset_abc', expires_at: '2027-06-01T10:00:00.000Z' } })
+    expect(email.recent(1)[0]?.text_body).toContain('reset_abc')
+    expect(Object.keys(email.recent(1)[0] ?? {})).not.toContain('secret')
+    clock.advance(60 * 60 * 1000)
+    expect(email.recent(1)[0]?.text_body).toBe(`Open /t/acme/reset?token=${REDACTED_LINK} to continue.`)
+    // The stored row still holds it until the next send rewrites it.
+    email.send({ ...MESSAGE, subject: 'Later' })
+    expect(JSON.stringify(backing.list(COLLECTIONS.emailOutbox, GLOBAL_PARTITION))).not.toContain('reset_abc')
   })
 })

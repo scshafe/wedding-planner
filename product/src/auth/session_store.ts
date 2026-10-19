@@ -26,9 +26,16 @@ import { mintPrincipal, type Principal, type PrincipalRole } from './principal'
  *
  * Because sessions now outlive a deploy, each records HOW it was authenticated (`auth`) and, when the store has a
  * clock, when it lapses: a lookup refuses any `auth` kind this build does not issue and any expired session
- * (deleting it), `revoke` ends one server-side (sign-out), and `sweepExpired` prunes lapsed rows at boot. Today
- * every session is `auth: 'simulated'` (the role-picker login): real accounts (issue #10) introduce a new kind
- * and must decide what simulated sessions may still do — a store that stops issuing `simulated` stops honoring it.
+ * (deleting it), `revoke` ends one server-side (sign-out), and `sweepExpired` prunes lapsed rows at boot.
+ *
+ * Two kinds exist since issue #10 (ADR 0041):
+ *   - `password` — minted by {@link SessionStore.startAuthenticated} AFTER the account service verified an email
+ *     and password; the principal is the account (`principal_id` = `user_id`), so a password change or a removed
+ *     member can end every session of that account ({@link SessionStore.revokeAllFor}).
+ *   - `simulated` — the role picker. Honored only where the `simulatedLogin` policy allows it (the composed
+ *     surface: the demo tenant, in demo mode). A simulated session for any other tenant — including one minted
+ *     before accounts existed — stops resolving, and `login` refuses to mint one there
+ *     (PRODUCT.SIMULATED_LOGIN_DISABLED).
  *
  * Login is a SIMULATION, honest about it (offline-first): it takes an already-*resolved* TenantContext
  * (so the principal's tenant_id is the context's, never a raw slug echo) and does NOT verify a real
@@ -80,15 +87,28 @@ export interface StoredSession {
 }
 
 /** The session kinds this build issues and honors. */
-export type SessionAuth = 'simulated'
+export type SessionAuth = 'simulated' | 'password'
+
+/** Who a password session is for: an account the account service has just authenticated. */
+export interface AuthenticatedAccount {
+  readonly user_id: string
+  readonly role: PrincipalRole
+  /** Present iff role === 'couple'. */
+  readonly wedding_id?: string
+}
 
 /** How long a session lasts (7 days). */
 export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
 
-/** The clock that gives sessions an expiry. Without it (test fixtures) sessions do not lapse. */
-export interface SessionExpiryOptions {
+/** Session lifetime (the clock gives sessions an expiry; without it, in test fixtures, they do not lapse) and policy. */
+export interface SessionStoreOptions {
   readonly clock: Clock
   readonly ttlSeconds?: number
+  /**
+   * Issue #10: where the simulated role picker may sign in (and its sessions resolve). Absent ⇒ everywhere (the
+   * hand-built test fixtures); the composed surface allows only the demo tenant in demo mode.
+   */
+  readonly simulatedLogin?: (tenant_id: string) => boolean
 }
 
 export class SessionStore implements CsrfGuard {
@@ -96,14 +116,21 @@ export class SessionStore implements CsrfGuard {
   readonly #store: RecordStore
 
   readonly #expiry: { readonly clock: Clock; readonly ttlSeconds: number } | undefined
+  readonly #simulatedLogin: (tenant_id: string) => boolean
 
   constructor(
     private readonly ids: IdGenerator,
     store: RecordStore = new InMemoryRecordStore(),
-    expiry?: SessionExpiryOptions,
+    expiry?: SessionStoreOptions,
   ) {
     this.#store = store
     this.#expiry = expiry === undefined ? undefined : { clock: expiry.clock, ttlSeconds: expiry.ttlSeconds ?? SESSION_TTL_SECONDS }
+    this.#simulatedLogin = expiry?.simulatedLogin ?? (() => true)
+  }
+
+  /** Whether the simulated role picker may sign in to this tenant. */
+  allowsSimulatedLogin(context: TenantContext): boolean {
+    return this.#simulatedLogin(context.tenant_id)
   }
 
   /**
@@ -113,6 +140,9 @@ export class SessionStore implements CsrfGuard {
    * dropped). The wedding_id is NOT checked for existence (no oracle).
    */
   login(context: TenantContext, input: LoginInput): Session {
+    if (!this.#simulatedLogin(context.tenant_id)) {
+      throw new ProductError('PRODUCT.SIMULATED_LOGIN_DISABLED', 'The simulated login is not available for this workspace.', {})
+    }
     if (input.role === 'couple' && (input.wedding_id === undefined || input.wedding_id.length === 0)) {
       throw new ProductError(
         'PRODUCT.BAD_REQUEST',
@@ -143,6 +173,46 @@ export class SessionStore implements CsrfGuard {
     }
     this.#store.put(COLLECTIONS.session, GLOBAL_PARTITION, token_hash, stored)
     return { token, principal, csrf_token }
+  }
+
+  /**
+   * Mint a `password` session for an account the caller has ALREADY authenticated (the account service, after
+   * verifying the password). The principal IS the account: `principal_id` = `user_id`. Still the sole mint.
+   */
+  startAuthenticated(context: TenantContext, account: AuthenticatedAccount): Session {
+    const principal = mintPrincipal({
+      tenant_id: context.tenant_id,
+      role: account.role,
+      wedding_id: account.role === 'couple' ? account.wedding_id : undefined,
+      principal_id: account.user_id,
+    })
+    const token = this.ids.next('session')
+    const csrf_token = this.ids.next('csrf')
+    const token_hash = sessionKey(token)
+    const stored: StoredSession = {
+      auth: 'password',
+      token_hash,
+      tenant_id: principal.tenant_id,
+      role: principal.role,
+      ...(principal.wedding_id === undefined ? {} : { wedding_id: principal.wedding_id }),
+      principal_id: principal.principal_id,
+      csrf_token,
+      ...this.#lifetime(),
+    }
+    this.#store.put(COLLECTIONS.session, GLOBAL_PARTITION, token_hash, stored)
+    return { token, principal, csrf_token }
+  }
+
+  /** End every session of one account (a password change, a removed member). Returns how many ended. */
+  revokeAllFor(context: TenantContext, user_id: string): number {
+    let removed = 0
+    for (const session of this.#store.list(COLLECTIONS.session, GLOBAL_PARTITION)) {
+      if (session.auth === 'password' && session.tenant_id === context.tenant_id && session.principal_id === user_id) {
+        this.#store.delete(COLLECTIONS.session, GLOBAL_PARTITION, session.token_hash)
+        removed += 1
+      }
+    }
+    return removed
   }
 
   /** End a session server-side (sign-out). Idempotent; returns whether a session was removed. */
@@ -200,7 +270,8 @@ export class SessionStore implements CsrfGuard {
     if (token === undefined || token.length === 0) return undefined
     const key = sessionKey(token)
     const stored = this.#store.get(COLLECTIONS.session, GLOBAL_PARTITION, key)
-    if (stored === undefined || stored.auth !== 'simulated') return undefined
+    if (stored === undefined) return undefined
+    if (stored.auth === 'simulated' ? !this.#simulatedLogin(stored.tenant_id) : stored.auth !== 'password') return undefined
     if (this.#isExpired(stored)) {
       this.#store.delete(COLLECTIONS.session, GLOBAL_PARTITION, key)
       return undefined

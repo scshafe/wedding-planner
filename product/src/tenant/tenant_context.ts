@@ -123,4 +123,16 @@ export class TenantContextResolver {
     }
     return mintContext(tenant.tenant_id, tenant.slug)
   }
+
+  /**
+   * Resolve a tenant id to a usable TenantContext (issue #10: the operator tier addresses tenants by id). The same
+   * gate as {@link resolveBySlug}: unknown -> PRODUCT.UNKNOWN_TENANT, unusable -> PRODUCT.TENANT_NOT_USABLE.
+   */
+  resolveById(tenant_id: string): TenantContext {
+    const tenant = this.store.findById(tenant_id)
+    if (tenant === undefined) {
+      throw new ProductError('PRODUCT.UNKNOWN_TENANT', `No tenant '${tenant_id}'.`, { context: { tenant_id } })
+    }
+    return this.resolveBySlug(tenant.slug)
+  }
 }
