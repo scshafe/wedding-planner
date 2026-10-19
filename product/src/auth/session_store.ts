@@ -218,7 +218,8 @@ export class SessionStore implements CsrfGuard {
 
   #isExpired(session: StoredSession): boolean {
     if (this.#expiry === undefined || session.expires_at === undefined) return false
-    return Date.parse(session.expires_at) <= Date.parse(this.#expiry.clock.now())
+    // Fails CLOSED: an unparseable timestamp counts as expired.
+    return !(Date.parse(session.expires_at) > Date.parse(this.#expiry.clock.now()))
   }
 }
 

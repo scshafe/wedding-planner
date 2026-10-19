@@ -8,7 +8,9 @@ import type {
   Wedding,
 } from '@wedding-planner/shared'
 
+import type { StoredOperatorSession } from '../auth/operator_credential'
 import type { StoredSession } from '../auth/session_store'
+import type { OutboxMessage } from '../email/simulated_email_adapter'
 import type { InboundReceipt } from '../messaging/inbound_receipt_log'
 import type { SendResult } from '../messaging/messaging_service'
 import { collection } from './record_store'
@@ -51,4 +53,8 @@ export const COLLECTIONS = Object.freeze({
   messageSend: collection<SendResult>('message_send', 'tenant'),
   /** Key sha256(session token): the raw token is never stored. */
   session: collection<StoredSession>('session', 'global'),
+  /** Key sha256(operator console session token) (issue #9). */
+  operatorSession: collection<StoredOperatorSession>('operator_session', 'global'),
+  /** Key message_id: the simulated email outbox, a platform log only the operator reads (issue #9). */
+  emailOutbox: collection<OutboxMessage>('email_outbox', 'global'),
 })

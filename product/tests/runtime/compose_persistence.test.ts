@@ -123,6 +123,11 @@ describe('durable storage — data written before a restart is read back after i
       }),
     )
     expect(provisioned.status).toBe(201)
+    // The operator console session and the email outbox (issue #9).
+    const opSession = api1.handle(req('POST', '/admin/sessions', { token: OP }))
+    expect(opSession.status).toBe(201)
+    const opToken = (opSession.body as { token: string }).token
+    expect(api1.handle(req('POST', '/admin/outbox', { token: opToken, body: { to: 'owner@example.test' } })).status).toBe(201)
     const usageBefore = first.surface.messaging.usageView(demo?.tenantId as string)
     expect(usageBefore.message_count).toBe(2)
     const billingBefore = api1.handle(req('GET', '/t/demo/billing', { token })).body
@@ -174,6 +179,11 @@ describe('durable storage — data written before a restart is read back after i
       }),
     )
     expect(again.status).toBe(409)
+
+    // The operator console session survived (same credential), and so did the outbox.
+    const outbox = api2.handle(req('GET', '/admin/outbox', { token: opToken }))
+    expect(outbox.status).toBe(200)
+    expect((outbox.body as { messages: { to: string }[] }).messages.map((m) => m.to)).toEqual(['owner@example.test'])
     second.store.close()
 
     // ---- The census: every persisted collection has rows in the file (none was left on an in-memory default).
@@ -247,5 +257,20 @@ describe('durable storage — data written before a restart is read back after i
     // With storage healthy again the same slug provisions cleanly: no orphaned slug index was left behind.
     failBilling = false
     expect(provision()).toBe(201)
+  })
+
+  it('rotating the operator credential ends every console session across a restart', () => {
+    const path = tempDb()
+    const clock = new ManualClock('2027-05-01T00:00:00.000Z')
+    const first = SqliteRecordStore.open({ path, clock })
+    const before = composeProductSurface({ clock, ids: new SequentialIdGenerator('r1'), operatorToken: OP, providerWebhookToken: WEBHOOK, store: first })
+    const session = (before.api.handle(req('POST', '/admin/sessions', { token: OP })).body as { token: string }).token
+    first.close()
+    const rotatedToken = 'rotated-operator-token-0123456789'
+    const second = SqliteRecordStore.open({ path, clock })
+    const after = composeProductSurface({ clock, ids: new SequentialIdGenerator('r2'), operatorToken: rotatedToken, providerWebhookToken: WEBHOOK, store: second })
+    expect(after.api.handle(req('GET', '/admin/outbox', { token: session })).status).toBe(401)
+    expect(after.api.handle(req('GET', '/admin/outbox', { token: rotatedToken })).status).toBe(200)
+    second.close()
   })
 })

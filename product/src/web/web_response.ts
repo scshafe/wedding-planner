@@ -32,7 +32,10 @@ const HTML_SECURITY_HEADERS: Readonly<Record<string, string>> = Object.freeze({
   'content-type': 'text/html; charset=utf-8',
   'x-content-type-options': 'nosniff',
   'content-security-policy':
-    "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'self'",
+    "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  // Every page is per-user (a console, an outbox holding one-time links): never cached, nor redisplayed from the
+  // back-forward cache after sign-out (issue #9).
+  'cache-control': 'no-store',
 })
 
 /** Build an HTML result (string body already rendered via the `html` template), with security headers. */
@@ -56,6 +59,7 @@ export function redirect(status: number, location: string, extraHeaders?: Record
       location,
       'content-type': 'text/html; charset=utf-8',
       'x-content-type-options': 'nosniff',
+      'cache-control': 'no-store',
       ...extraHeaders,
     },
     body: '',
@@ -66,7 +70,7 @@ export function redirect(status: number, location: string, extraHeaders?: Record
 export function jsonResultFrom(response: ApiResponse): HttpResult {
   return {
     status: response.status,
-    headers: { 'content-type': 'application/json', 'x-content-type-options': 'nosniff' },
+    headers: { 'content-type': 'application/json', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' },
     body: JSON.stringify(response.body),
   }
 }

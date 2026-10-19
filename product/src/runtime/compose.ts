@@ -6,6 +6,7 @@ import { ProviderWebhookCredentialStore } from '../auth/provider_webhook_credent
 import { SessionStore } from '../auth/session_store'
 import { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import { BillingLedger } from '../billing/billing_ledger'
+import { SimulatedEmailAdapter } from '../email/simulated_email_adapter'
 import { ProductApi } from '../http/product_api'
 import { EscalationLog } from '../messaging/escalation_log'
 import { EscalationReplyLog } from '../messaging/escalation_reply_log'
@@ -130,6 +131,8 @@ export interface ComposedSurface {
    * couple can mark an escalated question handled (it moves out of the Open inbox) idempotently.
    */
   readonly resolutions: EscalationResolutionLog
+  /** Issue #9: the simulated email adapter (port + operator outbox). Exposed for tests/inspection. */
+  readonly email: SimulatedEmailAdapter
 }
 
 /** The demo theme — an obvious offline placeholder (no real brand). Colors are lowercase 6-hex per contract. */
@@ -152,12 +155,16 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const resolver = new TenantContextResolver(tenants)
   // Sessions persist, so they expire (7 days) and lapsed ones are swept at boot (below).
   const sessionStore = new SessionStore(ids, store, { clock })
-  const operators = new OperatorCredentialStore(ids, [operatorToken])
+  // Operator console sessions (issue #9) persist in the shared store, like tenant sessions.
+  const operators = new OperatorCredentialStore(ids, [operatorToken], { clock, store })
   const webhookCredentials = new ProviderWebhookCredentialStore(ids, [config.providerWebhookToken])
   const billing = new BillingLedger(clock, ids, store)
   const onboarding = new OnboardingService(tenants, billing)
   const weddings = new WeddingRepository(tenants, clock, ids, store)
   const authorizer = new WeddingAuthorizer()
+  // The email boundary (issue #9): the offline simulated adapter records every message in the durable outbox the
+  // operator reads at /admin/outbox. A real provider is a new adapter behind the same port (an owner crossing).
+  const email = new SimulatedEmailAdapter(clock, ids, store)
 
   // The guest-messaging provider boundary (Phase 18): the offline simulated adapter is a deterministic
   // double (injected clock/ids — no real provider, no network), so it wires here like any dep without
@@ -193,6 +200,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     guests: { registry: guestRegistry, weddings, authorizer: guestAuthorizer },
     operators,
     onboarding,
+    email: { port: email, outbox: email },
     webhookCredentials,
     messaging: {
       port: messagingAdapter,
@@ -227,7 +235,8 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const themes = new ThemeResolver(tenants)
   // The web UI gets the SessionStore typed as the narrow CsrfGuard (issue/verify only — not login/resolve),
   // so it can check anti-forgery tokens but reads no tenant data (the only-data-path-is-api.handle invariant).
-  const ui = new ProductWebUi({ api, themes, csrf: sessionStore })
+  // The operator console (issue #9) gets the operator store narrowed to CsrfGuard over console sessions.
+  const ui = new ProductWebUi({ api, themes, csrf: sessionStore, operatorCsrf: operators })
 
   let demo: DemoSeed | undefined
   // Seed only into an empty store: a restart over existing data keeps it (issue #8). One transaction, so a
@@ -264,7 +273,10 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     }
   })
 
-  store.transaction(() => sessionStore.sweepExpired())
+  store.transaction(() => {
+    sessionStore.sweepExpired()
+    operators.sweepExpired()
+  })
 
-  return { ui, api, themes, operatorToken, demo, messaging, escalations, resolutions }
+  return { ui, api, themes, operatorToken, demo, messaging, escalations, resolutions, email }
 }
