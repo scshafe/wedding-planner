@@ -185,6 +185,15 @@ describe('durable storage — data written before a restart is read back after i
     )
     expect(again.status).toBe(409)
 
+    // A server fault is recorded for the operator (issue #13): a stored wedding whose JSON is corrupt reads as a 500,
+    // and the error lands in the durable error log (outside the failed request's transaction).
+    const raw = new DatabaseSync(path)
+    raw.prepare("UPDATE records SET body = '{' WHERE collection = 'wedding' AND key = ?").run(newWeddingId)
+    raw.close()
+    expect(api2.handle(req('GET', `/t/demo/weddings/${newWeddingId}`, { token })).status).toBe(500)
+    const errors = (api2.handle(req('GET', '/admin/errors', { token: OP })).body as { errors: { code: string }[] }).errors
+    expect(errors.map((e) => e.code)).toEqual(['UNHANDLED.SyntaxError'])
+
     // The operator console session survived (same credential), and so did the outbox.
     const outbox = api2.handle(req('GET', '/admin/outbox', { token: opToken }))
     expect(outbox.status).toBe(200)

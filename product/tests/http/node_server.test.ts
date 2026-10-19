@@ -69,7 +69,7 @@ describe('node_server (integration)', () => {
   it('serves /healthz over a real socket', async () => {
     const res = await fetch(`${base}/healthz`)
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ status: 'ok' })
+    expect(await res.json()).toEqual({ status: 'ok', commit: 'unknown' })
   })
 
   it('does a full login -> create -> read round-trip over real sockets', async () => {

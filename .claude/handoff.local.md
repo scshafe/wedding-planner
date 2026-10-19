@@ -3,26 +3,23 @@
 Interactive-session context. The loop's roles keep their continuity on GitHub (issues, PRs) and in
 `~/.wedding-planner-loop/journal.jsonl`; this file is for a human-driven session picking things up.
 
-## Where things stand (2026-10-13)
+## Where things stand (2026-10-19)
 
-- **The engineering loop v2 is set up** (PR "Engineering loop: agent roles over GitHub Issues, with a
-  dashboard"): six roles in `ops/loop/`, explained in `ops/AUTONOMOUS_OPERATION.md`, memory
-  [[engineering-loop-v2]]. Labels, milestones (M1–M5, Business readiness) and the seed backlog exist on
-  GitHub.
-- **Waiting on the owner:** #14 install the systemd timers, #15 confirm the old Mac LaunchDaemon is
-  unloaded, #16 a ruleset protecting `main`, and turning on GitHub Pages for the dashboard. Until #14,
-  nothing runs on a schedule.
-- **Product direction:** full planner workspace, `ROADMAP.md` ([[product-direction-full-planner-workspace]]).
-  M1 is shaped and ready: #8 durable storage → #9 email outbox → #10 accounts → #11 invites,
-  #12 in-app feedback, #13 operability.
-- **Dashboard:** the reporter publishes it to GitHub Pages (https://scshafe.github.io/wedding-planner/,
-  the `gh-pages` branch) once the owner turns Pages on. A private claude.ai copy
-  (`WP_DASHBOARD_URL` in `~/.wedding-planner-loop/config.env`) can only be refreshed from an
-  interactive session: headless runs have no Artifact tool.
-- **Last product work:** Phase 38, the guest-conversation transcript (ADR 0038,
-  [[guest-conversation-transcript]]). The queued June ideas (couple-register oracle, reply on transcript,
-  price-book unification) are superseded by the roadmap; triage may resurrect them as issues if they serve
-  a milestone.
+- **M1 "Real foundations" is built** (owner request, interactive session, 2026-10-19): #8 durable storage (ADR 0039),
+  #9 email outbox + operator console (0040), #10 real accounts (0041), #11 invitations (0042), #12 in-app feedback
+  (0043), #13 request logs / error page / build commit (0044). Each landed as its own PR, reviewed by the in-repo
+  `security-reviewer` (and `architecture-reviewer` for #8), with every must-fix applied; each merge deployed to the
+  laptop through the runner lane and passed the host's `/healthz` witness.
+- **Production** stays in demo mode (the demo tenant keeps its labeled role picker; every other workspace has real
+  sign-in only) and now keeps its data in `state/app/wedding-planner.sqlite` (backed up). The operator console is at
+  `/admin` (sign in with `WP_OPERATOR_TOKEN`): Tenants (set up owners), Outbox (simulated email), Feedback, Errors.
+- **Owner decisions still open:** how feedback reaches the agents (#12 out of scope), a real email provider (M5),
+  `WP_PUBLIC_URL` for absolute links in emails, #14–#16 (loop timers, old Mac loop, `main` protection).
+- **Next:** M2 "Planning core" in `ROADMAP.md` (guest list, RSVPs, checklist, vendors, budget). Durable-storage rules
+  for new records: [[durable-storage-record-store]] (add every collection to the census; ship new fields
+  expand-then-contract; never regenerate a drift fixture).
+- **Dashboard:** the reporter publishes it to GitHub Pages once the owner turns Pages on (unchanged).
+- **Last product work before M1:** Phase 38, the guest-conversation transcript (ADR 0038).
 
 ## Standing rails (unchanged — do not weaken)
 Offline-first (no real money/booking/comms; no prod/credentials — don't simulate them). **A real messaging

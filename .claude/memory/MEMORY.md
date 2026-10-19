@@ -58,3 +58,4 @@
 - [Real planner accounts](real-planner-accounts.md) — issue #10 / ADR 0041: scrypt accounts per tenant, SessionStore still the sole mint, no existence oracle, in-memory rate limits, single-use emailed links from WP_PUBLIC_URL, picker only on the demo tenant, wp_pre double-submit CSRF
 - [Invitations and members](invitations-and-members.md) — issue #11 / ADR 0042: single-use invitation links via the outbox, accept creates exactly the invited account, owner is an account role (manages), couples inherit the intra-tenant boundary
 - [In-app feedback](in-app-feedback.md) — issue #12 / ADR 0043: footer link on signed-in pages, stores only typed text + tenant/role/page, operator-only /admin/feedback; export to agents is an owner decision
+- [Operability: logs, errors, build](operability-logs-errors-build.md) — issue #13 / ADR 0044: route-pattern-only request logs, 500s by code+frames never message, /healthz commit from WP_BUILD_COMMIT or the WP_IMAGE_REF tag

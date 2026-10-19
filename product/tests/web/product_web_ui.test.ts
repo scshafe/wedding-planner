@@ -183,7 +183,7 @@ describe('ProductWebUi delegation to the JSON pipeline', () => {
     const res = get(ui, '/healthz')
     expect(res.status).toBe(200)
     expect(res.headers['content-type']).toBe('application/json')
-    expect(res.body).toBe('{"status":"ok"}')
+    expect(res.body).toBe('{"status":"ok","commit":"unknown"}')
   })
 
   it('passes the JSON weddings path through (401 JSON, not the HTML login)', () => {

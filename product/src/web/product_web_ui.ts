@@ -10,6 +10,7 @@ import type { ProductApi } from '../http/product_api'
 import type { StrategyGuidance } from '../strategy/strategy_guidance'
 import { WEDDING_LOGISTICS_FIELDS } from '../wedding/wedding_repository'
 import { isFeedbackPage } from '../feedback/feedback_service'
+import type { ErrorLog } from '../operability/error_log'
 import { ProductError } from '../product_error'
 import { readCookie } from './cookies'
 import { normalizeSlugForRoute } from './html'
@@ -114,6 +115,8 @@ export interface ProductWebUiDeps {
    * pre-session anti-forgery values. Absent ⇒ the legacy picker-only page (hand-built fixtures).
    */
   readonly accounts?: { readonly isSimulatedSlug: (slug: string) => boolean; readonly newToken: () => string }
+  /** Issue #13: where a web-layer fault (a constant 500 page) is recorded for the operator. */
+  readonly errors?: Pick<ErrorLog, 'record'>
 }
 
 export class ProductWebUi {
@@ -122,6 +125,7 @@ export class ProductWebUi {
   readonly #csrf: CsrfGuard
   readonly #operatorConsole: OperatorConsole | undefined
   readonly #accounts: ProductWebUiDeps['accounts']
+  readonly #errors: ProductWebUiDeps['errors']
 
   constructor(deps: ProductWebUiDeps) {
     this.#api = deps.api
@@ -130,6 +134,7 @@ export class ProductWebUi {
     this.#operatorConsole =
       deps.operatorCsrf === undefined ? undefined : new OperatorConsole({ api: deps.api, csrf: deps.operatorCsrf })
     this.#accounts = deps.accounts
+    this.#errors = deps.errors
   }
 
   /** Work to run after a response has been sent (issue #10) — forwarded to the pipeline. Never throws. */
@@ -141,7 +146,8 @@ export class ProductWebUi {
   handle(req: ApiRequest): HttpResult {
     try {
       return this.#route(req)
-    } catch {
+    } catch (error) {
+      this.#errors?.record(error, req)
       return ERROR_500
     }
   }

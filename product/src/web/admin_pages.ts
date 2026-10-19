@@ -2,6 +2,7 @@ import type { Tenant } from '@wedding-planner/shared'
 
 import type { OutboxMessage } from '../email/simulated_email_adapter'
 import { FEEDBACK_PAGES, type FeedbackSubmission } from '../feedback/feedback_service'
+import type { ServerError } from '../operability/error_log'
 import { html, render, type SafeHtml } from './html'
 
 /**
@@ -40,6 +41,7 @@ function operatorShell(title: string, content: SafeHtml, csrf?: string): string 
       : html`<a href="/admin/tenants">Tenants</a>
     <a href="/admin/outbox">Outbox</a>
     <a href="/admin/feedback">Feedback</a>
+    <a href="/admin/errors">Errors</a>
     <span class="spacer"></span>
     <form class="inline" method="post" action="/admin/logout">
       <input type="hidden" name="_csrf" value="${csrf}">
@@ -189,6 +191,28 @@ export function renderFeedbackList(submissions: readonly FeedbackSubmission[], c
     html`<h1>Feedback</h1>
 <p class="note">What planners and couples sent from inside the product, newest first (the most recent ${String(submissions.length)}).
 Each entry holds only what the person typed, which page they chose, their workspace and their role.</p>
+${list}`,
+    csrf,
+  )
+}
+
+/** The server errors (500s), newest first (issue #13): code, location and route — never a message or data. */
+export function renderErrors(errors: readonly ServerError[], csrf: string): string {
+  const list =
+    errors.length === 0
+      ? html`<div class="card"><p class="note">No server errors recorded.</p></div>`
+      : errors.map(
+          (e) => html`<div class="card">
+  <div><strong>${e.code}</strong> <span class="meta">${e.name}</span></div>
+  <div class="meta">${e.method} ${e.route}${e.tenant === undefined ? '' : ` · ${e.tenant}`} · ${e.occurred_at}</div>
+  <pre>${e.frames.join('\n')}</pre>
+</div>`,
+        )
+  return operatorShell(
+    'Errors',
+    html`<h1>Server errors</h1>
+<p class="note">Requests that ended in a server error, newest first (the most recent ${String(errors.length)}). Each entry
+records the failure code, where in the code it happened, and the route — never the request or the error message.</p>
 ${list}`,
     csrf,
   )

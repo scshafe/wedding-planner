@@ -72,11 +72,17 @@ function main(): void {
     championStrategy: champion,
     store,
     ...(config.publicUrl === undefined ? {} : { publicUrl: config.publicUrl }),
+    buildCommit: config.buildCommit,
   })
 
   // Precompute the dummy password hash so no request pays for it (uniform sign-in timing from the first request).
   surface.warmUp()
-  const server = createProductWebUiServer(surface.ui)
+  // Issue #13: one structured JSON line per request on stdout (the route pattern only; see request_log.ts).
+  const server = createProductWebUiServer(surface.ui, {
+    write: (line) => console.log(line),
+    clock,
+    elapsedMs: () => performance.now(),
+  })
   server.listen(config.port, config.host, () => {
     console.log(buildBootLog(config, surface.demo))
   })

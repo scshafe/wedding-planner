@@ -14,6 +14,7 @@ import { publicAccountView } from '../accounts/account_store'
 import type { InvitedRole } from '../accounts/invitation_store'
 import type { MembershipService } from '../accounts/membership_service'
 import type { FeedbackService } from '../feedback/feedback_service'
+import type { ErrorLog } from '../operability/error_log'
 import type { GuestAuthorizer } from '../auth/guest_authorizer'
 import type { OperatorCredentialStore } from '../auth/operator_credential'
 import type { Principal } from '../auth/principal'
@@ -93,7 +94,6 @@ const RESP_TOO_MANY: ApiResponse = deepFreeze({ status: 429, body: { error: 'too
 const RESP_WEAK_PASSWORD: ApiResponse = deepFreeze({ status: 400, body: { error: 'weak_password' } })
 /** Issue #10: an unknown, used, expired or foreign reset/setup link — one indistinguishable failure. */
 const RESP_INVALID_LINK: ApiResponse = deepFreeze({ status: 400, body: { error: 'invalid_link' } })
-const RESP_HEALTHZ: ApiResponse = deepFreeze({ status: 200, body: { status: 'ok' } })
 /**
  * The inbound-webhook acknowledgement (Phase 19). ONE frozen, byte-identical 202 returned on EVERY
  * post-validation branch of `/t/:slug/messaging/inbound` — registered or not, answered / escalated / refused
@@ -162,7 +162,12 @@ export interface AdminHandlerDeps {
   readonly tenants?: { list(): readonly Tenant[] }
   /** Issue #12: the feedback the operator reads (`GET /admin/feedback`). Absent ⇒ not mounted. */
   readonly feedback?: Pick<FeedbackService, 'recent'>
+  /** Issue #13: the server errors the operator reads (`GET /admin/errors`). Absent ⇒ not mounted. */
+  readonly errors?: Pick<ErrorLog, 'recent'>
 }
+
+/** How many server errors `GET /admin/errors` returns (newest first). */
+export const ERRORS_PAGE_SIZE = 200
 
 /** How many feedback submissions `GET /admin/feedback` returns (newest first). */
 export const FEEDBACK_PAGE_SIZE = 200
@@ -296,6 +301,13 @@ export interface ProductApiDeps {
   /** Issue #12: in-app feedback (submit for signed-in planners and couples; the operator reads). */
   readonly feedback?: FeedbackService
   /**
+   * Issue #13: where a request that ends in a 500 is recorded (code + location, never data), and what the operator
+   * reads at /admin/errors. Absent ⇒ nothing is recorded (fixtures).
+   */
+  readonly errors?: ErrorLog
+  /** Issue #13: the build commit `/healthz` reports (`unknown` when the image was built without one). */
+  readonly buildCommit?: string
+  /**
    * Phase 19: the provider-webhook credential store — the FOURTH token namespace, authenticating the
    * server-to-server inbound webhook (`/t/:slug/messaging/inbound`). Lives ONLY in the pipeline (like
    * `operators`/`sessionStore`); a webhook is not a Principal, so the inbound route skips stages 3–4.
@@ -376,6 +388,10 @@ export class ProductApi {
   readonly #membership: MembershipService | undefined
   /** In-app feedback (issue #12), or undefined when not wired. */
   readonly #feedback: FeedbackService | undefined
+  /** The server-error log (issue #13), or undefined when not wired. */
+  readonly #errors: ErrorLog | undefined
+  /** The constant liveness answer, carrying the build commit (issue #13). */
+  readonly #healthz: ApiResponse
 
   constructor(deps: ProductApiDeps) {
     this.#resolver = deps.resolver
@@ -392,8 +408,11 @@ export class ProductApi {
       ...(deps.email === undefined ? {} : { email: deps.email }),
       ...(deps.tenants === undefined ? {} : { tenants: deps.tenants }),
       ...(deps.feedback === undefined ? {} : { feedback: deps.feedback }),
+      ...(deps.errors === undefined ? {} : { errors: deps.errors }),
     }
     this.#feedback = deps.feedback
+    this.#errors = deps.errors
+    this.#healthz = deepFreeze({ status: 200, body: { status: 'ok', commit: deps.buildCommit ?? 'unknown' } })
     this.#accounts = deps.accounts
     this.#membership = deps.membership
     this.#strategyGuidance =
@@ -427,8 +446,11 @@ export class ProductApi {
     } catch (error) {
       // Catch the whole WeddingPlannerError family (ProductError + the shared ContractValidationFailedError
       // a create/update raises on bad client data) and map by code; unknown codes fall to a constant 500.
-      if (error instanceof WeddingPlannerError) return errorToResponse(error)
-      return RESP_INTERNAL
+      const response = error instanceof WeddingPlannerError ? errorToResponse(error) : RESP_INTERNAL
+      // Issue #13: a 500 is a server fault — record its code and location (never data) for the operator. This runs
+      // here, after the request's transaction has rolled back, so the record survives the failed request.
+      if (response.status === 500) this.#errors?.record(error, req)
+      return response
     }
   }
 
@@ -438,7 +460,7 @@ export class ProductApi {
     // /healthz — tenant-less, unauthenticated liveness.
     if (segments.length === 1 && segments[0] === 'healthz') {
       if (req.method !== 'GET') throw methodNotAllowed()
-      return RESP_HEALTHZ
+      return this.#healthz
     }
 
     // /admin/... — the operator-gated platform surface (tenant-less, never touches a TenantContext).
@@ -1434,6 +1456,11 @@ function mostRecentEscalationForGuest(
 }
 
 function dispatchAdmin(req: ApiRequest, segments: readonly string[], deps: AdminHandlerDeps): ApiResponse {
+  // /admin/errors — the server errors (500s), newest first (issue #13).
+  if (deps.errors !== undefined && segments.length === 2 && segments[1] === 'errors') {
+    if (req.method !== 'GET') throw methodNotAllowed()
+    return { status: 200, body: { errors: deps.errors.recent(ERRORS_PAGE_SIZE) } }
+  }
   // /admin/feedback — in-app feedback, newest first (issue #12).
   if (deps.feedback !== undefined && segments.length === 2 && segments[1] === 'feedback') {
     if (req.method !== 'GET') throw methodNotAllowed()

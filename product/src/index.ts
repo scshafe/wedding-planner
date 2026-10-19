@@ -269,6 +269,11 @@ export {
   isFeedbackPage,
   type SubmitFeedbackInput,
 } from './feedback/feedback_service'
+
+// Operability (issue #13, ADR 0044): the per-request log line and the server-error log.
+export { ERROR_RETENTION, ErrorLog, errorCode, errorName, type ServerError, stackFrames } from './operability/error_log'
+export { formatRequestLog, logMethod, type RequestLogEntry, routePattern } from './operability/request_log'
+export { type RequestLogging } from './web/web_server'
 export { type AuthenticatedAccount } from './auth/session_store'
 export {
   OPERATOR_SESSION_TTL_SECONDS,

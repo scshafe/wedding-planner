@@ -15,6 +15,7 @@ import { PasswordHasher, PRODUCTION_SCRYPT_COST, type ScryptCost } from '../acco
 import { RateLimiter } from '../accounts/rate_limiter'
 import { BillingLedger } from '../billing/billing_ledger'
 import { FeedbackService } from '../feedback/feedback_service'
+import { ErrorLog } from '../operability/error_log'
 import { SimulatedEmailAdapter } from '../email/simulated_email_adapter'
 import { ProductApi } from '../http/product_api'
 import { EscalationLog } from '../messaging/escalation_log'
@@ -102,6 +103,8 @@ export interface ComposeProductSurfaceConfig {
    * runner). The entrypoint injects the durable SQLite store; absent ⇒ a fresh in-memory store (tests, demo).
    */
   readonly store?: RecordStore
+  /** Issue #13: the build commit `/healthz` reports. Absent ⇒ `unknown`. */
+  readonly buildCommit?: string
   /** Issue #10: the scrypt cost for passwords. Default the production cost; tests inject a cheap one. */
   readonly passwordCost?: ScryptCost
   /**
@@ -203,6 +206,8 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const hasher = new PasswordHasher(config.passwordCost ?? PRODUCTION_SCRYPT_COST, ids)
   const oneTimeTokens = new OneTimeTokenStore(tenants, clock, ids, store)
   const publicUrl = config.publicUrl === undefined ? {} : { publicUrl: config.publicUrl }
+  // The server-error log the operator reads at /admin/errors (issue #13).
+  const errors = new ErrorLog(clock, ids, store)
   // One in-process limiter for sign-in, reset requests, invitations and feedback (keys are namespaced per use).
   const limiter = new RateLimiter(clock)
   const accounts = new AccountService({
@@ -273,6 +278,9 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     tenants,
     // In-app feedback (issue #12): stored in the shared store, read by the operator at /admin/feedback.
     feedback: new FeedbackService(clock, ids, limiter, store),
+    // Operability (issue #13): 500s are recorded (code + location, never data); /healthz names the build.
+    errors,
+    ...(config.buildCommit === undefined ? {} : { buildCommit: config.buildCommit }),
     webhookCredentials,
     messaging: {
       port: messagingAdapter,
@@ -309,6 +317,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   // so it can check anti-forgery tokens but reads no tenant data (the only-data-path-is-api.handle invariant).
   // The operator console (issue #9) gets the operator store narrowed to CsrfGuard over console sessions.
   const ui = new ProductWebUi({
+    errors,
     api,
     themes,
     csrf: sessionStore,

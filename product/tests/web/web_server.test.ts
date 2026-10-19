@@ -105,7 +105,7 @@ describe('web_server (integration)', () => {
   it('passes the JSON API through unchanged', async () => {
     const health = await fetch(`${base}/healthz`)
     expect(health.status).toBe(200)
-    expect(await health.json()).toEqual({ status: 'ok' })
+    expect(await health.json()).toEqual({ status: 'ok', commit: 'unknown' })
 
     const weddings = await fetch(`${base}/t/acme/weddings`)
     expect(weddings.status).toBe(401)

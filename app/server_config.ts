@@ -50,6 +50,8 @@ export interface ServerConfig {
   readonly databasePath: string | undefined
   /** Issue #10: the public base URL for links in emails, or undefined for site-relative links. */
   readonly publicUrl: string | undefined
+  /** Issue #13: the build commit `/healthz` reports (`unknown` when none was passed in). */
+  readonly buildCommit: string
 }
 
 /** A readonly view of the process environment (just the subset the entrypoint reads). */
@@ -89,6 +91,7 @@ export function resolveServerConfig(env: Env, generateToken: () => string): Serv
     throw new Error('WP_DATABASE_PATH is required because WP_REQUIRE_DATABASE is set. Set WP_DATABASE_PATH and retry.')
   }
   const publicUrl = parsePublicUrl(env.WP_PUBLIC_URL)
+  const buildCommit = resolveBuildCommit(env)
 
   return {
     port,
@@ -101,7 +104,24 @@ export function resolveServerConfig(env: Env, generateToken: () => string): Serv
     webhookTokenSource: webhook.source,
     databasePath,
     publicUrl,
+    buildCommit,
   }
+}
+
+/** A git commit id: 7 to 40 lowercase hex characters. */
+const COMMIT = /^[0-9a-f]{7,40}$/
+
+/**
+ * The build commit (issue #13): `WP_BUILD_COMMIT` (baked in by `docker build --build-arg`), else the tag of
+ * `WP_IMAGE_REF` (the deployed stack passes the image reference its deploy pinned, `wedding-planner:<short sha>`),
+ * else `unknown`. Only a hex commit id is ever reported — never free text from the environment.
+ */
+function resolveBuildCommit(env: Env): string {
+  const baked = nonEmpty(env.WP_BUILD_COMMIT)?.toLowerCase()
+  if (baked !== undefined && COMMIT.test(baked)) return baked
+  const tag = nonEmpty(env.WP_IMAGE_REF)?.split(':').pop()?.toLowerCase()
+  if (tag !== undefined && COMMIT.test(tag)) return tag
+  return 'unknown'
 }
 
 /**
@@ -172,6 +192,7 @@ export function buildBootLog(config: ServerConfig, demo: DemoSeed | undefined): 
   } else {
     parts.push('provider webhook token: env-provided')
   }
+  parts.push(`build: ${config.buildCommit}`)
   parts.push('strategy: published')
   return parts.join(' | ')
 }
