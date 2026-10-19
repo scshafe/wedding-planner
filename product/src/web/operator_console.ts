@@ -102,9 +102,12 @@ export class OperatorConsole {
 
   #outbox(req: ApiRequest, status = 200, notice?: 'sent' | 'invalid'): HttpResult {
     const token = readCookie(req.headers.cookie, OPERATOR_COOKIE)
+    // `?tenant=<tenant id>` narrows to one workspace (an id-shaped value only; anything else shows every tenant).
+    const tenant = queryParam(req.path, 'tenant')
+    const tenantId = tenant !== undefined && /^[A-Za-z0-9_-]{1,128}$/.test(tenant) ? tenant : undefined
     const res = this.#api.handle({
       method: 'GET',
-      path: '/admin/outbox',
+      path: tenantId === undefined ? '/admin/outbox' : `/admin/outbox?tenant=${tenantId}`,
       headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
     })
     if (res.status === 401) return redirect(303, '/admin/login')
@@ -113,7 +116,7 @@ export class OperatorConsole {
     if (csrf === undefined) return redirect(303, '/admin/login')
     const messages = (res.body as { messages?: OutboxMessage[] }).messages ?? []
     const shown = notice ?? (queryParam(req.path, 'sent') === '1' ? 'sent' : undefined)
-    return htmlResult(status, renderOutbox(messages, csrf, shown))
+    return htmlResult(status, renderOutbox(messages, csrf, shown, tenantId))
   }
 
   #tenants(req: ApiRequest): HttpResult {

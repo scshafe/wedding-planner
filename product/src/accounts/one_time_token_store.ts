@@ -24,8 +24,8 @@ import type { TenantLivenessCheck } from '../tenant/tenant_store'
  * related: account_service.ts (reset and setup flows), email_port.ts (the message contract).
  */
 
-/** What a token may be used for. */
-export type OneTimeTokenPurpose = 'password_reset' | 'account_setup'
+/** What a token may be used for. `invitation` tokens carry an invitation id as their subject (issue #11). */
+export type OneTimeTokenPurpose = 'password_reset' | 'account_setup' | 'invitation'
 
 /** A token as persisted. */
 export interface StoredOneTimeToken {
@@ -35,6 +35,12 @@ export interface StoredOneTimeToken {
   readonly subject: string
   readonly expires_at: string
 }
+
+const TOKEN_PREFIX: Readonly<Record<OneTimeTokenPurpose, string>> = Object.freeze({
+  password_reset: 'reset',
+  account_setup: 'setup',
+  invitation: 'invite',
+})
 
 export class OneTimeTokenStore {
   readonly #repo: TenantScopedRepository<StoredOneTimeToken>
@@ -51,7 +57,7 @@ export class OneTimeTokenStore {
   /** Mint a token for `subject` and `purpose`, valid for `ttlSeconds`; earlier tokens of the pair are revoked. */
   issue(context: TenantContext, purpose: OneTimeTokenPurpose, subject: string, ttlSeconds: number): string {
     this.revoke(context, purpose, subject)
-    const token = this.ids.next(purpose === 'password_reset' ? 'reset' : 'setup')
+    const token = this.ids.next(TOKEN_PREFIX[purpose])
     const expires_at = new Date(Date.parse(this.clock.now()) + ttlSeconds * 1000).toISOString()
     this.#repo.put(context, { tenant_id: context.tenant_id, token_hash: sha256Hex(token), purpose, subject, expires_at })
     return token
@@ -71,12 +77,15 @@ export class OneTimeTokenStore {
     return stored.subject
   }
 
-  /** Revoke every outstanding token of `purpose` for `subject` (or of every purpose when omitted). */
+  /**
+   * Revoke every outstanding token of `purpose` for `subject` (or of every purpose when omitted). The pass also
+   * deletes any expired token of the tenant, so lapsed links do not accumulate.
+   */
   revoke(context: TenantContext, purpose: OneTimeTokenPurpose | undefined, subject: string): void {
+    const now = Date.parse(this.clock.now())
     for (const stored of this.#repo.list(context)) {
-      if (stored.subject === subject && (purpose === undefined || stored.purpose === purpose)) {
-        this.#repo.delete(context, stored.token_hash)
-      }
+      const revoked = stored.subject === subject && (purpose === undefined || stored.purpose === purpose)
+      if (revoked || !(Date.parse(stored.expires_at) > now)) this.#repo.delete(context, stored.token_hash)
     }
   }
 }

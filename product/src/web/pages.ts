@@ -1,5 +1,6 @@
 import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Tenant, Wedding } from '@wedding-planner/shared'
 
+import type { TeamView } from '../accounts/membership_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
 import type { BillingSummary } from '../billing/billing_summary'
 import type { StrategyGuidance } from '../strategy/strategy_guidance'
@@ -451,6 +452,8 @@ export interface AccountOverview {
   readonly openQuestionsCount: number
   readonly guestsCount: number
   readonly billing?: { readonly balanceCents: number; readonly planTier: string }
+  /** Issue #11: present for a planner (the team read answered) — members and pending invitations. */
+  readonly team?: { readonly members: number; readonly pending: number }
 }
 
 /**
@@ -500,7 +503,123 @@ export function renderHome(
     <p>${`${overview.guestsCount} registered guest(s)`}</p>
   </div>
   ${billingCard}
+  ${
+    overview.team === undefined
+      ? html``
+      : html`<div class="card">
+    <h3><a href="/t/${slug}?view=team">Team →</a></h3>
+    <p>${`${overview.team.members} member(s) · ${overview.team.pending} pending invitation(s)`}</p>
+  </div>`
+  }
   <p><a href="/t/${slug}/strategy">View the planning strategy →</a></p>`,
+  )
+}
+
+/** Notices on the team page after an action (issue #11). */
+export type TeamNotice = 'invited' | 'exists' | 'invalid' | 'resent' | 'revoked' | 'removed' | 'not_allowed'
+
+const TEAM_NOTICES: Readonly<Record<TeamNotice, string>> = Object.freeze({
+  invited: 'Invitation sent.',
+  exists: 'That email already has an account here or a pending invitation.',
+  invalid: 'That invitation could not be sent. Check the email address.',
+  resent: 'A fresh invitation link was sent; the old one no longer works.',
+  revoked: 'Invitation revoked.',
+  removed: 'Member removed. Their sessions have ended.',
+  not_allowed: 'Only the workspace owner can do that.',
+})
+
+/**
+ * The team page (issue #11): members and pending invitations, an "invite a planner" form for every planner, and —
+ * for the workspace owner only — Resend / Revoke on invitations and Remove on other members. Every value is escaped.
+ */
+export function renderTeam(theme: Tenant['theme'], slug: string, team: TeamView, csrfToken: string, notice?: TeamNotice): string {
+  const banner = notice === undefined ? html`` : html`<p class="note">${TEAM_NOTICES[notice]}</p>`
+  const members = team.members.map(
+    (m) => html`<div class="card">
+    <div><strong>${m.email}</strong> <span class="status">${m.role}</span></div>
+    <div class="note">${m.wedding_id === undefined ? '' : `Wedding ${m.wedding_id} · `}${m.has_password ? 'active' : 'has not set a password yet'}</div>
+    ${
+      team.viewer_is_owner && m.user_id !== team.viewer_id
+        ? html`<form class="inline" method="post" action="/t/${slug}/team/remove">${csrfField(csrfToken)}<input type="hidden" name="user_id" value="${m.user_id}"><button type="submit">Remove</button></form>`
+        : html``
+    }
+  </div>`,
+  )
+  const invitations =
+    team.invitations.length === 0
+      ? html`<p class="note">No pending invitations.</p>`
+      : team.invitations.map(
+          (i) => html`<div class="card">
+    <div><strong>${i.email}</strong> <span class="status">${i.role}</span></div>
+    <div class="note">${i.wedding_id === undefined ? '' : `Wedding ${i.wedding_id} · `}invited by ${i.invited_by_email ?? 'someone no longer a member'} · expires ${i.expires_at}</div>
+    ${
+      team.viewer_is_owner
+        ? html`<form class="inline" method="post" action="/t/${slug}/team/resend">${csrfField(csrfToken)}<input type="hidden" name="invitation_id" value="${i.invitation_id}"><button type="submit">Resend</button></form>
+    <form class="inline" method="post" action="/t/${slug}/team/revoke">${csrfField(csrfToken)}<input type="hidden" name="invitation_id" value="${i.invitation_id}"><button type="submit">Revoke</button></form>`
+        : html``
+    }
+  </div>`,
+        )
+  return themedShell(
+    theme,
+    slug,
+    'Team',
+    html`<p><a href="/t/${slug}">← Home</a></p>
+  <h2>Team</h2>
+  ${banner}
+  <div class="card">
+    <h3>Invite a planner</h3>
+    <form method="post" action="/t/${slug}/team/invite">
+      ${csrfField(csrfToken)}
+      <input type="hidden" name="role" value="planner">
+      <label for="invite_email">Email</label>
+      <input id="invite_email" name="email" type="email" required autocomplete="off">
+      <p><button type="submit">Send invitation</button></p>
+    </form>
+    <p class="note">They get a link (through the outbox while email is simulated) that works once for 7 days. To invite a couple, open their wedding.</p>
+  </div>
+  <h3>Members</h3>
+  ${members}
+  <h3>Pending invitations</h3>
+  ${invitations}`,
+  )
+}
+
+const ACCEPT_NOTICES = Object.freeze({
+  weak: 'Choose a password of 10 to 128 characters.',
+  mismatch: 'The two passwords did not match.',
+  invalid: 'This invitation link is invalid, used or expired. Ask the person who invited you for a new one.',
+  exists: 'An account with this email already exists here. Sign in instead.',
+  expired: 'That form expired. Please try again.',
+})
+
+/** The invitation accept page (issue #11): choose a password; accepting creates the account and signs you in. */
+export function renderInviteAccept(
+  theme: Tenant['theme'],
+  slug: string,
+  preCsrf: string,
+  token: string,
+  notice?: keyof typeof ACCEPT_NOTICES,
+): string {
+  const warning = notice === undefined ? html`` : html`<p class="note" style="color:#b00">${ACCEPT_NOTICES[notice]}</p>`
+  return themedShell(
+    theme,
+    slug,
+    'Accept your invitation',
+    html`<div class="card">
+  <h2>Join ${theme.brand_name}</h2>
+  <p>Choose a password to accept your invitation. You will be signed in straight away.</p>
+  ${warning}
+  <form method="post" action="/t/${slug}/invite">
+    <input type="hidden" name="_csrf" value="${preCsrf}">
+    <input type="hidden" name="token" value="${token}">
+    <label for="password">Password <span class="note">(10 to 128 characters)</span></label>
+    <input id="password" name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required>
+    <label for="confirm">Repeat it</label>
+    <input id="confirm" name="confirm" type="password" autocomplete="new-password" minlength="10" maxlength="128" required>
+    <p><button type="submit">Accept and sign in</button></p>
+  </form>
+</div>`,
   )
 }
 
@@ -801,7 +920,29 @@ export function renderDetail(
   wedding: Wedding,
   csrfToken: string,
   invalid = false,
+  inviteCouple?: { readonly notice?: 'sent' | 'exists' | 'invalid' },
 ): string {
+  // Issue #11: a planner can invite this wedding's couple (role couple, bound to this wedding).
+  const inviteNotices = {
+    sent: 'Invitation sent to the couple.',
+    exists: 'That email already has an account here or a pending invitation.',
+    invalid: 'That invitation could not be sent. Check the email address.',
+  } as const
+  const inviteCard =
+    inviteCouple === undefined
+      ? html``
+      : html`<div class="card"><h3>Invite the couple</h3>
+    ${inviteCouple.notice === undefined ? html`` : html`<p class="note">${inviteNotices[inviteCouple.notice]}</p>`}
+    <form method="post" action="/t/${slug}/team/invite">
+      ${csrfField(csrfToken)}
+      <input type="hidden" name="role" value="couple">
+      <input type="hidden" name="wedding_id" value="${wedding.wedding_id}">
+      <label for="couple_email">Couple's email</label>
+      <input id="couple_email" name="email" type="email" required autocomplete="off">
+      <p><button type="submit">Send invitation</button></p>
+    </form>
+    <p class="note">They get their own sign-in and see only this wedding.</p>
+  </div>`
   // Guest-visible logistics facts — rendered (escaped via `html`) only when the planner/couple has set them.
   // These are exactly the facts the guest-messaging responder answers from (see guest_qa_responder.ts).
   const logistics: SafeHtml[] = []
@@ -833,7 +974,8 @@ export function renderDetail(
       <p class="note">Edit any field and save. Blank an optional logistics field (ceremony, venue, parking, dress code) to clear it — guests will then be told to ask, rather than getting the old answer.</p>
       <p><button type="submit">Save changes</button></p>
     </form>
-  </div>`,
+  </div>
+  ${inviteCard}`,
   )
 }
 

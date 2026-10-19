@@ -83,7 +83,7 @@ export function renderOperatorLogin(invalid = false): string {
 }
 
 /** The outbox: every simulated email, newest first, with a form to send a test message. */
-export function renderOutbox(messages: readonly OutboxMessage[], csrf: string, notice?: 'sent' | 'invalid'): string {
+export function renderOutbox(messages: readonly OutboxMessage[], csrf: string, notice?: 'sent' | 'invalid', tenantId?: string): string {
   const banner =
     notice === 'sent'
       ? html`<p class="note">Test message recorded. It is the first entry below.</p>`
@@ -104,7 +104,8 @@ export function renderOutbox(messages: readonly OutboxMessage[], csrf: string, n
     'Outbox',
     html`<h1>Outbox</h1>
 <p class="note">Email is simulated: nothing leaves the system. Every message the product sends (password resets,
-invitations) is recorded here instead, newest first. Showing the most recent ${String(messages.length)}.</p>
+invitations) is recorded here instead, newest first. Showing the most recent ${String(messages.length)}${tenantId === undefined ? '' : ` for tenant ${tenantId}`}.
+${tenantId === undefined ? html`` : html`<a href="/admin/outbox">Show every tenant</a>`}</p>
 ${banner}
 <div class="card">
   <form method="post" action="/admin/outbox/send">
@@ -140,7 +141,7 @@ export function renderTenants(tenants: readonly Tenant[], csrf: string, notice?:
       ? html`<div class="card"><p class="note">No tenants yet.</p></div>`
       : tenants.map(
           (tenant) => html`<div class="card">
-  <div><strong>${tenant.display_name}</strong> · <code>/t/${tenant.slug}</code></div>
+  <div><strong>${tenant.display_name}</strong> · <code>/t/${tenant.slug}</code> · <a href="/admin/outbox?tenant=${tenant.tenant_id}">Outbox</a></div>
   <div class="meta">${tenant.lifecycle_status} · ${tenant.plan_tier} · ${tenant.tenant_id} · created ${tenant.created_at}</div>
   ${
     tenant.lifecycle_status === 'active'
