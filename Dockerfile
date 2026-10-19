@@ -55,8 +55,10 @@ COPY eval-harness/schemas/ ./eval-harness/schemas/
 COPY loop-orchestrator/schemas/ ./loop-orchestrator/schemas/
 COPY agent-operations/schemas/ ./agent-operations/schemas/
 
-# Run unprivileged (the node image ships a uid-1000 `node` user). The app holds in-memory state only and
-# never writes to the image filesystem, so read-only ownership is sufficient.
+# Run unprivileged (the node image ships a uid-1000 `node` user). The app never writes to the image filesystem:
+# its durable state is a SQLite file at WP_DATABASE_PATH on a mounted volume (issue #8; the stack binds
+# ./state/app at /data), so read-only ownership of /app is sufficient. No VOLUME instruction on purpose: the
+# stack binds the directory explicitly, and an anonymous volume would be refused by the stack validator.
 USER node
 
 EXPOSE 8080

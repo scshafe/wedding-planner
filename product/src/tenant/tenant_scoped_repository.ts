@@ -1,3 +1,5 @@
+import { InMemoryRecordStore } from '../persistence/in_memory_record_store'
+import type { Collection, RecordStore } from '../persistence/record_store'
 import { ProductError } from '../product_error'
 import { assertMintedContext, type TenantContext } from './tenant_context'
 import type { TenantLivenessCheck } from './tenant_store'
@@ -5,7 +7,7 @@ import type { TenantLivenessCheck } from './tenant_store'
 /**
  * @canonical tenant_scoped_repository -- the physical tenant-isolation boundary.
  *
- * A generic in-memory store partitioned by tenant. EVERY read/list/write takes a {@link TenantContext}
+ * A generic store partitioned by tenant. EVERY read/list/write takes a {@link TenantContext}
  * and the partition is selected by `context.tenant_id` ALONE — never by a tenant_id read from a
  * payload or passed as a separate argument (inv. 4). The isolation guarantees, by construction:
  *
@@ -19,13 +21,19 @@ import type { TenantLivenessCheck } from './tenant_store'
  *     no-op returning `false` via the same path (no cross-tenant reach, no existence oracle).
  *   - `put` stamps nothing; it COMPARES `record.tenant_id` to the context and vetoes a mismatch
  *     (PRODUCT.CROSS_TENANT_WRITE) on create and update alike. The payload field is compare-only.
- *   - There is NO unscoped / all-tenants accessor (inv. 9), and the backing partition map is
- *     `#`-private, so it does not enumerate under `JSON.stringify` / spread.
+ *   - There is NO unscoped / all-tenants accessor (inv. 9), and the backing store is `#`-private, so it
+ *     does not enumerate under `JSON.stringify` / spread.
+ *
+ * Since issue #8 the records live behind the {@link RecordStore} persistence port (ADR 0039): the repository
+ * passes `context.tenant_id` as the store PARTITION, so the store itself is handed only the partition this
+ * layer selected from the minted context (the port has no cross-partition read). The composition root injects
+ * the durable SQLite store; the default is a private in-memory store (the test adapter).
  *
  * The lookup key is (tenant_id, id); `id` alone is NEVER a key. Two tenants may therefore hold the
  * same record id with zero collision — each resolves to its own partition's record.
  *
- * related: tenant_context.ts (the brand + liveness predicate), wedding_repository.ts (a typed user).
+ * related: tenant_context.ts (the brand + liveness predicate), wedding_repository.ts (a typed user),
+ * record_store.ts (the persistence port underneath).
  */
 
 /** A record owned by exactly one tenant. The repository compares this field; it never routes by it. */
@@ -34,13 +42,19 @@ export interface TenantOwned {
 }
 
 export class TenantScopedRepository<T extends TenantOwned> {
-  /** tenant_id -> (record_id -> record). `#`-private: never enumerates, never serializes. */
-  readonly #partitions = new Map<string, Map<string, T>>()
+  /** The persistence port; partitioned by tenant_id. `#`-private: never enumerates, never serializes. */
+  readonly #store: RecordStore
+  readonly #collection: Collection<T>
 
   constructor(
     private readonly liveness: TenantLivenessCheck,
     private readonly idOf: (record: T) => string,
-  ) {}
+    collection: Collection<T>,
+    store: RecordStore = new InMemoryRecordStore(),
+  ) {
+    this.#collection = collection
+    this.#store = store
+  }
 
   /** Brand + liveness gate run at the top of every operation. */
   private guard(context: TenantContext): void {
@@ -54,22 +68,16 @@ export class TenantScopedRepository<T extends TenantOwned> {
     }
   }
 
-  /** Read-only partition accessor: returns undefined when the tenant has no partition (no mutation on read). */
-  #readPartition(context: TenantContext): Map<string, T> | undefined {
-    return this.#partitions.get(context.tenant_id)
-  }
-
   /** Read a record by id within the context's partition. Foreign/missing id both return `undefined`. */
   read(context: TenantContext, id: string): T | undefined {
     this.guard(context)
-    return this.#readPartition(context)?.get(id)
+    return this.#store.get(this.#collection, context.tenant_id, id)
   }
 
   /** All records in the context's partition (only ever this tenant's). */
   list(context: TenantContext): readonly T[] {
     this.guard(context)
-    const partition = this.#readPartition(context)
-    return partition === undefined ? [] : [...partition.values()]
+    return this.#store.list(this.#collection, context.tenant_id)
   }
 
   /**
@@ -85,12 +93,7 @@ export class TenantScopedRepository<T extends TenantOwned> {
         { context: { context_tenant_id: context.tenant_id, record_tenant_id: record.tenant_id } },
       )
     }
-    let partition = this.#partitions.get(context.tenant_id)
-    if (partition === undefined) {
-      partition = new Map<string, T>()
-      this.#partitions.set(context.tenant_id, partition)
-    }
-    partition.set(this.idOf(record), record)
+    this.#store.put(this.#collection, context.tenant_id, this.idOf(record), record)
     return record
   }
 
@@ -101,6 +104,6 @@ export class TenantScopedRepository<T extends TenantOwned> {
    */
   delete(context: TenantContext, id: string): boolean {
     this.guard(context)
-    return this.#readPartition(context)?.delete(id) ?? false
+    return this.#store.delete(this.#collection, context.tenant_id, id)
   }
 }

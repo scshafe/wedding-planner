@@ -1,5 +1,8 @@
 import { type BillingEvent, type Clock, getSchemaRegistry, type IdGenerator } from '@wedding-planner/shared'
 
+import { COLLECTIONS } from '../persistence/collections'
+import { InMemoryRecordStore } from '../persistence/in_memory_record_store'
+import type { RecordStore } from '../persistence/record_store'
 import { ProductError } from '../product_error'
 
 /**
@@ -8,8 +11,9 @@ import { ProductError } from '../product_error'
  * The source of truth for a tenant's billing history (the operator's `/admin/.../billing` view) and the
  * substrate the lifecycle is driven over. There is NO separate "billing account" aggregate: a tenant's
  * `plan_tier` already lives on the Tenant, and the account BALANCE is a fold over these events
- * (`balanceCents` below). Events are immutable once recorded (append-only); the backing map is
- * `#`-private, so it does not enumerate and a ledger never leaks via `JSON.stringify` / spread.
+ * (`balanceCents` below). Events are immutable once recorded (append-only); the backing store is
+ * `#`-private, so it does not enumerate and a ledger never leaks via `JSON.stringify` / spread. Since issue #8
+ * the events live behind the {@link RecordStore} port, partitioned by tenant_id, in record order.
  *
  * Money is INTEGER CENTS, never a float. Financial kinds (`charge`, `usage_charge`, `payment`) carry
  * `amount_cents`; marker kinds (`provisioned`, `suspended`, `reactivated`) carry none — the contract enforces
@@ -72,13 +76,16 @@ export interface RecordBillingEventInput {
 }
 
 export class BillingLedger {
-  /** tenant_id -> its append-only events. `#`-private: never enumerates, never serializes. */
-  readonly #byTenant = new Map<string, BillingEvent[]>()
+  /** Partition tenant_id -> its append-only events. `#`-private: never enumerates, never serializes. */
+  readonly #store: RecordStore
 
   constructor(
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
-  ) {}
+    store: RecordStore = new InMemoryRecordStore(),
+  ) {
+    this.#store = store
+  }
 
   /**
    * Append a billing event for a tenant. Constructs the event so the per-kind money rule holds
@@ -107,19 +114,13 @@ export class BillingLedger {
       occurred_at: this.clock.now(),
     }
     getSchemaRegistry().assertValid<BillingEvent>('billing_event', event)
-    const existing = this.#byTenant.get(input.tenant_id)
-    if (existing === undefined) {
-      this.#byTenant.set(input.tenant_id, [event])
-    } else {
-      existing.push(event)
-    }
+    this.#store.put(COLLECTIONS.billingEvent, input.tenant_id, event.event_id, event)
     return event
   }
 
-  /** A tenant's events in record order (a defensive copy; empty for a tenant with no events). */
+  /** A tenant's events in record order (a fresh copy; empty for a tenant with no events). */
   eventsFor(tenant_id: string): readonly BillingEvent[] {
-    const events = this.#byTenant.get(tenant_id)
-    return events === undefined ? [] : [...events]
+    return this.#store.list(COLLECTIONS.billingEvent, tenant_id)
   }
 
   /**
@@ -129,10 +130,8 @@ export class BillingLedger {
    * `charge`, is not auto-paired with a settling `payment` — so accrued usage shows as an owed balance.
    */
   balanceCents(tenant_id: string): number {
-    const events = this.#byTenant.get(tenant_id)
-    if (events === undefined) return 0
     let balance = 0
-    for (const event of events) {
+    for (const event of this.eventsFor(tenant_id)) {
       if (event.kind === 'charge' || event.kind === 'usage_charge') balance += event.amount_cents ?? 0
       else if (event.kind === 'payment') balance -= event.amount_cents ?? 0
     }
@@ -149,7 +148,7 @@ export class BillingLedger {
    * exactly like `eventsFor`/`balanceCents` — never reaches another tenant's events.
    */
   summarize(tenant_id: string): LedgerSummary {
-    const events = this.#byTenant.get(tenant_id) ?? []
+    const events = this.eventsFor(tenant_id)
     let messages_sent = 0
     let messaging_spend_cents = 0
     let subscription_charges_cents = 0

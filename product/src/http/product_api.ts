@@ -20,6 +20,7 @@ import { buildBillingActivity } from '../billing/billing_activity'
 import { buildBillingSummary } from '../billing/billing_summary'
 import type { PlanTier } from '../billing/price_book'
 import type { OnboardingService } from '../onboarding/onboarding_service'
+import type { TransactionRunner } from '../persistence/record_store'
 import type { GuestQaResponder } from '../messaging/guest_qa_responder'
 import { projectGuestVisibleFacts } from '../messaging/guest_qa_responder'
 import type { EscalationLog } from '../messaging/escalation_log'
@@ -281,7 +282,17 @@ export interface ProductApiDeps {
    * never imports the loop). Projected ONCE to guidance in the constructor; absent ⇒ the strategy route 404s.
    */
   readonly championStrategy?: StrategyGenome
+  /**
+   * Issue #8: runs each request as ONE transaction of the persistence store, so a request that fails part-way
+   * (any throw, mapped to an error response below) leaves none of its writes behind, and a request's writes
+   * become durable together. `composeProductSurface` passes the shared store; absent ⇒ no transaction (the
+   * hand-built test fixtures, whose stores are separate in-memory defaults).
+   */
+  readonly transactions?: TransactionRunner
 }
+
+/** The no-transaction runner for fixtures that inject no store. */
+const NO_TRANSACTION: TransactionRunner = { transaction: (fn) => fn() }
 
 export class ProductApi {
   readonly #resolver: TenantContextResolver
@@ -310,6 +321,8 @@ export class ProductApi {
    * the strategy route's present/absent answer is platform-global (it reads no tenant/principal state).
    */
   readonly #strategyGuidance: StrategyGuidance | undefined
+  /** One transaction per request (issue #8). */
+  readonly #transactions: TransactionRunner
 
   constructor(deps: ProductApiDeps) {
     this.#resolver = deps.resolver
@@ -324,12 +337,17 @@ export class ProductApi {
     this.#adminDeps = { onboarding: deps.onboarding }
     this.#strategyGuidance =
       deps.championStrategy === undefined ? undefined : deepFreeze(describeStrategy(deps.championStrategy))
+    this.#transactions = deps.transactions ?? NO_TRANSACTION
   }
 
-  /** Run a request through the pipeline. Never throws — every failure maps to a code-free response. */
+  /**
+   * Run a request through the pipeline. Never throws — every failure maps to a code-free response. The whole
+   * route runs inside one store transaction: a throw rolls back every write the request made before the error
+   * is mapped (so a handler that must persist something on a failure path returns its response, never throws).
+   */
   handle(req: ApiRequest): ApiResponse {
     try {
-      return this.#route(req)
+      return this.#transactions.transaction(() => this.#route(req))
     } catch (error) {
       // Catch the whole WeddingPlannerError family (ProductError + the shared ContractValidationFailedError
       // a create/update raises on bad client data) and map by code; unknown codes fall to a constant 500.

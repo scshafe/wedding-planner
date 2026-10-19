@@ -1,5 +1,7 @@
 import { getSchemaRegistry, type Guest } from '@wedding-planner/shared'
 
+import { COLLECTIONS } from '../persistence/collections'
+import type { RecordStore } from '../persistence/record_store'
 import { ProductError } from '../product_error'
 import { type TenantContext } from '../tenant/tenant_context'
 import { TenantScopedRepository } from '../tenant/tenant_scoped_repository'
@@ -61,8 +63,8 @@ export class GuestRegistry {
   /** The isolation boundary, keyed (tenant_id, recipient_ref). `#`-private: never enumerates/serializes. */
   readonly #repo: TenantScopedRepository<GuestBinding>
 
-  constructor(liveness: TenantLivenessCheck) {
-    this.#repo = new TenantScopedRepository<GuestBinding>(liveness, (binding) => binding.recipient_ref)
+  constructor(liveness: TenantLivenessCheck, store?: RecordStore) {
+    this.#repo = new TenantScopedRepository<GuestBinding>(liveness, (binding) => binding.recipient_ref, COLLECTIONS.guest, store)
   }
 
   /**

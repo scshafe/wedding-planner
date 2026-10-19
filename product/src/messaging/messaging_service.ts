@@ -2,6 +2,9 @@ import { type Channel, type IdGenerator } from '@wedding-planner/shared'
 
 import { type BillingLedger } from '../billing/billing_ledger'
 import { messagePriceCents } from '../billing/price_book'
+import { COLLECTIONS } from '../persistence/collections'
+import { InMemoryRecordStore } from '../persistence/in_memory_record_store'
+import type { RecordStore } from '../persistence/record_store'
 import { ProductError } from '../product_error'
 import { type TenantStore } from '../tenant/tenant_store'
 import { type MessagingPort, type OutboundMessage, type SendReceipt } from './messaging_port'
@@ -24,11 +27,11 @@ import { type MessagingPort, type OutboundMessage, type SendReceipt } from './me
  * a customer's invoice. `provider_message_ref` is stored OPAQUE for reconciliation, never a platform identity
  * or dedupe key (the message_id is minted from the injected `IdGenerator`).
  *
- * ISOLATION: the meter is a `#`-private per-tenant partition (like `BillingLedger.#byTenant`) — it does not
- * enumerate/serialize, and the idempotency index is NESTED INSIDE each tenant's partition, so an
- * idempotency_key is meaningless across tenants (two tenants reusing a key get independent receipts +
- * independent charges; neither sees the other's receipt). `usageView` reads exactly one partition and there
- * is no cross-tenant aggregate accessor.
+ * ISOLATION: the meter is a per-tenant partition of the {@link RecordStore} port (like the billing ledger's; since
+ * issue #8 it is durable) — the store is `#`-private, so it does not enumerate/serialize, and the idempotency key
+ * is the record key WITHIN each tenant's partition, so an idempotency_key is meaningless across tenants (two
+ * tenants reusing a key get independent receipts + independent charges; neither sees the other's receipt).
+ * `usageView` reads exactly one partition and there is no cross-tenant aggregate accessor.
  *
  * LIFECYCLE: `send` is allowed regardless of the tenant's lifecycle_status this rung — `usage_charge` accrues
  * an owed balance either way and the fold is monotonic; gating sends / collecting accrued usage is a later
@@ -78,23 +81,19 @@ export interface TenantUsageView {
   readonly records: readonly MessageUsageRecord[]
 }
 
-/** A tenant's `#`-private partition: its metered sends + its idempotency index (keys are tenant-local). */
-interface TenantMessagingPartition {
-  readonly records: MessageUsageRecord[]
-  /** idempotency_key -> the receipt of the original send (dedupe is per-tenant by construction). */
-  readonly byKey: Map<string, SendResult>
-}
-
 export class MessagingService {
-  /** tenant_id -> its partition. `#`-private: never enumerates, never serializes (mirrors BillingLedger). */
-  readonly #byTenant = new Map<string, TenantMessagingPartition>()
+  /** Partition tenant_id -> idempotency_key -> the send's result. `#`-private (mirrors BillingLedger). */
+  readonly #store: RecordStore
 
   constructor(
     private readonly port: MessagingPort,
     private readonly tenants: TenantStore,
     private readonly billing: BillingLedger,
     private readonly ids: IdGenerator,
-  ) {}
+    store: RecordStore = new InMemoryRecordStore(),
+  ) {
+    this.#store = store
+  }
 
   /**
    * Meter + bill one outbound message for a tenant. Idempotent per tenant: a repeat with the same
@@ -110,13 +109,11 @@ export class MessagingService {
       })
     }
 
-    // Get-or-create the tenant's partition. The check-and-record below is one synchronous critical section
-    // (single-threaded model), so a duplicate key can never both pass the check and double-charge.
-    const partition = this.#partitionFor(tenant_id)
-
+    // The check-and-record below is one synchronous critical section (single-threaded model), so a duplicate
+    // key can never both pass the check and double-charge.
     // (2) Per-tenant dedupe: a hit returns the ORIGINAL receipt; the port is NOT called again, nothing is
     //     re-metered or re-billed.
-    const prior = partition.byKey.get(key)
+    const prior = this.#store.get(COLLECTIONS.messageSend, tenant_id, key)
     if (prior !== undefined) return { ...prior, deduped: true }
 
     // (3) Read the TRUSTED plan_tier (pricing reads it here, never from a provider/receipt field).
@@ -148,8 +145,9 @@ export class MessagingService {
     const receipt = this.port.send(outbound)
 
     // (7) Transactional on success: record the throwing write (the billing ledger contract check) FIRST, so a
-    //     throw leaves NEITHER the meter nor the ledger touched (no partial state). Only after it succeeds do
-    //     the in-memory appends (which cannot throw) run — keeping meter-total === Σ(usage_charge amount).
+    //     contract failure leaves NEITHER the meter nor the ledger touched (no partial state); then the meter
+    //     record. In the composed surface both live in ONE store and the whole request is one transaction, so a
+    //     storage failure after the ledger write rolls both back — keeping meter-total === Σ(usage_charge amount).
     this.billing.record({ tenant_id, kind: 'usage_charge', amount_cents: billed })
     const usage: MessageUsageRecord = {
       message_id: this.ids.next('msg'),
@@ -162,8 +160,7 @@ export class MessagingService {
       sent_at: receipt.accepted_at,
     }
     const result: SendResult = { receipt, usage, deduped: false }
-    partition.records.push(usage)
-    partition.byKey.set(key, result)
+    this.#store.put(COLLECTIONS.messageSend, tenant_id, key, result)
     return result
   }
 
@@ -176,8 +173,7 @@ export class MessagingService {
     if (this.tenants.findById(tenant_id) === undefined) {
       throw new ProductError('PRODUCT.UNKNOWN_TENANT', `No tenant '${tenant_id}'.`, { context: { tenant_id } })
     }
-    const partition = this.#byTenant.get(tenant_id)
-    const records = partition === undefined ? [] : [...partition.records]
+    const records = this.#store.list(COLLECTIONS.messageSend, tenant_id).map((sent) => sent.usage)
     let billed = 0
     let cogs = 0
     for (const record of records) {
@@ -191,13 +187,5 @@ export class MessagingService {
       margin_total_cents: billed - cogs,
       records,
     }
-  }
-
-  #partitionFor(tenant_id: string): TenantMessagingPartition {
-    const existing = this.#byTenant.get(tenant_id)
-    if (existing !== undefined) return existing
-    const created: TenantMessagingPartition = { records: [], byKey: new Map() }
-    this.#byTenant.set(tenant_id, created)
-    return created
   }
 }

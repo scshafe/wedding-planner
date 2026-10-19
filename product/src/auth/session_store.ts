@@ -1,5 +1,8 @@
-import type { IdGenerator } from '@wedding-planner/shared'
+import { type IdGenerator, sha256Hex } from '@wedding-planner/shared'
 
+import { COLLECTIONS } from '../persistence/collections'
+import { InMemoryRecordStore } from '../persistence/in_memory_record_store'
+import { GLOBAL_PARTITION, type RecordStore } from '../persistence/record_store'
 import { ProductError } from '../product_error'
 import type { TenantContext } from '../tenant/tenant_context'
 import { constantTimeEqual, type CsrfGuard } from './csrf_guard'
@@ -13,8 +16,13 @@ import { mintPrincipal, type Principal, type PrincipalRole } from './principal'
  * and issues a server-side **opaque token** (an injected id) that indexes it; `resolve` exchanges a
  * presented token for the stored principal (or `undefined`). The token is an opaque handle, NOT a
  * client-decodable claim — the store is the authority, so a client never asserts its own tenant_id or
- * role (the auth analogue of "no client-asserted partition key"). The backing map is `#`-private: it
+ * role (the auth analogue of "no client-asserted partition key"). The backing store is `#`-private: it
  * does not enumerate, so a token/principal never leaks via `JSON.stringify` / spread.
+ *
+ * Since issue #8 sessions are durable (they survive a deploy) behind the {@link RecordStore} port, keyed by the
+ * SHA-256 of the token: the raw bearer token is never stored, so the database file and its backups hold nothing
+ * a reader could present as a session. (A plain hash is enough: the token is 122 random bits, not a password.)
+ * `resolve` re-mints the Principal from the stored record on every call, so the store stays the sole mint.
  *
  * Login is a SIMULATION, honest about it (offline-first): it takes an already-*resolved* TenantContext
  * (so the principal's tenant_id is the context's, never a raw slug echo) and does NOT verify a real
@@ -45,16 +53,29 @@ export interface Session {
   readonly csrf_token: string
 }
 
-export class SessionStore implements CsrfGuard {
-  /** token -> principal. `#`-private: never enumerates, never serializes. */
-  readonly #byToken = new Map<string, Principal>()
-  /**
-   * session token -> its per-session CSRF token (Phase 21). A SEPARATE id from the session token (never equal
-   * to it — distinctness keeps the session bearer out of the page DOM, preserving HttpOnly). `#`-private.
-   */
-  readonly #csrfByToken = new Map<string, string>()
+/**
+ * A session as persisted: the principal's fields plus its per-session CSRF token (Phase 21). The CSRF token is a
+ * SEPARATE id from the session token (never equal to it — distinctness keeps the session bearer out of the page
+ * DOM, preserving HttpOnly). Keyed by sha256(session token); the token itself is not in the record.
+ */
+export interface StoredSession {
+  readonly tenant_id: string
+  readonly role: PrincipalRole
+  readonly wedding_id?: string
+  readonly principal_id: string
+  readonly csrf_token: string
+}
 
-  constructor(private readonly ids: IdGenerator) {}
+export class SessionStore implements CsrfGuard {
+  /** sha256(token) -> session. `#`-private: never enumerates, never serializes. */
+  readonly #store: RecordStore
+
+  constructor(
+    private readonly ids: IdGenerator,
+    store: RecordStore = new InMemoryRecordStore(),
+  ) {
+    this.#store = store
+  }
 
   /**
    * Mint a principal for the resolved tenant and issue a token. The principal's tenant_id is taken from
@@ -80,21 +101,32 @@ export class SessionStore implements CsrfGuard {
     const token = this.ids.next('session')
     // A SEPARATE id (never the session token) — the per-session CSRF secret bound to this session.
     const csrf_token = this.ids.next('csrf')
-    this.#byToken.set(token, principal)
-    this.#csrfByToken.set(token, csrf_token)
+    const stored: StoredSession = {
+      tenant_id: principal.tenant_id,
+      role: principal.role,
+      ...(principal.wedding_id === undefined ? {} : { wedding_id: principal.wedding_id }),
+      principal_id: principal.principal_id,
+      csrf_token,
+    }
+    this.#store.put(COLLECTIONS.session, GLOBAL_PARTITION, sessionKey(token), stored)
     return { token, principal, csrf_token }
   }
 
   /** Exchange a presented token for its principal, or `undefined` for an unknown/absent token (fail closed). */
   resolve(token: string | undefined): Principal | undefined {
-    if (token === undefined) return undefined
-    return this.#byToken.get(token)
+    const stored = this.#lookup(token)
+    if (stored === undefined) return undefined
+    return mintPrincipal({
+      tenant_id: stored.tenant_id,
+      role: stored.role,
+      wedding_id: stored.wedding_id,
+      principal_id: stored.principal_id,
+    })
   }
 
   /** {@link CsrfGuard.issueCsrf} — the CSRF token bound to this session, or undefined when unknown/absent. */
   issueCsrf(sessionToken: string | undefined): string | undefined {
-    if (sessionToken === undefined) return undefined
-    return this.#csrfByToken.get(sessionToken)
+    return this.#lookup(sessionToken)?.csrf_token
   }
 
   /**
@@ -103,8 +135,19 @@ export class SessionStore implements CsrfGuard {
    */
   verifyCsrf(sessionToken: string | undefined, candidate: string | undefined): boolean {
     if (sessionToken === undefined || candidate === undefined || candidate.length === 0) return false
-    const stored = this.#csrfByToken.get(sessionToken)
+    const stored = this.#lookup(sessionToken)
     if (stored === undefined) return false
-    return constantTimeEqual(stored, candidate)
+    return constantTimeEqual(stored.csrf_token, candidate)
   }
+
+  /** The stored session for a presented token (hashed before lookup), or undefined for an absent/unknown one. */
+  #lookup(token: string | undefined): StoredSession | undefined {
+    if (token === undefined || token.length === 0) return undefined
+    return this.#store.get(COLLECTIONS.session, GLOBAL_PARTITION, sessionKey(token))
+  }
+}
+
+/** The store key of a session token: its SHA-256, so the raw bearer token is never persisted. */
+function sessionKey(token: string): string {
+  return sha256Hex(token)
 }

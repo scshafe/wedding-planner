@@ -2,6 +2,9 @@ import { ManualClock, SequentialIdGenerator, type Tenant, type Wedding } from '@
 import { describe, expect, it } from 'vitest'
 
 import {
+  InMemoryRecordStore,
+  type RecordStore,
+  SqliteRecordStore,
   type TenantContext,
   TenantContextResolver,
   TenantStore,
@@ -18,7 +21,17 @@ import {
  *
  * Scope: this proves INTER-tenant isolation only. Intra-tenant authorization (planner vs couple)
  * lands with principals in Phase 13 and is not covered here.
+ *
+ * Issue #8: every invariant runs against BOTH persistence adapters (the in-memory test adapter and the durable
+ * SQLite one), with the tenant store and the wedding repository sharing one store exactly as the composition
+ * root wires them — the boundary must not depend on which adapter holds the records.
  */
+
+/** The persistence adapters the keystone runs against (each world gets a fresh store). */
+const ADAPTERS: readonly (readonly [string, () => RecordStore])[] = [
+  ['in-memory', () => new InMemoryRecordStore()],
+  ['sqlite', () => SqliteRecordStore.open({ path: ':memory:', clock: new ManualClock('2027-01-01T00:00:00.000Z') })],
+]
 
 const THEME: Tenant['theme'] = {
   brand_name: 'Brand',
@@ -37,10 +50,12 @@ interface World {
   tenantB: Tenant
 }
 
-function makeWorld(): World {
+function makeWorld(makeStore: () => RecordStore): World {
+  const backing = makeStore()
   const store = new TenantStore(
     new ManualClock('2027-03-01T00:00:00.000Z'),
     new SequentialIdGenerator('seedT'),
+    backing,
   )
   const tenantA = store.create({ slug: 'alpha', display_name: 'Alpha', theme: THEME, plan_tier: 'solo', lifecycle_status: 'active' })
   const tenantB = store.create({ slug: 'beta', display_name: 'Beta', theme: THEME, plan_tier: 'solo', lifecycle_status: 'active' })
@@ -50,6 +65,7 @@ function makeWorld(): World {
     store,
     new ManualClock('2027-04-01T00:00:00.000Z'),
     new SequentialIdGenerator('seedW'),
+    backing,
   )
   return {
     store,
@@ -71,9 +87,9 @@ function codeOfThrow(fn: () => unknown): string {
   throw new Error('expected the operation to throw, but it did not')
 }
 
-describe('tenant isolation keystone', () => {
+describe.each(ADAPTERS)('tenant isolation keystone (%s store)', (_adapter, makeStore) => {
   it('(a) no existence oracle: a foreign-tenant id reads back identically to a never-existed id', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     const bWedding = w.weddings.create(w.ctxB, { couple_display_name: 'B couple', event_date: '2028-02-02' })
 
     // Reading B's real wedding_id under A's context.
@@ -89,7 +105,7 @@ describe('tenant isolation keystone', () => {
   })
 
   it('(b) list under A returns only A’s records, never B’s', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     const a1 = w.weddings.create(w.ctxA, { couple_display_name: 'A1', event_date: '2028-01-01' })
     const a2 = w.weddings.create(w.ctxA, { couple_display_name: 'A2', event_date: '2028-01-02' })
     w.weddings.create(w.ctxB, { couple_display_name: 'B1', event_date: '2028-03-03' })
@@ -101,7 +117,7 @@ describe('tenant isolation keystone', () => {
   })
 
   it('(c) a write/update under A cannot mutate B’s wedding (cross-tenant write veto, both paths)', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     const bWedding = w.weddings.create(w.ctxB, { couple_display_name: 'B couple', event_date: '2028-02-02' })
 
     // Update path: hand B's record (tenant_id=B) to an A-scoped update — the partition is selected by
@@ -115,7 +131,7 @@ describe('tenant isolation keystone', () => {
   })
 
   it('(d)(i) a forged/cast TenantContext is rejected at the repository entry (bypass-the-resolver attack)', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     // The attack the brand defends: a hand-built object straight to the repo, never through the resolver.
     const forged = { tenant_id: w.tenantA.tenant_id, slug: 'alpha' } as unknown as TenantContext
     expect(codeOfThrow(() => w.weddings.get(forged, 'whatever'))).toBe('PRODUCT.FORGED_CONTEXT')
@@ -126,7 +142,7 @@ describe('tenant isolation keystone', () => {
   })
 
   it('(d)(iv) the brand cannot be lifted off a real context and re-stamped onto a forged one', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     w.weddings.create(w.ctxB, { couple_display_name: 'B couple', event_date: '2028-02-02' })
 
     // The attack the WeakSet token defends: copy every reflectable own symbol/prop from a legitimate
@@ -147,7 +163,7 @@ describe('tenant isolation keystone', () => {
   })
 
   it('(d)(ii) a minted context is frozen — its tenant_id cannot be mutated', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     expect(Object.isFrozen(w.ctxA)).toBe(true)
     try {
       ;(w.ctxA as unknown as { tenant_id: string }).tenant_id = w.tenantB.tenant_id
@@ -158,12 +174,12 @@ describe('tenant isolation keystone', () => {
   })
 
   it('(d)(iii) resolveBySlug rejects an unregistered slug', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     expect(codeOfThrow(() => w.resolver.resolveBySlug('ghost'))).toBe('PRODUCT.UNKNOWN_TENANT')
   })
 
   it('(e) liveness at use: a context held past a suspension fails closed', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     const a1 = w.weddings.create(w.ctxA, { couple_display_name: 'A1', event_date: '2028-01-01' })
     // A was active when ctxA was minted; now suspend A out from under the live context.
     w.store.setLifecycleStatus(w.tenantA.tenant_id, 'suspended')
@@ -182,14 +198,14 @@ describe('tenant isolation keystone', () => {
   })
 
   it('(f) two tenants cannot share a slug, including a case variant', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     expect(
       codeOfThrow(() => w.store.create({ slug: 'ALPHA', display_name: 'Dup', theme: THEME, plan_tier: 'solo' })),
     ).toBe('PRODUCT.DUPLICATE_SLUG')
   })
 
   it('(g) deliberate wedding_id collision across tenants resolves to the right record under each context', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     const collidingId = 'wedding_collision'
     const base = { wedding_id: collidingId, event_date: '2028-05-05', status: 'planning', created_at: '2027-04-01T00:00:00.000Z' } as const
     const aRecord: Wedding = { ...base, tenant_id: w.tenantA.tenant_id, couple_display_name: 'A-collide' }
@@ -204,7 +220,7 @@ describe('tenant isolation keystone', () => {
   })
 
   it('(h) serialization leaks no tenant data (private backing maps)', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     w.weddings.create(w.ctxA, { couple_display_name: 'SECRET_COUPLE_NAME', event_date: '2028-01-01' })
 
     const dumpRepo = JSON.stringify(w.weddings)

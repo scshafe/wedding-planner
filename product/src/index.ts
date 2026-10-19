@@ -187,3 +187,17 @@ export {
   type ComposedSurface,
   type DemoSeed,
 } from './runtime/compose'
+
+// Persistence (issue #8, ADR 0039): the RecordStore port every store sits behind, its in-memory adapter (tests,
+// demo) and its durable SQLite adapter (opened by app/server.ts when WP_DATABASE_PATH is set).
+export {
+  collection,
+  type Collection,
+  GLOBAL_PARTITION,
+  type RecordStore,
+  type TransactionRunner,
+} from './persistence/record_store'
+export { COLLECTIONS } from './persistence/collections'
+export { InMemoryRecordStore } from './persistence/in_memory_record_store'
+export { type OpenSqliteRecordStoreOptions, SqliteRecordStore } from './persistence/sqlite_record_store'
+export { SQLITE_MIGRATIONS, type SqliteMigration } from './persistence/sqlite_migrations'

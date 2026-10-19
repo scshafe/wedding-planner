@@ -7,11 +7,14 @@ import {
   type ApiRequest,
   type ApiResponse,
   BillingLedger,
+  InMemoryRecordStore,
   OnboardingService,
   OperatorCredentialStore,
   ProviderWebhookCredentialStore,
   ProductApi,
+  type RecordStore,
   SessionStore,
+  SqliteRecordStore,
   TenantContextResolver,
   TenantStore,
   WeddingAuthorizer,
@@ -28,7 +31,16 @@ import {
  * to a missing wedding. Phases 14–16 build on this edge and may not weaken it.
  *
  * Run against the pure handler (no sockets) so the adversarial surface is fast and deterministic.
+ *
+ * Issue #8: every case runs against BOTH persistence adapters, with every store (and the per-request
+ * transaction) over one shared store, as the composition root wires them.
  */
+
+/** The persistence adapters the keystone runs against (each world gets a fresh store). */
+const ADAPTERS: readonly (readonly [string, () => RecordStore])[] = [
+  ['in-memory', () => new InMemoryRecordStore()],
+  ['sqlite', () => SqliteRecordStore.open({ path: ':memory:', clock: new ManualClock('2027-01-01T00:00:00.000Z') })],
+]
 
 const THEME: Tenant['theme'] = {
   brand_name: 'Brand',
@@ -54,22 +66,25 @@ interface World {
   couplePhantom: string // couple token in A bound to a never-created wedding
 }
 
-function makeWorld(): World {
+function makeWorld(makeStore: () => RecordStore): World {
+  const backing = makeStore()
   const store = new TenantStore(
     new ManualClock('2027-03-01T00:00:00.000Z'),
     new SequentialIdGenerator('seedT'),
+    backing,
   )
   const tenantA = store.create({ slug: 'alpha', display_name: 'Alpha', theme: THEME, plan_tier: 'solo', lifecycle_status: 'active' })
   const tenantB = store.create({ slug: 'beta', display_name: 'Beta', theme: THEME, plan_tier: 'solo', lifecycle_status: 'active' })
   const api = new ProductApi({
     resolver: new TenantContextResolver(store),
-    sessionStore: new SessionStore(new SequentialIdGenerator('seedS')),
+    sessionStore: new SessionStore(new SequentialIdGenerator('seedS'), backing),
     operators: new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret']),
     webhookCredentials: new ProviderWebhookCredentialStore(new SequentialIdGenerator('seedW'), ['wh-secret']),
-    onboarding: new OnboardingService(store, new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB'))),
-    weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedW')),
+    onboarding: new OnboardingService(store, new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB'), backing)),
+    weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedW'), backing),
     authorizer: new WeddingAuthorizer(),
-    guests: { registry: new GuestRegistry(store), weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedGW')), authorizer: new GuestAuthorizer() },
+    guests: { registry: new GuestRegistry(store, backing), weddings: new WeddingRepository(store, new ManualClock('2027-04-01T00:00:00.000Z'), new SequentialIdGenerator('seedGW'), backing), authorizer: new GuestAuthorizer() },
+    transactions: backing,
   })
 
   const login = (slug: string, body: { role: string; wedding_id?: string }): string => {
@@ -105,9 +120,9 @@ function httpReq(method: string, path: string, opts: { token?: string; body?: un
   }
 }
 
-describe('HTTP keystone — the two stacked boundaries at the request edge', () => {
+describe.each(ADAPTERS)('HTTP keystone (%s store) — the two stacked boundaries at the request edge', (_adapter, makeStore) => {
   it('(a) cross-tenant routing read: A’s planner token on B’s route cannot read B’s wedding', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     // Tenant is resolved from the ROUTE (beta); the A-bound session does not match -> 401, not B’s data.
     const res = w.api.handle(httpReq('GET', `/t/beta/weddings/${w.wB}`, { token: w.pA }))
     expect(res).toEqual(UNAUTHORIZED)
@@ -115,7 +130,7 @@ describe('HTTP keystone — the two stacked boundaries at the request edge', () 
   })
 
   it('(b) cross-tenant session replay: A’s token on B’s list route -> 401, never re-scoped to A', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     const res = w.api.handle(httpReq('GET', '/t/beta/weddings', { token: w.pA }))
     expect(res).toEqual(UNAUTHORIZED)
     // Not silently scoped to A: A’s weddings must not appear.
@@ -123,7 +138,7 @@ describe('HTTP keystone — the two stacked boundaries at the request edge', () 
   })
 
   it('(c) intra-tenant no-oracle (all directions, GET): foreign-exists, own-absent, missing, and unknown-route are byte-identical 404', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     // couple bound to wA1 reading wA2 (a real, foreign-but-same-tenant wedding).
     const foreignExists = w.api.handle(httpReq('GET', `/t/alpha/weddings/${w.wA2}`, { token: w.coupleA1 }))
     // couple bound to a never-created id reading their own (absent) id.
@@ -142,7 +157,7 @@ describe('HTTP keystone — the two stacked boundaries at the request edge', () 
   })
 
   it('(c2) intra-tenant no-oracle (PUT): a couple updating a foreign vs a missing id are byte-identical 404', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     const foreign = w.api.handle(httpReq('PUT', `/t/alpha/weddings/${w.wA2}`, { token: w.coupleA1, body: { status: 'active' } }))
     const missing = w.api.handle(httpReq('PUT', '/t/alpha/weddings/wedding_nonexistent', { token: w.coupleA1, body: { status: 'active' } }))
     expect(foreign).toEqual(NOT_FOUND)
@@ -153,21 +168,21 @@ describe('HTTP keystone — the two stacked boundaries at the request edge', () 
   })
 
   it('(c3) a couple updating their OWN wedding succeeds (the mask does not over-deny)', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     const res = w.api.handle(httpReq('PUT', `/t/alpha/weddings/${w.wA1}`, { token: w.coupleA1, body: { status: 'active' } }))
     expect(res.status).toBe(200)
     expect((res.body as { wedding: Wedding }).wedding.status).toBe('active')
   })
 
   it('(d) capability denial: a couple creating -> 403, distinct from the 404 mask and never a 500', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     const res = w.api.handle(httpReq('POST', '/t/alpha/weddings', { token: w.coupleA1, body: { couple_display_name: 'x', event_date: '2028-01-01' } }))
     expect(res.status).toBe(403)
     expect(res.body).toEqual({ error: 'forbidden' })
   })
 
   it('(e) couple list is narrowed to their own wedding; planner list is full', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     const coupleList = w.api.handle(httpReq('GET', '/t/alpha/weddings', { token: w.coupleA1 }))
     expect((coupleList.body as { weddings: Wedding[] }).weddings.map((x) => x.wedding_id)).toEqual([w.wA1])
 
@@ -180,13 +195,13 @@ describe('HTTP keystone — the two stacked boundaries at the request edge', () 
   })
 
   it('(f) no session -> 401; an unknown token -> 401', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     expect(w.api.handle(httpReq('GET', '/t/alpha/weddings'))).toEqual(UNAUTHORIZED)
     expect(w.api.handle(httpReq('GET', '/t/alpha/weddings', { token: 'forged_token' }))).toEqual(UNAUTHORIZED)
   })
 
   it('(g) fail closed mid-session: suspend the tenant after login -> the next request is 404', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     // The planner token was valid; now suspend tenant A out from under it.
     w.store.setLifecycleStatus(w.tenantA.tenant_id, 'suspended')
     const res = w.api.handle(httpReq('GET', '/t/alpha/weddings', { token: w.pA }))
@@ -195,7 +210,7 @@ describe('HTTP keystone — the two stacked boundaries at the request edge', () 
   })
 
   it('(h) the body cannot carry a foreign tenant_id, a wedding_id, or a __proto__ payload', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     // Create with smuggled tenant_id + wedding_id + a prototype-pollution key.
     const created = w.api.handle(
       httpReq('POST', '/t/alpha/weddings', {
@@ -231,7 +246,7 @@ describe('HTTP keystone — the two stacked boundaries at the request edge', () 
   })
 
   it('(i) wrong method, unauthenticated, on a tenant route -> 401 (route shape is not a pre-auth oracle)', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     // DELETE on a known protected route WITHOUT a session: auth runs before the 405 check.
     expect(w.api.handle(httpReq('DELETE', '/t/alpha/weddings'))).toEqual(UNAUTHORIZED)
     // With a valid session, the same wrong method surfaces as 405.
@@ -239,7 +254,7 @@ describe('HTTP keystone — the two stacked boundaries at the request edge', () 
   })
 
   it('(j) login is not an existence oracle: a phantom wedding_id logs in identically to a real one', () => {
-    const w = makeWorld()
+    const w = makeWorld(makeStore)
     const real = w.api.handle(httpReq('POST', '/t/alpha/sessions', { body: { role: 'couple', wedding_id: w.wA1 } }))
     const phantom = w.api.handle(httpReq('POST', '/t/alpha/sessions', { body: { role: 'couple', wedding_id: 'wedding_does_not_exist' } }))
     // Both succeed with the same status — login leaks no signal about which wedding_ids exist.

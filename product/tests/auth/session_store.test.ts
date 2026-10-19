@@ -82,7 +82,11 @@ describe('session_store', () => {
   it('resolve exchanges a token for its principal; unknown/absent token -> undefined (fail closed)', () => {
     const w = makeWorld()
     const { token, principal } = w.sessions.login(w.ctx, { role: 'planner' })
-    expect(w.sessions.resolve(token)).toBe(principal)
+    // Sessions are persisted records (issue #8): resolve RE-MINTS an equal principal (still store-minted, so it
+    // carries the brand), rather than handing back the login's object.
+    const resolved = w.sessions.resolve(token)
+    expect(resolved).toEqual(principal)
+    expect(() => assertMintedPrincipal(resolved as Principal)).not.toThrow()
     expect(w.sessions.resolve('not_a_real_token')).toBeUndefined()
     expect(w.sessions.resolve(undefined)).toBeUndefined()
   })
