@@ -9,6 +9,7 @@ import { splitPath } from '../http/path'
 import type { ProductApi } from '../http/product_api'
 import type { StrategyGuidance } from '../strategy/strategy_guidance'
 import { WEDDING_LOGISTICS_FIELDS } from '../wedding/wedding_repository'
+import { isFeedbackPage } from '../feedback/feedback_service'
 import { ProductError } from '../product_error'
 import { readCookie } from './cookies'
 import { normalizeSlugForRoute } from './html'
@@ -25,6 +26,8 @@ import {
   renderDetail,
   renderEscalations,
   renderForbidden,
+  renderFeedback,
+  renderFeedbackThanks,
   renderForgot,
   renderGuests,
   renderInviteAccept,
@@ -174,6 +177,8 @@ export class ProductWebUi {
         // Issue #10: password recovery pages (only with real accounts wired).
         if (this.#accounts !== undefined && segments[2] === 'forgot') return slug === undefined ? GENERIC_404 : this.#forgot(req, slug)
         if (this.#accounts !== undefined && segments[2] === 'reset') return slug === undefined ? GENERIC_404 : this.#reset(req, slug)
+        // Issue #12: the "Send feedback" form (GET only; its POST is the 4-seg /feedback/send below).
+        if (segments[2] === 'feedback' && req.method === 'GET') return slug === undefined ? GENERIC_404 : this.#feedback(req, slug)
         // Issue #11: accept an invitation through its link.
         if (this.#accounts !== undefined && segments[2] === 'invite') return slug === undefined ? GENERIC_404 : this.#invite(req, slug)
         // GET only — a non-GET /t/:slug/strategy falls through to the JSON pipeline (401/405).
@@ -199,6 +204,13 @@ export class ProductWebUi {
         if (action === 'invite' || action === 'resend' || action === 'revoke' || action === 'remove') {
           return this.#teamAction(req, slug, action)
         }
+      }
+
+      // /t/:slug/feedback/send (issue #12) — the feedback FORM post (CSRF-protected), distinct from the JSON
+      // POST /t/:slug/feedback. Slug masked to 404 before any cookie read / CSRF verdict.
+      if (segments.length === 4 && segments[2] === 'feedback' && segments[3] === 'send' && req.method === 'POST') {
+        if (slug === undefined) return GENERIC_404
+        return this.#feedbackSend(req, slug)
       }
 
       // /t/:slug/escalations/resolve (Phase 27) — the browser Resolve/Dismiss FORM post (CSRF-protected).
@@ -611,6 +623,45 @@ export class ProductWebUi {
   }
 
   /** Map a non-200 API status to a page. 401 -> themed login (active); 403 -> forbidden; else masked 404. */
+  /**
+   * GET /t/:slug/feedback (issue #12) — the feedback form, for any signed-in planner or couple. The weddings read is
+   * the authentication gate (both roles may read it); anything but 200 takes the usual masking.
+   */
+  #feedback(req: ApiRequest, slug: string, status = 200, notice?: 'invalid' | 'rate_limited'): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const gate = this.#api.handle(bearerGet(`/t/${slug}/weddings`, token))
+    if (gate.status !== 200) return this.#renderNonData(slug, gate.status)
+    const theme = this.#themes.resolveActiveTheme(slug)
+    const csrf = this.#csrf.issueCsrf(token)
+    if (theme === undefined || csrf === undefined) return theme === undefined ? GENERIC_404 : ERROR_500
+    const raw = queryParam(req.path, 'page') ?? ''
+    return htmlResult(status, renderFeedback(theme, slug, csrf, isFeedbackPage(raw) ? raw : undefined, notice))
+  }
+
+  /** POST /t/:slug/feedback/send (issue #12) — CSRF first, then the JSON submit; a thank-you page or the form again. */
+  #feedbackSend(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    const page = form.get('page') ?? ''
+    const res = this.#api.handle(
+      bearerJson('POST', `/t/${slug}/feedback`, token, {
+        trying: form.get('trying') ?? '',
+        happened: form.get('happened') ?? '',
+        ...(page.length === 0 ? {} : { page }),
+      }),
+    )
+    if (res.status === 201) {
+      const theme = this.#themes.resolveActiveTheme(slug)
+      return theme === undefined ? GENERIC_404 : htmlResult(200, renderFeedbackThanks(theme, slug))
+    }
+    if (res.status === 400 || res.status === 429) {
+      const retry = { ...req, method: 'GET', path: `/t/${slug}/feedback?page=${encodeURIComponent(page)}` }
+      return this.#feedback(retry, slug, res.status, res.status === 429 ? 'rate_limited' : 'invalid')
+    }
+    return this.#renderNonData(slug, res.status)
+  }
+
   /** GET /t/:slug?view=team (issue #11) — the team page; a couple gets the themed Forbidden. */
   #teamPage(req: ApiRequest, slug: string): HttpResult {
     const token = readSessionCookie(req.headers.cookie)

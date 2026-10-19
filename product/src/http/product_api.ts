@@ -13,6 +13,7 @@ import type { AccountService } from '../accounts/account_service'
 import { publicAccountView } from '../accounts/account_store'
 import type { InvitedRole } from '../accounts/invitation_store'
 import type { MembershipService } from '../accounts/membership_service'
+import type { FeedbackService } from '../feedback/feedback_service'
 import type { GuestAuthorizer } from '../auth/guest_authorizer'
 import type { OperatorCredentialStore } from '../auth/operator_credential'
 import type { Principal } from '../auth/principal'
@@ -159,7 +160,12 @@ export interface AdminHandlerDeps {
   readonly email?: AdminEmailDeps
   /** Issue #10: the tenant list the operator reads (`GET /admin/tenants`). Absent ⇒ only POST is mounted. */
   readonly tenants?: { list(): readonly Tenant[] }
+  /** Issue #12: the feedback the operator reads (`GET /admin/feedback`). Absent ⇒ not mounted. */
+  readonly feedback?: Pick<FeedbackService, 'recent'>
 }
+
+/** How many feedback submissions `GET /admin/feedback` returns (newest first). */
+export const FEEDBACK_PAGE_SIZE = 200
 
 /** The email collaborators the operator console uses (issue #9). */
 export interface AdminEmailDeps {
@@ -287,6 +293,8 @@ export interface ProductApiDeps {
    * `/t/:slug/team`, `/invitations` and `/members` routes are not mounted. `composeProductSurface` always wires it.
    */
   readonly membership?: MembershipService
+  /** Issue #12: in-app feedback (submit for signed-in planners and couples; the operator reads). */
+  readonly feedback?: FeedbackService
   /**
    * Phase 19: the provider-webhook credential store — the FOURTH token namespace, authenticating the
    * server-to-server inbound webhook (`/t/:slug/messaging/inbound`). Lives ONLY in the pipeline (like
@@ -366,6 +374,8 @@ export class ProductApi {
   readonly #accounts: AccountService | undefined
   /** The team (issue #11), or undefined when not wired. */
   readonly #membership: MembershipService | undefined
+  /** In-app feedback (issue #12), or undefined when not wired. */
+  readonly #feedback: FeedbackService | undefined
 
   constructor(deps: ProductApiDeps) {
     this.#resolver = deps.resolver
@@ -381,7 +391,9 @@ export class ProductApi {
       onboarding: deps.onboarding,
       ...(deps.email === undefined ? {} : { email: deps.email }),
       ...(deps.tenants === undefined ? {} : { tenants: deps.tenants }),
+      ...(deps.feedback === undefined ? {} : { feedback: deps.feedback }),
     }
+    this.#feedback = deps.feedback
     this.#accounts = deps.accounts
     this.#membership = deps.membership
     this.#strategyGuidance =
@@ -495,6 +507,21 @@ export class ProductApi {
       ) {
         const principal = this.#authenticate(req, context)
         return dispatchTeam(context, principal, req, segments, this.#membership)
+      }
+
+      // /t/:slug/feedback — PROTECTED (issue #12): any signed-in planner or couple sends feedback. Stages 3–4 run
+      // before the method check (route shape is not a pre-auth oracle).
+      if (this.#feedback !== undefined && segments.length === 3 && segments[2] === 'feedback') {
+        const principal = this.#authenticate(req, context)
+        if (req.method !== 'POST') throw methodNotAllowed()
+        const body = parseObjectBody(req.rawBody)
+        const page = optionalString(body, 'page')
+        const submission = this.#feedback.submit(context, principal, {
+          trying: requireString(body, 'trying'),
+          happened: requireString(body, 'happened'),
+          ...(page === undefined ? {} : { page }),
+        })
+        return { status: 201, body: { feedback_id: submission.feedback_id } }
       }
 
       // /t/:slug/weddings[...] — PROTECTED: stages 3–4 run BEFORE any method/shape distinction.
@@ -1407,6 +1434,11 @@ function mostRecentEscalationForGuest(
 }
 
 function dispatchAdmin(req: ApiRequest, segments: readonly string[], deps: AdminHandlerDeps): ApiResponse {
+  // /admin/feedback — in-app feedback, newest first (issue #12).
+  if (deps.feedback !== undefined && segments.length === 2 && segments[1] === 'feedback') {
+    if (req.method !== 'GET') throw methodNotAllowed()
+    return { status: 200, body: { feedback: deps.feedback.recent(FEEDBACK_PAGE_SIZE) } }
+  }
   // /admin/outbox — the simulated email outbox (issue #9): GET lists the newest messages; POST sends a test
   // message to an address, so the operator can see the email path work end to end.
   if (deps.email !== undefined && segments.length === 2 && segments[1] === 'outbox') {

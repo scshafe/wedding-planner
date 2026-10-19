@@ -1,6 +1,7 @@
 import type { Tenant } from '@wedding-planner/shared'
 
 import type { OutboxMessage } from '../email/simulated_email_adapter'
+import { FEEDBACK_PAGES, type FeedbackSubmission } from '../feedback/feedback_service'
 import { html, render, type SafeHtml } from './html'
 
 /**
@@ -38,6 +39,7 @@ function operatorShell(title: string, content: SafeHtml, csrf?: string): string 
       ? html``
       : html`<a href="/admin/tenants">Tenants</a>
     <a href="/admin/outbox">Outbox</a>
+    <a href="/admin/feedback">Feedback</a>
     <span class="spacer"></span>
     <form class="inline" method="post" action="/admin/logout">
       <input type="hidden" name="_csrf" value="${csrf}">
@@ -163,6 +165,31 @@ export function renderTenants(tenants: readonly Tenant[], csrf: string, notice?:
 through the (simulated) email outbox.</p>
 ${banner}
 ${rows}`,
+    csrf,
+  )
+}
+
+/** In-app feedback, newest first (issue #12). Every field is untrusted text, escaped and shown in `<pre>`. */
+export function renderFeedbackList(submissions: readonly FeedbackSubmission[], csrf: string): string {
+  const list =
+    submissions.length === 0
+      ? html`<div class="card"><p class="note">No feedback yet.</p></div>`
+      : submissions.map(
+          (f) => html`<div class="card">
+  <div class="meta">${f.tenant_slug} · ${f.role} · ${f.created_at}</div>
+  <div class="meta">Page: ${f.page === undefined ? 'not given' : FEEDBACK_PAGES[f.page]}</div>
+  <p><strong>Trying to:</strong></p>
+  <pre>${f.trying}</pre>
+  <p><strong>What happened:</strong></p>
+  <pre>${f.happened}</pre>
+</div>`,
+        )
+  return operatorShell(
+    'Feedback',
+    html`<h1>Feedback</h1>
+<p class="note">What planners and couples sent from inside the product, newest first (the most recent ${String(submissions.length)}).
+Each entry holds only what the person typed, which page they chose, their workspace and their role.</p>
+${list}`,
     csrf,
   )
 }

@@ -15,6 +15,7 @@ import type { PendingReset } from '../accounts/pending_reset_queue'
 import type { StoredOperatorSession } from '../auth/operator_credential'
 import type { StoredSession } from '../auth/session_store'
 import type { StoredOutboxMessage } from '../email/simulated_email_adapter'
+import type { FeedbackSubmission } from '../feedback/feedback_service'
 import type { InboundReceipt } from '../messaging/inbound_receipt_log'
 import type { SendResult } from '../messaging/messaging_service'
 import { collection } from './record_store'
@@ -73,4 +74,6 @@ export const COLLECTIONS = Object.freeze({
   platformSetting: collection<{ readonly value: string }>('platform_setting', 'global'),
   /** Key invitation_id: pending invitations to join the workspace (issue #11). */
   invitation: collection<Invitation>('invitation', 'tenant'),
+  /** Key feedback_id: in-app feedback, a platform log only the operator reads (issue #12). */
+  feedback: collection<FeedbackSubmission>('feedback', 'global'),
 })
