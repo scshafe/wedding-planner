@@ -14,12 +14,13 @@ import {
   ProductApi,
   type RecordStore,
   SessionStore,
-  SqliteRecordStore,
   TenantContextResolver,
   TenantStore,
   WeddingAuthorizer,
   WeddingRepository,
 } from '@wedding-planner/product'
+
+import { SqliteRecordStore } from '../../src/persistence/sqlite_record_store'
 
 /**
  * THE HTTP KEYSTONE — the load-bearing request-edge regression (Phase 13).

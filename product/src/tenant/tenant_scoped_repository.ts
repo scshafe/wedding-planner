@@ -52,6 +52,14 @@ export class TenantScopedRepository<T extends TenantOwned> {
     collection: Collection<T>,
     store: RecordStore = new InMemoryRecordStore(),
   ) {
+    // A global collection here would put tenant-owned records in the shared partition: refuse it at wiring time.
+    if (collection.scope !== 'tenant') {
+      throw new ProductError(
+        'PERSISTENCE.INVALID_COLLECTION',
+        `TenantScopedRepository needs a tenant-scoped collection; '${collection.name}' is ${collection.scope}.`,
+        { context: { collection: collection.name } },
+      )
+    }
     this.#collection = collection
     this.#store = store
   }

@@ -4,12 +4,13 @@ import { describe, expect, it } from 'vitest'
 import {
   InMemoryRecordStore,
   type RecordStore,
-  SqliteRecordStore,
   type TenantContext,
   TenantContextResolver,
   TenantStore,
   WeddingRepository,
 } from '@wedding-planner/product'
+
+import { SqliteRecordStore } from '../../src/persistence/sqlite_record_store'
 
 /**
  * THE KEYSTONE — the load-bearing tenant-isolation regression (Phase 12).

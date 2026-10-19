@@ -5,7 +5,10 @@ import { join } from 'node:path'
 import { ManualClock } from '@wedding-planner/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { collection, GLOBAL_PARTITION, InMemoryRecordStore, type RecordStore, SqliteRecordStore } from '@wedding-planner/product'
+import { InMemoryRecordStore, type RecordStore } from '@wedding-planner/product'
+
+import { collection, GLOBAL_PARTITION } from '../../src/persistence/record_store'
+import { SqliteRecordStore } from '../../src/persistence/sqlite_record_store'
 
 /**
  * The RecordStore CONTRACT (issue #8, ADR 0039): the guarantees every product store relies on, run against each
@@ -18,8 +21,8 @@ interface Note {
   readonly tags?: readonly string[]
 }
 
-const NOTES = collection<Note>('note')
-const OTHER = collection<Note>('other_note')
+const NOTES = collection<Note>('note', 'tenant')
+const OTHER = collection<Note>('other_note', 'tenant')
 
 const dirs: string[] = []
 afterEach(() => {
@@ -175,7 +178,7 @@ describe.each(ADAPTERS)('RecordStore contract (%s)', (_adapter, makeStore) => {
         store.put(NOTES, 'p', 'a', { id: 'a', text: 'x' })
         return Promise.resolve()
       }),
-    ).toThrow(/synchronous/)
+    ).toThrow(expect.objectContaining({ code: 'PERSISTENCE.ASYNC_TRANSACTION' }))
     expect(store.get(NOTES, 'p', 'a')).toBeUndefined()
   })
 
@@ -188,10 +191,11 @@ describe.each(ADAPTERS)('RecordStore contract (%s)', (_adapter, makeStore) => {
 })
 
 describe('collection', () => {
-  it('accepts snake_case names and rejects anything else', () => {
-    expect(collection('guest_escalation').name).toBe('guest_escalation')
-    expect(() => collection('Guest')).toThrow()
-    expect(() => collection('a b')).toThrow()
-    expect(() => collection('')).toThrow()
+  it('accepts snake_case names and rejects anything else (PERSISTENCE.INVALID_COLLECTION)', () => {
+    expect(collection('guest_escalation', 'tenant')).toEqual({ name: 'guest_escalation', scope: 'tenant' })
+    expect(collection('tenant', 'global', 'tenant')).toEqual({ name: 'tenant', scope: 'global', schema: 'tenant' })
+    for (const bad of ['Guest', 'a b', '', '1st']) {
+      expect(() => collection(bad, 'tenant')).toThrow(expect.objectContaining({ code: 'PERSISTENCE.INVALID_COLLECTION' }))
+    }
   })
 })

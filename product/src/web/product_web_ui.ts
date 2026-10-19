@@ -596,6 +596,8 @@ export class ProductWebUi {
     const token = readSessionCookie(req.headers.cookie)
     const form = parseForm(req.rawBody)
     if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    // Sessions persist (issue #8), so sign-out revokes the session server-side, not just the cookie.
+    this.#api.handle({ method: 'DELETE', path: `/t/${slug}/sessions`, headers: { authorization: `Bearer ${token}` } })
     return redirect(303, `/t/${slug}`, {
       'set-cookie': `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/t/${slug}; Max-Age=0`,
     })

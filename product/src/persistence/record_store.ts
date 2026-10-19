@@ -1,3 +1,7 @@
+import type { ContractKey } from '@wedding-planner/shared'
+
+import { ProductError } from '../product_error'
+
 /**
  * @canonical record_store -- the persistence port every product store sits behind (issue #8, ADR 0039).
  *
@@ -34,19 +38,35 @@
 export const GLOBAL_PARTITION = '_global'
 
 /**
+ * Which partitions a collection uses: `tenant` collections are partitioned by tenant_id (and, when they hold
+ * tenant-owned records, are only reached through `TenantScopedRepository`); `global` collections use only
+ * {@link GLOBAL_PARTITION}. The compose census asserts every stored row honors its collection's scope.
+ */
+export type CollectionScope = 'tenant' | 'global'
+
+/**
  * A typed collection handle. The record type is a phantom (compile-time only): it ties every read and write of
- * a collection to one shape, so two call sites cannot disagree about what a collection holds.
+ * a collection to one shape, so two call sites cannot disagree about what a collection holds. `schema` names the
+ * JSON Schema contract every record must satisfy, when the collection has one (the drift test validates stored
+ * records against it).
  */
 export interface Collection<T> {
   readonly name: string
+  readonly scope: CollectionScope
+  readonly schema?: ContractKey
   /** Phantom marker for the record type — never set at runtime. */
   readonly __record?: T
 }
 
-/** Define a collection handle. Names are lowercase snake_case (they are persisted). */
-export function collection<T>(name: string): Collection<T> {
-  if (!/^[a-z][a-z0-9_]*$/.test(name)) throw new Error(`Invalid collection name '${name}'.`)
-  return Object.freeze({ name })
+/**
+ * Define a collection handle. Names are lowercase snake_case (they are persisted). Call this ONLY in
+ * `collections.ts` (an architecture test enforces it), so the census stays the complete list.
+ */
+export function collection<T>(name: string, scope: CollectionScope, schema?: ContractKey): Collection<T> {
+  if (!/^[a-z][a-z0-9_]*$/.test(name)) {
+    throw new ProductError('PERSISTENCE.INVALID_COLLECTION', `Invalid collection name '${name}'.`, { context: { name } })
+  }
+  return Object.freeze({ name, scope, ...(schema === undefined ? {} : { schema }) })
 }
 
 /** The persistence port. See the module docstring for the guarantees every adapter keeps. */
@@ -74,6 +94,10 @@ export type TransactionRunner = Pick<RecordStore, 'transaction'>
  */
 export function assertSynchronousResult(result: unknown): void {
   if (typeof (result as { then?: unknown } | null)?.then === 'function') {
-    throw new Error('RecordStore.transaction takes a synchronous function; it returned a promise.')
+    throw new ProductError(
+      'PERSISTENCE.ASYNC_TRANSACTION',
+      'RecordStore.transaction takes a synchronous function; it returned a promise.',
+      {},
+    )
   }
 }

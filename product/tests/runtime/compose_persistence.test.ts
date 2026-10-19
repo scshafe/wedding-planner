@@ -8,13 +8,15 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   type ApiRequest,
-  COLLECTIONS,
   composeProductSurface,
   type ComposedSurface,
   InMemoryRecordStore,
   type RecordStore,
-  SqliteRecordStore,
 } from '@wedding-planner/product'
+
+import { COLLECTIONS } from '../../src/persistence/collections'
+import { GLOBAL_PARTITION } from '../../src/persistence/record_store'
+import { SqliteRecordStore } from '../../src/persistence/sqlite_record_store'
 
 /**
  * Issue #8 — data survives a restart. The keystone for durability: boot a surface over a SQLite file, write
@@ -176,11 +178,22 @@ describe('durable storage — data written before a restart is read back after i
 
     // ---- The census: every persisted collection has rows in the file (none was left on an in-memory default).
     const db = new DatabaseSync(path)
-    const names = (db.prepare('SELECT DISTINCT collection FROM records ORDER BY collection').all() as { collection: string }[]).map(
-      (row) => row.collection,
-    )
+    const rows = db.prepare('SELECT DISTINCT collection, partition FROM records').all() as {
+      collection: string
+      partition: string
+    }[]
     db.close()
+    const names = [...new Set(rows.map((row) => row.collection))].sort()
     expect(names).toEqual(Object.values(COLLECTIONS).map((c) => c.name).sort())
+    // ... and every row honors its collection's scope: global collections only in the global partition, tenant
+    // collections never in it (a tenant-owned record in the shared partition would bypass the isolation layer).
+    const scopeOf = new Map(Object.values(COLLECTIONS).map((c) => [c.name, c.scope]))
+    for (const row of rows) {
+      expect({ ...row, global: row.partition === GLOBAL_PARTITION }).toEqual({
+        ...row,
+        global: scopeOf.get(row.collection) === 'global',
+      })
+    }
   })
 
   it('the raw session token never reaches the database file', () => {

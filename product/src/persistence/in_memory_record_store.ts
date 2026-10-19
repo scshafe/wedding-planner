@@ -8,9 +8,9 @@ import { assertSynchronousResult, type Collection, type RecordStore } from './re
  * (an `undefined` key, a Date) is caught here, in the fast tests, rather than only against SQLite.
  *
  * Ordering is the backing `Map`'s insertion order, which is exactly the port's contract (replace keeps the
- * position; delete-then-put moves to the end). A transaction snapshots the maps when it begins and restores the
- * snapshot if `fn` throws. The snapshot copies only the map structure (the values are immutable strings), which
- * is cheap at test and demo scale.
+ * position; delete-then-put moves to the end). A transaction snapshots the maps at its first write and restores
+ * the snapshot if `fn` throws. The snapshot copies only the map structure (the values are immutable strings), and
+ * a read-only request takes none.
  *
  * The backing map is `#`-private: it never enumerates, so a store does not leak through `JSON.stringify`.
  *
@@ -20,8 +20,14 @@ import { assertSynchronousResult, type Collection, type RecordStore } from './re
 /** collection -> partition -> key -> record JSON. */
 type Tables = Map<string, Map<string, Map<string, string>>>
 
+/** One open transaction level and the state to restore if it fails (taken at its first write). */
+interface Level {
+  snapshot: Tables | undefined
+}
+
 export class InMemoryRecordStore implements RecordStore {
   #tables: Tables = new Map()
+  readonly #levels: Level[] = []
 
   get<T>(collection: Collection<T>, partition: string, key: string): T | undefined {
     const text = this.#tables.get(collection.name)?.get(partition)?.get(key)
@@ -36,6 +42,7 @@ export class InMemoryRecordStore implements RecordStore {
 
   put<T>(collection: Collection<T>, partition: string, key: string, record: T): void {
     const text = JSON.stringify(record)
+    this.#beforeWrite()
     let partitions = this.#tables.get(collection.name)
     if (partitions === undefined) {
       partitions = new Map()
@@ -50,7 +57,10 @@ export class InMemoryRecordStore implements RecordStore {
   }
 
   delete<T>(collection: Collection<T>, partition: string, key: string): boolean {
-    return this.#tables.get(collection.name)?.get(partition)?.delete(key) ?? false
+    const rows = this.#tables.get(collection.name)?.get(partition)
+    if (rows === undefined || !rows.has(key)) return false
+    this.#beforeWrite() // copies into the snapshot; `rows` is still the live map
+    return rows.delete(key)
   }
 
   isEmpty<T>(collection: Collection<T>): boolean {
@@ -61,16 +71,33 @@ export class InMemoryRecordStore implements RecordStore {
   }
 
   transaction<R>(fn: () => R): R {
-    // Every level snapshots (the savepoint analogue), so a nested call that throws undoes only its own writes,
-    // even when the outer call catches the error and carries on.
-    const snapshot = copyTables(this.#tables)
+    // Every level is a savepoint: a nested call that throws undoes only its own writes, even when the outer call
+    // catches the error and carries on. The snapshot is taken lazily, at the level's first write, so a read-only
+    // request copies nothing.
+    const level: Level = { snapshot: undefined }
+    this.#levels.push(level)
     try {
       const result = fn()
       assertSynchronousResult(result)
       return result
     } catch (error) {
-      this.#tables = snapshot
+      if (level.snapshot !== undefined) this.#tables = copyTables(level.snapshot)
       throw error
+    } finally {
+      this.#levels.pop()
+    }
+  }
+
+  /** Before any mutation: give every open level that has not written yet its snapshot of the current state. */
+  #beforeWrite(): void {
+    let snapshot: Tables | undefined
+    for (const level of this.#levels) {
+      if (level.snapshot === undefined) {
+        // Levels without a snapshot all start from this same state, so they can share one copy (a rollback
+        // restores a COPY of it, never the shared object itself).
+        snapshot ??= copyTables(this.#tables)
+        level.snapshot = snapshot
+      }
     }
   }
 }

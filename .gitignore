@@ -17,6 +17,14 @@ build/
 coverage/
 .cache/
 
+# Local databases (issue #8): never commit guest data or session rows
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+wp-data/
+deploy/stack/state/
+
 # Logs & env
 *.log
 .env

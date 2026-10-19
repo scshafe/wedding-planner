@@ -347,6 +347,8 @@ export class ProductApi {
    */
   handle(req: ApiRequest): ApiResponse {
     try {
+      // Liveness never waits on the store: /healthz reads nothing, so it answers outside any transaction.
+      if (isHealthz(req)) return this.#route(req)
       return this.#transactions.transaction(() => this.#route(req))
     } catch (error) {
       // Catch the whole WeddingPlannerError family (ProductError + the shared ContractValidationFailedError
@@ -381,10 +383,16 @@ export class ProductApi {
       // Stage 2 — the SOLE per-request context mint (404 on unknown/unusable, no absent-vs-suspended oracle).
       const context = this.#resolver.resolveBySlug(slug)
 
-      // /t/:slug/sessions — the login mint (unauthenticated by design; it ISSUES the session).
+      // /t/:slug/sessions — POST is the login mint (unauthenticated by design; it ISSUES the session). DELETE is
+      // sign-out (issue #8: sessions persist, so ending one is server-side): stages 3–4 run first, so only a live
+      // session bound to this tenant can revoke itself.
       if (segments.length === 3 && segments[2] === 'sessions') {
-        if (req.method !== 'POST') throw methodNotAllowed()
-        return this.#handleLogin(context, req)
+        if (req.method === 'POST') return this.#handleLogin(context, req)
+        if (req.method === 'DELETE') {
+          this.#authenticate(req, context)
+          return { status: 200, body: { signed_out: this.#sessionStore.revoke(bearerToken(req.headers.authorization)) } }
+        }
+        throw methodNotAllowed()
       }
 
       // /t/:slug/weddings[...] — PROTECTED: stages 3–4 run BEFORE any method/shape distinction.
@@ -503,6 +511,11 @@ export class ProductApi {
       throw new ProductError('PRODUCT.BAD_REQUEST', 'role must be "planner" or "couple".', {})
     }
     const wedding_id = optionalString(body, 'wedding_id')
+    // A SHAPE check only (an id-like token, bounded), never an existence check (no oracle): an unbounded opaque
+    // value would otherwise be persisted in every session row this unauthenticated route mints.
+    if (wedding_id !== undefined && !OPAQUE_ID.test(wedding_id)) {
+      throw new ProductError('PRODUCT.BAD_REQUEST', 'wedding_id is not a valid id.', {})
+    }
     // SessionStore enforces the couple-needs-wedding_id rule and never verifies its existence (no oracle).
     const session = this.#sessionStore.login(context, { role, wedding_id })
     return {
@@ -1274,6 +1287,15 @@ function handleProvision(req: ApiRequest, deps: AdminHandlerDeps): ApiResponse {
 }
 
 // ---------------------------------- request/response helpers ----------------------------------
+
+/** The shape of a server-minted id (`wedding_…`), bounded: what an unauthenticated route may persist. */
+const OPAQUE_ID = /^[A-Za-z0-9_-]{1,128}$/
+
+/** Whether the request is the liveness probe (`GET /healthz`, or any method on it, which 405s). */
+function isHealthz(req: ApiRequest): boolean {
+  const segments = splitPath(req.path)
+  return segments.length === 1 && segments[0] === 'healthz'
+}
 
 /** Extract the token from an `Authorization: Bearer <token>` header (case-insensitive scheme). */
 function bearerToken(header: string | undefined): string | undefined {

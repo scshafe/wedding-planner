@@ -78,6 +78,9 @@ services:
       # The durable store (issue #8): migrated at boot; a missing or newer
       # schema fails the boot, and the deploy rolls back.
       WP_DATABASE_PATH: /data/wedding-planner.sqlite
+      # Refuse to boot without WP_DATABASE_PATH, demo mode or not: production
+      # must never fall back to the in-memory store.
+      WP_REQUIRE_DATABASE: "true"
       # WP_SEED_DEMO defaults to true: the demo tenant is seeded into an empty
       # database only (first boot); later boots keep the data.
     healthcheck:

@@ -111,8 +111,6 @@ export interface ComposedSurface {
   readonly operatorToken: string
   /** The demo tenant handle, or undefined when the seed did not run (`seedDemo` false, or the store had data). */
   readonly demo?: DemoSeed
-  /** The persistence store the surface is built over (exposed for tests/inspection). */
-  readonly store: RecordStore
   /**
    * Phase 18: the metered, margin-priced guest-messaging service, wired over the offline simulated provider
    * adapter (which takes the SAME injected clock/ids, so the determinism rail holds). Exposed for
@@ -152,7 +150,8 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   // The shared backbone: one tenant store the resolver, theme resolver, onboarding, and repo all read.
   const tenants = new TenantStore(clock, ids, store)
   const resolver = new TenantContextResolver(tenants)
-  const sessionStore = new SessionStore(ids, store)
+  // Sessions persist, so they expire (7 days) and lapsed ones are swept at boot (below).
+  const sessionStore = new SessionStore(ids, store, { clock })
   const operators = new OperatorCredentialStore(ids, [operatorToken])
   const webhookCredentials = new ProviderWebhookCredentialStore(ids, [config.providerWebhookToken])
   const billing = new BillingLedger(clock, ids, store)
@@ -265,5 +264,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     }
   })
 
-  return { ui, api, themes, operatorToken, demo, store, messaging, escalations, resolutions }
+  store.transaction(() => sessionStore.sweepExpired())
+
+  return { ui, api, themes, operatorToken, demo, messaging, escalations, resolutions }
 }

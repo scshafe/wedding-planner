@@ -21,6 +21,8 @@ import type { DemoSeed } from '@wedding-planner/product'
  *   - `WP_DATABASE_PATH` set: the durable SQLite store at that path (the stack points it into its `./state` bind).
  *   - unset + seedDemo: an in-memory store — the offline demo, reset by every restart, and the boot log says so.
  *   - unset + NOT seedDemo: FAIL CLOSED — a real build must never quietly run on a store that a restart wipes.
+ *   - unset + `WP_REQUIRE_DATABASE` true: FAIL CLOSED even in demo mode — the deployed stack sets it, so losing
+ *     `WP_DATABASE_PATH` from its compose file can never silently put production back in memory.
  *
  * related: server.ts (the impure main that injects process.env + a crypto generator), compose.ts.
  */
@@ -80,6 +82,9 @@ export function resolveServerConfig(env: Env, generateToken: () => string): Serv
     throw new Error(
       'WP_DATABASE_PATH is required when WP_SEED_DEMO is false (a non-demo build must not run on a store that a restart wipes). Set WP_DATABASE_PATH and retry.',
     )
+  }
+  if (databasePath === undefined && parseBool(env.WP_REQUIRE_DATABASE, false)) {
+    throw new Error('WP_DATABASE_PATH is required because WP_REQUIRE_DATABASE is set. Set WP_DATABASE_PATH and retry.')
   }
 
   return {

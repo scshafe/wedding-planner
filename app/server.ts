@@ -1,16 +1,12 @@
 import { randomUUID } from 'node:crypto'
 
-import {
-  composeProductSurface,
-  createProductWebUiServer,
-  InMemoryRecordStore,
-  type RecordStore,
-  SqliteRecordStore,
-} from '@wedding-planner/product'
+import { composeProductSurface, createProductWebUiServer, InMemoryRecordStore, type RecordStore } from '@wedding-planner/product'
 
 // The edge-only primitives are imported by RELATIVE PATH on purpose: they are exported from neither the
 // shared nor the product barrel, so this entrypoint is the sole place a wall clock + a non-deterministic id
-// source enter the system (the determinism rail holds everywhere else by reachability).
+// source (and, since issue #8, the database file) enter the system (the rails hold everywhere else by
+// reachability).
+import { SqliteRecordStore } from '../product/src/persistence/sqlite_record_store'
 import { RandomIdGenerator } from '../product/src/runtime/random_id_generator'
 import { SystemClock } from '../product/src/runtime/system_clock'
 import { assertTier1Champion, publishedChampion } from './published_champion'

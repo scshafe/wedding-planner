@@ -123,6 +123,17 @@ describe('resolveServerConfig — the storage policy (issue #8, fail-closed)', (
     expect(resolveServerConfig({ ...realTokens, WP_DATABASE_PATH: '   ' }, constGen('g')).databasePath).toBeUndefined()
   })
 
+  it('FAILS CLOSED without WP_DATABASE_PATH when WP_REQUIRE_DATABASE is set, even in demo mode', () => {
+    expect(() => resolveServerConfig({ ...realTokens, WP_REQUIRE_DATABASE: 'true' }, constGen('g'))).toThrow(
+      /WP_REQUIRE_DATABASE/,
+    )
+    expect(
+      resolveServerConfig({ ...realTokens, WP_REQUIRE_DATABASE: 'true', WP_DATABASE_PATH: '/data/wp.sqlite' }, constGen('g'))
+        .databasePath,
+    ).toBe('/data/wp.sqlite')
+    expect(resolveServerConfig({ ...realTokens, WP_REQUIRE_DATABASE: 'false' }, constGen('g')).databasePath).toBeUndefined()
+  })
+
   it('FAILS CLOSED when WP_DATABASE_PATH is unset AND seedDemo is false', () => {
     expect(() => resolveServerConfig({ ...realTokens, WP_SEED_DEMO: 'false' }, constGen('g'))).toThrow(
       /WP_DATABASE_PATH is required/,

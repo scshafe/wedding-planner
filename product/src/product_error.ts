@@ -18,6 +18,15 @@ import { WeddingPlannerError } from '@wedding-planner/shared'
  *   - PRODUCT.BAD_REQUEST            a malformed request (unparseable body, missing required field)
  *   - PRODUCT.ROUTE_NOT_FOUND        no route matches the request path
  *   - PRODUCT.METHOD_NOT_ALLOWED     the path is known but the method is not
+ *
+ * The persistence layer (issue #8, ADR 0039) raises PERSISTENCE.<FAILURE_MODE> through the same class:
+ *   - PERSISTENCE.OPEN_FAILED          the database file could not be opened (boot refuses)
+ *   - PERSISTENCE.SCHEMA_TOO_NEW       a newer build applied a migration this build cannot read (boot refuses)
+ *   - PERSISTENCE.MIGRATION_MISMATCH   the database's migration history diverges from this build (boot refuses)
+ *   - PERSISTENCE.INVALID_MIGRATIONS   the migration list itself is malformed (a programming error)
+ *   - PERSISTENCE.INVALID_COLLECTION   a malformed collection name, or a global collection under a tenant repo
+ *   - PERSISTENCE.ASYNC_TRANSACTION    a transaction body returned a promise (a programming error)
+ *   - PERSISTENCE.STORAGE_FAILED       a database operation failed at runtime (disk full, I/O, lock timeout)
  *   - PRODUCT.NO_OPERATOR            an /admin request carried no / an unknown operator token (Phase 15)
  *   - PRODUCT.FORGED_OPERATOR        an Operator reached a check without the OperatorCredentialStore's brand
  *   - PRODUCT.DUPLICATE_OPERATOR_TOKEN two seeded operator credential tokens collided

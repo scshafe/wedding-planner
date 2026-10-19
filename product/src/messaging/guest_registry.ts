@@ -64,7 +64,7 @@ export class GuestRegistry {
   readonly #repo: TenantScopedRepository<GuestBinding>
 
   constructor(liveness: TenantLivenessCheck, store?: RecordStore) {
-    this.#repo = new TenantScopedRepository<GuestBinding>(liveness, (binding) => binding.recipient_ref, COLLECTIONS.guest, store)
+    this.#repo = new TenantScopedRepository<GuestBinding>(liveness, (binding) => binding.recipient_ref, COLLECTIONS.guestBinding, store)
   }
 
   /**

@@ -1,3 +1,4 @@
+import { chmodSync, existsSync } from 'node:fs'
 import { DatabaseSync, type StatementSync } from 'node:sqlite'
 
 import type { Clock } from '@wedding-planner/shared'
@@ -17,15 +18,28 @@ import { SQLITE_MIGRATIONS, type SqliteMigration } from './sqlite_migrations'
  * Durability and backups: the database runs in rollback-journal mode (`journal_mode=DELETE`) with
  * `synchronous=FULL`. Between transactions the single database file IS the whole state (no `-wal` file holding
  * committed data), so the stack's file-level backup of `state/app` copies a complete database unless a write
- * happens during the copy. `busy_timeout` lets a second process (an overlapping container during a deploy) wait
- * for the lock instead of failing.
+ * happens during the copy. `busy_timeout` is set FIRST, so a second process (an overlapping container during a
+ * deploy) waits for the lock instead of failing the open.
  *
- * Opening is fail-closed: an unopenable file, a schema newer than this build, or a migration history that
- * diverges from `SQLITE_MIGRATIONS` throws a `PERSISTENCE.*` ProductError, and the entrypoint refuses to boot.
- * `applied_at` comes from the injected clock (the determinism rail: no ambient time here).
+ * Hardening: `secure_delete` overwrites deleted content (a removed guest does not linger in the file or its
+ * backups); `max_page_count` caps the file (default 1 GiB), so a runaway writer fails its own requests instead of
+ * filling the host disk; the file is made owner-only (0600).
+ *
+ * Opening is fail-closed (PERSISTENCE.* codes; the entrypoint refuses to boot): an unopenable file, a migration
+ * history that diverges from `SQLITE_MIGRATIONS`, or a database migrated by a newer build with a migration that
+ * older builds cannot read. A newer database whose extra migrations are all `olderBuildsCanRead` opens normally,
+ * so rolling a deploy back across an additive migration works. Before applying migrations to an existing
+ * database, `open` writes a consistent snapshot next to it (`VACUUM INTO`), the restore point for a migration
+ * that turns out wrong. `applied_at` comes from the injected clock (the determinism rail: no ambient time here).
+ *
+ * Runtime failures (disk full, I/O, a lock held too long) surface as PERSISTENCE.STORAGE_FAILED with the SQLite
+ * error as `cause`; the request's transaction rolls back and the client gets the constant 500.
  *
  * related: record_store.ts (the port), sqlite_migrations.ts (the schema), in_memory_record_store.ts (the twin).
  */
+
+/** The default size cap of the database file. */
+export const DEFAULT_MAX_DATABASE_BYTES = 1024 * 1024 * 1024
 
 export interface OpenSqliteRecordStoreOptions {
   /** The database file (created if missing), or `':memory:'` for a throwaway database. */
@@ -34,10 +48,18 @@ export interface OpenSqliteRecordStoreOptions {
   readonly clock: Clock
   /** Override the migration list (tests only). */
   readonly migrations?: readonly SqliteMigration[]
+  /** Override the size cap (tests only). */
+  readonly maxDatabaseBytes?: number
 }
 
 interface BodyRow {
   readonly body: string
+}
+
+interface AppliedMigrationRow {
+  readonly version: number
+  readonly name: string
+  readonly older_builds_can_read: number
 }
 
 export class SqliteRecordStore implements RecordStore {
@@ -63,12 +85,20 @@ export class SqliteRecordStore implements RecordStore {
 
   /** Open (creating if needed) the database at `path` and bring its schema up to date. */
   static open(options: OpenSqliteRecordStoreOptions): SqliteRecordStore {
+    const migrations = options.migrations ?? SQLITE_MIGRATIONS
+    assertWellFormed(migrations)
+    const onDisk = options.path !== ':memory:'
     let db: DatabaseSync
     try {
       db = new DatabaseSync(options.path)
+      // busy_timeout FIRST: the PRAGMAs below take locks, and must wait for (not fail on) another process.
+      db.exec('PRAGMA busy_timeout = 5000')
       db.exec('PRAGMA journal_mode = DELETE')
       db.exec('PRAGMA synchronous = FULL')
-      db.exec('PRAGMA busy_timeout = 5000')
+      db.exec('PRAGMA secure_delete = ON')
+      const pageSize = Number((db.prepare('PRAGMA page_size').get() as { page_size: number }).page_size)
+      const maxBytes = options.maxDatabaseBytes ?? DEFAULT_MAX_DATABASE_BYTES
+      db.exec(`PRAGMA max_page_count = ${Math.max(1, Math.floor(maxBytes / pageSize))}`)
     } catch (error) {
       throw new ProductError('PERSISTENCE.OPEN_FAILED', 'Could not open the database file.', {
         context: { path: options.path },
@@ -76,7 +106,8 @@ export class SqliteRecordStore implements RecordStore {
       })
     }
     try {
-      migrate(db, options.migrations ?? SQLITE_MIGRATIONS, options.clock)
+      if (onDisk) ownerOnly(options.path)
+      migrate(db, migrations, options.clock, onDisk ? options.path : undefined)
       return new SqliteRecordStore(db)
     } catch (error) {
       db.close()
@@ -85,31 +116,32 @@ export class SqliteRecordStore implements RecordStore {
   }
 
   get<T>(collection: Collection<T>, partition: string, key: string): T | undefined {
-    const row = this.#get.get(collection.name, partition, key) as BodyRow | undefined
+    const row = storage(() => this.#get.get(collection.name, partition, key)) as BodyRow | undefined
     return row === undefined ? undefined : (JSON.parse(row.body) as T)
   }
 
   list<T>(collection: Collection<T>, partition: string): T[] {
-    const rows = this.#list.all(collection.name, partition) as unknown as BodyRow[]
+    const rows = storage(() => this.#list.all(collection.name, partition)) as unknown as BodyRow[]
     return rows.map((row) => JSON.parse(row.body) as T)
   }
 
   put<T>(collection: Collection<T>, partition: string, key: string, record: T): void {
-    this.#put.run(collection.name, partition, key, JSON.stringify(record))
+    const body = JSON.stringify(record)
+    storage(() => this.#put.run(collection.name, partition, key, body))
   }
 
   delete<T>(collection: Collection<T>, partition: string, key: string): boolean {
-    return Number(this.#delete.run(collection.name, partition, key).changes) > 0
+    return Number(storage(() => this.#delete.run(collection.name, partition, key)).changes) > 0
   }
 
   isEmpty<T>(collection: Collection<T>): boolean {
-    return this.#any.get(collection.name) === undefined
+    return storage(() => this.#any.get(collection.name)) === undefined
   }
 
   transaction<R>(fn: () => R): R {
     const outermost = this.#depth === 0
     const savepoint = `sp_${this.#depth}`
-    this.#db.exec(outermost ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${savepoint}`)
+    storage(() => this.#db.exec(outermost ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${savepoint}`))
     this.#depth += 1
     let result: R
     try {
@@ -117,14 +149,17 @@ export class SqliteRecordStore implements RecordStore {
       assertSynchronousResult(result)
     } catch (error) {
       this.#depth -= 1
-      this.#db.exec(outermost ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`)
+      // Quietly: SQLite may already have rolled back on its own (disk full, I/O), and a failing ROLLBACK must
+      // never replace the error that actually happened.
+      if (outermost) execQuietly(this.#db, 'ROLLBACK')
+      else execQuietly(this.#db, `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`)
       throw error
     }
     this.#depth -= 1
     try {
-      this.#db.exec(outermost ? 'COMMIT' : `RELEASE ${savepoint}`)
+      storage(() => this.#db.exec(outermost ? 'COMMIT' : `RELEASE ${savepoint}`))
     } catch (error) {
-      if (outermost) rollbackQuietly(this.#db)
+      if (outermost) execQuietly(this.#db, 'ROLLBACK')
       throw error
     }
     return result
@@ -136,28 +171,51 @@ export class SqliteRecordStore implements RecordStore {
   }
 }
 
-/** Apply the pending migrations in one transaction, or refuse a database this build does not understand. */
-function migrate(db: DatabaseSync, migrations: readonly SqliteMigration[], clock: Clock): void {
+/** Refuse a malformed migration list (a programming error, caught at boot). */
+function assertWellFormed(migrations: readonly SqliteMigration[]): void {
   migrations.forEach((migration, index) => {
-    if (migration.version !== index + 1) throw new Error('SQLITE_MIGRATIONS must be numbered 1, 2, 3, … with no gaps.')
+    if (migration.version !== index + 1) {
+      throw new ProductError('PERSISTENCE.INVALID_MIGRATIONS', 'SQLITE_MIGRATIONS must be numbered 1, 2, 3, … with no gaps.', {
+        context: { index, version: migration.version },
+      })
+    }
   })
+}
+
+/**
+ * Bring the schema up to date in one transaction, or refuse a database this build does not understand.
+ * `databasePath` (when on disk) is where the pre-migration snapshot is written beside.
+ */
+function migrate(db: DatabaseSync, migrations: readonly SqliteMigration[], clock: Clock, databasePath: string | undefined): void {
+  const readApplied = (): AppliedMigrationRow[] => {
+    const exists = db.prepare("SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get()
+    if (exists === undefined) return []
+    return db
+      .prepare('SELECT version, name, older_builds_can_read FROM schema_migrations ORDER BY version')
+      .all() as unknown as AppliedMigrationRow[]
+  }
+
+  // The restore point: an existing database about to be migrated gets a consistent copy first. VACUUM INTO cannot
+  // run inside a transaction, so this happens before BEGIN; an existing snapshot for the same step is kept.
+  const before = readApplied()
+  if (databasePath !== undefined && before.length > 0 && before.length < migrations.length) {
+    const snapshot = `${databasePath}.pre-v${before.length + 1}.sqlite`
+    if (!existsSync(snapshot)) {
+      db.prepare('VACUUM INTO ?').run(snapshot)
+      ownerOnly(snapshot)
+    }
+  }
+
   db.exec('BEGIN IMMEDIATE')
   try {
     db.exec(
-      'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL) STRICT',
+      'CREATE TABLE IF NOT EXISTS schema_migrations (' +
+        'version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL, older_builds_can_read INTEGER NOT NULL' +
+        ') STRICT',
     )
-    const applied = db.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all() as unknown as {
-      version: number
-      name: string
-    }[]
-    if (applied.length > migrations.length) {
-      throw new ProductError(
-        'PERSISTENCE.SCHEMA_TOO_NEW',
-        'The database was migrated by a newer build than this one; restore the pre-deploy backup to roll back.',
-        { context: { database_version: applied.length, build_version: migrations.length } },
-      )
-    }
-    applied.forEach((row, index) => {
+    // Re-read under the lock: another process may have migrated meanwhile.
+    const applied = readApplied()
+    applied.slice(0, migrations.length).forEach((row, index) => {
       const known = migrations[index]
       if (known === undefined || row.version !== known.version || row.name !== known.name) {
         throw new ProductError('PERSISTENCE.MIGRATION_MISMATCH', 'The database migration history does not match this build.', {
@@ -165,22 +223,51 @@ function migrate(db: DatabaseSync, migrations: readonly SqliteMigration[], clock
         })
       }
     })
-    const record = db.prepare('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)')
+    const unknown = applied.slice(migrations.length)
+    if (unknown.some((row) => row.older_builds_can_read !== 1)) {
+      throw new ProductError(
+        'PERSISTENCE.SCHEMA_TOO_NEW',
+        'The database was migrated by a newer build with a change this build cannot read; restore the pre-migration snapshot or backup to roll back.',
+        { context: { database_version: applied.length, build_version: migrations.length } },
+      )
+    }
+    const record = db.prepare(
+      'INSERT INTO schema_migrations (version, name, applied_at, older_builds_can_read) VALUES (?, ?, ?, ?)',
+    )
     for (const migration of migrations.slice(applied.length)) {
       migration.up(db)
-      record.run(migration.version, migration.name, clock.now())
+      record.run(migration.version, migration.name, clock.now(), migration.olderBuildsCanRead ? 1 : 0)
     }
     db.exec('COMMIT')
   } catch (error) {
-    rollbackQuietly(db)
+    execQuietly(db, 'ROLLBACK')
     throw error
   }
 }
 
-function rollbackQuietly(db: DatabaseSync): void {
+/** Run a storage operation, surfacing a SQLite failure as PERSISTENCE.STORAGE_FAILED (the cause preserved). */
+function storage<R>(operation: () => R): R {
   try {
-    db.exec('ROLLBACK')
+    return operation()
+  } catch (error) {
+    if (error instanceof ProductError) throw error
+    throw new ProductError('PERSISTENCE.STORAGE_FAILED', 'A database operation failed.', { cause: error })
+  }
+}
+
+/** Make a database file readable and writable by its owner only. Best effort: hardening, never a boot blocker. */
+function ownerOnly(path: string): void {
+  try {
+    chmodSync(path, 0o600)
   } catch {
-    // No transaction was open (it never began, or SQLite already rolled it back).
+    // A filesystem that does not support modes (or a path we do not own) keeps its defaults.
+  }
+}
+
+function execQuietly(db: DatabaseSync, sql: string): void {
+  try {
+    db.exec(sql)
+  } catch {
+    // Nothing to undo (SQLite already rolled back, or no transaction was open).
   }
 }

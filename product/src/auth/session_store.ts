@@ -1,4 +1,4 @@
-import { type IdGenerator, sha256Hex } from '@wedding-planner/shared'
+import { type Clock, type IdGenerator, sha256Hex } from '@wedding-planner/shared'
 
 import { COLLECTIONS } from '../persistence/collections'
 import { InMemoryRecordStore } from '../persistence/in_memory_record_store'
@@ -23,6 +23,12 @@ import { mintPrincipal, type Principal, type PrincipalRole } from './principal'
  * SHA-256 of the token: the raw bearer token is never stored, so the database file and its backups hold nothing
  * a reader could present as a session. (A plain hash is enough: the token is 122 random bits, not a password.)
  * `resolve` re-mints the Principal from the stored record on every call, so the store stays the sole mint.
+ *
+ * Because sessions now outlive a deploy, each records HOW it was authenticated (`auth`) and, when the store has a
+ * clock, when it lapses: a lookup refuses any `auth` kind this build does not issue and any expired session
+ * (deleting it), `revoke` ends one server-side (sign-out), and `sweepExpired` prunes lapsed rows at boot. Today
+ * every session is `auth: 'simulated'` (the role-picker login): real accounts (issue #10) introduce a new kind
+ * and must decide what simulated sessions may still do — a store that stops issuing `simulated` stops honoring it.
  *
  * Login is a SIMULATION, honest about it (offline-first): it takes an already-*resolved* TenantContext
  * (so the principal's tenant_id is the context's, never a raw slug echo) and does NOT verify a real
@@ -59,22 +65,45 @@ export interface Session {
  * DOM, preserving HttpOnly). Keyed by sha256(session token); the token itself is not in the record.
  */
 export interface StoredSession {
+  /** How the session was authenticated. A kind this build does not issue is refused at lookup. */
+  readonly auth: SessionAuth
+  /** sha256 of the token: the record's own key (lets `sweepExpired` delete it). Never the token itself. */
+  readonly token_hash: string
   readonly tenant_id: string
   readonly role: PrincipalRole
   readonly wedding_id?: string
   readonly principal_id: string
   readonly csrf_token: string
+  /** Present when the store has a clock (the composed surface always does). */
+  readonly issued_at?: string
+  readonly expires_at?: string
+}
+
+/** The session kinds this build issues and honors. */
+export type SessionAuth = 'simulated'
+
+/** How long a session lasts (7 days). */
+export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
+
+/** The clock that gives sessions an expiry. Without it (test fixtures) sessions do not lapse. */
+export interface SessionExpiryOptions {
+  readonly clock: Clock
+  readonly ttlSeconds?: number
 }
 
 export class SessionStore implements CsrfGuard {
   /** sha256(token) -> session. `#`-private: never enumerates, never serializes. */
   readonly #store: RecordStore
 
+  readonly #expiry: { readonly clock: Clock; readonly ttlSeconds: number } | undefined
+
   constructor(
     private readonly ids: IdGenerator,
     store: RecordStore = new InMemoryRecordStore(),
+    expiry?: SessionExpiryOptions,
   ) {
     this.#store = store
+    this.#expiry = expiry === undefined ? undefined : { clock: expiry.clock, ttlSeconds: expiry.ttlSeconds ?? SESSION_TTL_SECONDS }
   }
 
   /**
@@ -101,15 +130,38 @@ export class SessionStore implements CsrfGuard {
     const token = this.ids.next('session')
     // A SEPARATE id (never the session token) — the per-session CSRF secret bound to this session.
     const csrf_token = this.ids.next('csrf')
+    const token_hash = sessionKey(token)
     const stored: StoredSession = {
+      auth: 'simulated',
+      token_hash,
       tenant_id: principal.tenant_id,
       role: principal.role,
       ...(principal.wedding_id === undefined ? {} : { wedding_id: principal.wedding_id }),
       principal_id: principal.principal_id,
       csrf_token,
+      ...this.#lifetime(),
     }
-    this.#store.put(COLLECTIONS.session, GLOBAL_PARTITION, sessionKey(token), stored)
+    this.#store.put(COLLECTIONS.session, GLOBAL_PARTITION, token_hash, stored)
     return { token, principal, csrf_token }
+  }
+
+  /** End a session server-side (sign-out). Idempotent; returns whether a session was removed. */
+  revoke(token: string | undefined): boolean {
+    if (token === undefined || token.length === 0) return false
+    return this.#store.delete(COLLECTIONS.session, GLOBAL_PARTITION, sessionKey(token))
+  }
+
+  /** Delete every lapsed session (run at boot). A store without a clock has nothing to sweep. Returns the count. */
+  sweepExpired(): number {
+    if (this.#expiry === undefined) return 0
+    let removed = 0
+    for (const session of this.#store.list(COLLECTIONS.session, GLOBAL_PARTITION)) {
+      if (this.#isExpired(session)) {
+        this.#store.delete(COLLECTIONS.session, GLOBAL_PARTITION, session.token_hash)
+        removed += 1
+      }
+    }
+    return removed
   }
 
   /** Exchange a presented token for its principal, or `undefined` for an unknown/absent token (fail closed). */
@@ -140,10 +192,33 @@ export class SessionStore implements CsrfGuard {
     return constantTimeEqual(stored.csrf_token, candidate)
   }
 
-  /** The stored session for a presented token (hashed before lookup), or undefined for an absent/unknown one. */
+  /**
+   * The live session for a presented token (hashed before lookup), or undefined for an absent/unknown token, a
+   * session kind this build does not honor, or an expired session (deleted on sight).
+   */
   #lookup(token: string | undefined): StoredSession | undefined {
     if (token === undefined || token.length === 0) return undefined
-    return this.#store.get(COLLECTIONS.session, GLOBAL_PARTITION, sessionKey(token))
+    const key = sessionKey(token)
+    const stored = this.#store.get(COLLECTIONS.session, GLOBAL_PARTITION, key)
+    if (stored === undefined || stored.auth !== 'simulated') return undefined
+    if (this.#isExpired(stored)) {
+      this.#store.delete(COLLECTIONS.session, GLOBAL_PARTITION, key)
+      return undefined
+    }
+    return stored
+  }
+
+  /** issued_at/expires_at for a new session, when the store has a clock. */
+  #lifetime(): { issued_at?: string; expires_at?: string } {
+    if (this.#expiry === undefined) return {}
+    const issued_at = this.#expiry.clock.now()
+    const expires_at = new Date(Date.parse(issued_at) + this.#expiry.ttlSeconds * 1000).toISOString()
+    return { issued_at, expires_at }
+  }
+
+  #isExpired(session: StoredSession): boolean {
+    if (this.#expiry === undefined || session.expires_at === undefined) return false
+    return Date.parse(session.expires_at) <= Date.parse(this.#expiry.clock.now())
   }
 }
 
