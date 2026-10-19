@@ -2,12 +2,13 @@ import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Wed
 
 import type { BillingActivityEntry } from '../billing/billing_activity'
 import type { BillingSummary } from '../billing/billing_summary'
-import type { CsrfGuard } from '../auth/csrf_guard'
+import { constantTimeEqual, type CsrfGuard } from '../auth/csrf_guard'
 import type { ApiRequest } from '../http/api_message'
 import { splitPath } from '../http/path'
 import type { ProductApi } from '../http/product_api'
 import type { StrategyGuidance } from '../strategy/strategy_guidance'
 import { WEDDING_LOGISTICS_FIELDS } from '../wedding/wedding_repository'
+import { ProductError } from '../product_error'
 import { readCookie } from './cookies'
 import { normalizeSlugForRoute } from './html'
 import { OperatorConsole } from './operator_console'
@@ -23,10 +24,12 @@ import {
   renderDetail,
   renderEscalations,
   renderForbidden,
+  renderForgot,
   renderGuests,
   renderHome,
   renderLanding,
   renderLogin,
+  renderReset,
   renderStrategy,
 } from './pages'
 import type { ThemeResolver } from './theme_resolver'
@@ -73,6 +76,14 @@ import { htmlResult, type HttpResult, jsonResultFrom, redirect } from './web_res
 /** The cookie that carries the opaque session token. */
 const SESSION_COOKIE = 'wp_session'
 
+/**
+ * Issue #10: the PRE-SESSION anti-forgery cookie (double-submit). The sign-in, forgot and reset forms run before
+ * any session exists, so they cannot use the per-session CSRF token. Each render of those pages sets this cookie
+ * (HttpOnly, SameSite=Strict, scoped to the tenant) and embeds the same value in the form; a POST must present
+ * both, equal. A cross-site page can neither read the value nor make the browser send the cookie.
+ */
+const PRE_SESSION_COOKIE = 'wp_pre'
+
 /** A server-minted token charset guard — never emit a cookie value that could break the header. */
 const SAFE_TOKEN = /^[A-Za-z0-9_-]+$/
 
@@ -90,6 +101,12 @@ export interface ProductWebUiDeps {
    * operator console (operator_console.ts) is mounted under /admin; absent ⇒ /admin is the JSON API only.
    */
   readonly operatorCsrf?: CsrfGuard
+  /**
+   * Issue #10: real sign-in. Present ⇒ the login page offers email + password (and forgot / reset pages exist),
+   * with the simulated role picker only on `simulatedSlug` (the demo tenant in demo mode); `newToken` mints the
+   * pre-session anti-forgery values. Absent ⇒ the legacy picker-only page (hand-built fixtures).
+   */
+  readonly accounts?: { readonly simulatedSlug?: string; readonly newToken: () => string }
 }
 
 export class ProductWebUi {
@@ -97,6 +114,7 @@ export class ProductWebUi {
   readonly #themes: ThemeResolver
   readonly #csrf: CsrfGuard
   readonly #operatorConsole: OperatorConsole | undefined
+  readonly #accounts: ProductWebUiDeps['accounts']
 
   constructor(deps: ProductWebUiDeps) {
     this.#api = deps.api
@@ -104,6 +122,7 @@ export class ProductWebUi {
     this.#csrf = deps.csrf
     this.#operatorConsole =
       deps.operatorCsrf === undefined ? undefined : new OperatorConsole({ api: deps.api, csrf: deps.operatorCsrf })
+    this.#accounts = deps.accounts
   }
 
   /** Run a request through the HTML front door. Never throws — any slip becomes the constant 500. */
@@ -143,6 +162,9 @@ export class ProductWebUi {
       if (segments.length === 3) {
         if (segments[2] === 'login') return slug === undefined ? GENERIC_404 : this.#login(req, slug)
         if (segments[2] === 'logout') return slug === undefined ? GENERIC_404 : this.#logout(req, slug)
+        // Issue #10: password recovery pages (only with real accounts wired).
+        if (this.#accounts !== undefined && segments[2] === 'forgot') return slug === undefined ? GENERIC_404 : this.#forgot(req, slug)
+        if (this.#accounts !== undefined && segments[2] === 'reset') return slug === undefined ? GENERIC_404 : this.#reset(req, slug)
         // GET only — a non-GET /t/:slug/strategy falls through to the JSON pipeline (401/405).
         if (segments[2] === 'strategy' && req.method === 'GET') {
           return slug === undefined ? GENERIC_404 : this.#strategy(req, slug)
@@ -557,10 +579,7 @@ export class ProductWebUi {
 
   /** Map a non-200 API status to a page. 401 -> themed login (active); 403 -> forbidden; else masked 404. */
   #renderNonData(slug: string, status: number): HttpResult {
-    if (status === 401) {
-      const theme = this.#themes.resolveActiveTheme(slug)
-      return theme === undefined ? GENERIC_404 : htmlResult(200, renderLogin(theme, slug))
-    }
+    if (status === 401) return this.#loginPage(slug, 200)
     if (status === 403) {
       const theme = this.#themes.resolveActiveTheme(slug)
       return theme === undefined ? GENERIC_404 : htmlResult(403, renderForbidden(theme, slug))
@@ -569,14 +588,54 @@ export class ProductWebUi {
   }
 
   /** GET shows the themed login form; POST runs the simulated login and sets the session cookie. */
+  /**
+   * The themed sign-in page at `status`. With real accounts: the password form (carrying a fresh pre-session
+   * anti-forgery value, set as the `wp_pre` cookie too) and, on the demo tenant only, the labeled picker.
+   */
+  #loginPage(slug: string, status: number, notice?: 'credentials' | 'rate_limited' | 'expired' | 'reset_done', invalid = false): HttpResult {
+    const theme = this.#themes.resolveActiveTheme(slug)
+    if (theme === undefined) return GENERIC_404
+    if (this.#accounts === undefined) return htmlResult(status, renderLogin(theme, slug, invalid))
+    const preCsrf = this.#accounts.newToken()
+    const simulated = this.#accounts.simulatedSlug === slug
+    return htmlResult(
+      status,
+      renderLogin(theme, slug, invalid, { preCsrf, simulated, ...(notice === undefined ? {} : { notice }) }),
+      this.#preCookie(slug, preCsrf),
+    )
+  }
+
+  /** The Set-Cookie header for a fresh pre-session anti-forgery value. */
+  #preCookie(slug: string, value: string): Record<string, string> {
+    if (!SAFE_TOKEN.test(value)) throw new ProductError('PRODUCT.UNSAFE_TOKEN', 'A pre-session token must be URL- and header-safe.', {})
+    return { 'set-cookie': `${PRE_SESSION_COOKIE}=${value}; HttpOnly; SameSite=Strict; Path=/t/${slug}; Max-Age=3600` }
+  }
+
+  /** Whether a pre-session form POST carries the anti-forgery value its page set (cookie and field, equal). */
+  #preCsrfValid(req: ApiRequest, form: URLSearchParams): boolean {
+    const cookie = readCookie(req.headers.cookie, PRE_SESSION_COOKIE)
+    const field = form.get('_csrf') ?? ''
+    return cookie !== undefined && field.length > 0 && constantTimeEqual(cookie, field)
+  }
+
   #login(req: ApiRequest, slug: string): HttpResult {
     if (req.method === 'GET') {
-      const theme = this.#themes.resolveActiveTheme(slug)
-      return theme === undefined ? GENERIC_404 : htmlResult(200, renderLogin(theme, slug))
+      return this.#loginPage(slug, 200, queryParam(req.path, 'reset') === '1' ? 'reset_done' : undefined)
     }
     if (req.method !== 'POST') return this.#delegate(req)
 
     const form = parseForm(req.rawBody)
+    // Issue #10: the password form (anti-forgery checked first; the picker below is the demo-only legacy path).
+    if (this.#accounts !== undefined && form.has('email')) {
+      if (!this.#preCsrfValid(req, form)) return this.#loginPage(slug, 400, 'expired')
+      const res = this.#api.handle(
+        bearerJson('POST', `/t/${slug}/sessions`, undefined, { email: form.get('email') ?? '', password: form.get('password') ?? '' }),
+      )
+      if (res.status === 201) return this.#signedIn(slug, res.body)
+      if (res.status === 404) return GENERIC_404
+      return this.#loginPage(slug, res.status === 429 ? 429 : 401, res.status === 429 ? 'rate_limited' : 'credentials')
+    }
+
     const role = form.get('role') ?? ''
     const weddingId = form.get('wedding_id') ?? ''
     const loginBody: Record<string, string> = { role }
@@ -589,24 +648,78 @@ export class ProductWebUi {
       rawBody: JSON.stringify(loginBody),
     })
 
-    if (apiRes.status === 201) {
-      const token = readToken(apiRes.body)
-      if (token === undefined || !SAFE_TOKEN.test(token)) return ERROR_500
-      // Location + Set-Cookie are built ONLY from the validated slug + the server-minted token.
-      return redirect(303, `/t/${slug}`, {
-        'set-cookie': `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/t/${slug}`,
-      })
-    }
+    if (apiRes.status === 201) return this.#signedIn(slug, apiRes.body)
     if (apiRes.status === 404) return GENERIC_404 // unknown / suspended / onboarding tenant — masked
-    // 400 (bad role / missing couple wedding_id): re-render the themed login with a generic notice.
-    const theme = this.#themes.resolveActiveTheme(slug)
-    return theme === undefined ? GENERIC_404 : htmlResult(400, renderLogin(theme, slug, true))
+    // 400 (bad role / missing couple wedding_id / no picker here): re-render the themed login with a generic notice.
+    return this.#loginPage(slug, 400, undefined, true)
+  }
+
+  /** A successful sign-in: set the session cookie from the server-minted token and land on the console. */
+  #signedIn(slug: string, body: unknown): HttpResult {
+    const token = readToken(body)
+    if (token === undefined || !SAFE_TOKEN.test(token)) return ERROR_500
+    // Location + Set-Cookie are built ONLY from the validated slug + the server-minted token.
+    return redirect(303, `/t/${slug}`, {
+      'set-cookie': `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/t/${slug}`,
+    })
   }
 
   /**
-   * POST /t/:slug/logout — clear the session cookie and return to the tenant root. CSRF-protected (Phase 21):
-   * a forged-token logout returns the masked 403 and does NOT clear the cookie (closing a forced-logout CSRF).
+   * GET/POST /t/:slug/forgot (issue #10) — request a reset link. The POST answers with the same "check your email"
+   * page whether or not an account exists (the API's uniform 202); only a rate limit or an expired form differ.
    */
+  #forgot(req: ApiRequest, slug: string): HttpResult {
+    const theme = this.#themes.resolveActiveTheme(slug)
+    if (theme === undefined || this.#accounts === undefined) return GENERIC_404
+    const page = (status: number, state?: 'sent' | 'rate_limited' | 'expired'): HttpResult => {
+      const preCsrf = (this.#accounts as NonNullable<ProductWebUiDeps['accounts']>).newToken()
+      return htmlResult(status, renderForgot(theme, slug, preCsrf, state), this.#preCookie(slug, preCsrf))
+    }
+    if (req.method === 'GET') return page(200)
+    if (req.method !== 'POST') return this.#delegate(req)
+    const form = parseForm(req.rawBody)
+    if (!this.#preCsrfValid(req, form)) return page(400, 'expired')
+    const res = this.#api.handle(bearerJson('POST', `/t/${slug}/password-reset`, undefined, { email: form.get('email') ?? '' }))
+    if (res.status === 202) return htmlResult(200, renderForgot(theme, slug, '', 'sent'))
+    if (res.status === 429) return page(429, 'rate_limited')
+    if (res.status === 404) return GENERIC_404
+    return page(400)
+  }
+
+  /**
+   * GET/POST /t/:slug/reset?token=… (issue #10) — choose a password through a reset or account-setup link. The
+   * token is in the URL, so these pages send `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The new
+   * password's length (and the confirmation) is checked before the link is used, so a typo never burns it.
+   */
+  #reset(req: ApiRequest, slug: string): HttpResult {
+    const theme = this.#themes.resolveActiveTheme(slug)
+    if (theme === undefined || this.#accounts === undefined) return GENERIC_404
+    const accounts = this.#accounts
+    const page = (status: number, token: string, notice?: 'weak' | 'mismatch' | 'invalid' | 'expired'): HttpResult => {
+      const preCsrf = accounts.newToken()
+      return htmlResult(status, renderReset(theme, slug, preCsrf, token, notice), {
+        ...this.#preCookie(slug, preCsrf),
+        'referrer-policy': 'no-referrer',
+        'cache-control': 'no-store',
+      })
+    }
+    if (req.method === 'GET') {
+      const token = queryParam(req.path, 'token') ?? ''
+      return page(200, token, token.length === 0 ? 'invalid' : undefined)
+    }
+    if (req.method !== 'POST') return this.#delegate(req)
+    const form = parseForm(req.rawBody)
+    const token = form.get('token') ?? ''
+    if (!this.#preCsrfValid(req, form)) return page(400, token, 'expired')
+    const password = form.get('password') ?? ''
+    if (password !== (form.get('confirm') ?? '')) return page(400, token, 'mismatch')
+    const res = this.#api.handle(bearerJson('POST', `/t/${slug}/password-reset/complete`, undefined, { token, password }))
+    if (res.status === 200) return redirect(303, `/t/${slug}/login?reset=1`)
+    if (res.status === 404) return GENERIC_404
+    const reason = (res.body as { error?: string } | undefined)?.error
+    return page(400, token, reason === 'weak_password' ? 'weak' : 'invalid')
+  }
+
   #logout(req: ApiRequest, slug: string): HttpResult {
     if (req.method !== 'POST') return this.#delegate(req)
     const token = readSessionCookie(req.headers.cookie)

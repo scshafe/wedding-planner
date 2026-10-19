@@ -8,6 +8,8 @@ import type {
   Wedding,
 } from '@wedding-planner/shared'
 
+import type { AccountEmailIndex, UserAccount } from '../accounts/account_store'
+import type { StoredOneTimeToken } from '../accounts/one_time_token_store'
 import type { StoredOperatorSession } from '../auth/operator_credential'
 import type { StoredSession } from '../auth/session_store'
 import type { OutboxMessage } from '../email/simulated_email_adapter'
@@ -57,4 +59,10 @@ export const COLLECTIONS = Object.freeze({
   operatorSession: collection<StoredOperatorSession>('operator_session', 'global'),
   /** Key message_id: the simulated email outbox, a platform log only the operator reads (issue #9). */
   emailOutbox: collection<OutboxMessage>('email_outbox', 'global'),
+  /** Key user_id: a person who can sign in to the workspace (issue #10). The password is a scrypt hash only. */
+  userAccount: collection<UserAccount>('user_account', 'tenant'),
+  /** Key normalized email -> user_id (email uniqueness per workspace) (issue #10). */
+  userEmail: collection<AccountEmailIndex>('user_email', 'tenant'),
+  /** Key sha256(token): single-use, expiring links sent by email (issue #10). */
+  oneTimeToken: collection<StoredOneTimeToken>('one_time_token', 'tenant'),
 })

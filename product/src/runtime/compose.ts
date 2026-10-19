@@ -5,6 +5,11 @@ import { OperatorCredentialStore } from '../auth/operator_credential'
 import { ProviderWebhookCredentialStore } from '../auth/provider_webhook_credential'
 import { SessionStore } from '../auth/session_store'
 import { WeddingAuthorizer } from '../auth/wedding_authorizer'
+import { AccountService } from '../accounts/account_service'
+import { AccountStore } from '../accounts/account_store'
+import { OneTimeTokenStore } from '../accounts/one_time_token_store'
+import { PasswordHasher, PRODUCTION_SCRYPT_COST, type ScryptCost } from '../accounts/password_hasher'
+import { RateLimiter } from '../accounts/rate_limiter'
 import { BillingLedger } from '../billing/billing_ledger'
 import { SimulatedEmailAdapter } from '../email/simulated_email_adapter'
 import { ProductApi } from '../http/product_api'
@@ -92,6 +97,13 @@ export interface ComposeProductSurfaceConfig {
    * runner). The entrypoint injects the durable SQLite store; absent ⇒ a fresh in-memory store (tests, demo).
    */
   readonly store?: RecordStore
+  /** Issue #10: the scrypt cost for passwords. Default the production cost; tests inject a cheap one. */
+  readonly passwordCost?: ScryptCost
+  /**
+   * Issue #10: the site's public base URL (e.g. `https://planner.example`, no trailing slash) for links in emails.
+   * Absent ⇒ site-relative links. Never derived from a request's Host header (a requester controls that).
+   */
+  readonly publicUrl?: string
 }
 
 /** A handle to the demo tenant seeded by THIS composition — present only when the seed ran (empty store). */
@@ -153,8 +165,12 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   // The shared backbone: one tenant store the resolver, theme resolver, onboarding, and repo all read.
   const tenants = new TenantStore(clock, ids, store)
   const resolver = new TenantContextResolver(tenants)
-  // Sessions persist, so they expire (7 days) and lapsed ones are swept at boot (below).
-  const sessionStore = new SessionStore(ids, store, { clock })
+  // Sessions persist, so they expire (7 days) and lapsed ones are swept at boot (below). Issue #10: the simulated
+  // role picker signs in (and its sessions resolve) ONLY on the demo tenant, and only in demo mode.
+  const sessionStore = new SessionStore(ids, store, {
+    clock,
+    simulatedLogin: (tenant_id) => seedDemo && tenants.findById(tenant_id)?.slug === demoSlug,
+  })
   // Operator console sessions (issue #9) persist in the shared store, like tenant sessions.
   const operators = new OperatorCredentialStore(ids, [operatorToken], { clock, store })
   const webhookCredentials = new ProviderWebhookCredentialStore(ids, [config.providerWebhookToken])
@@ -165,6 +181,18 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   // The email boundary (issue #9): the offline simulated adapter records every message in the durable outbox the
   // operator reads at /admin/outbox. A real provider is a new adapter behind the same port (an owner crossing).
   const email = new SimulatedEmailAdapter(clock, ids, store)
+  // Real accounts (issue #10): scrypt-hashed passwords, single-use emailed links, in-process rate limits. The
+  // service verifies; the SessionStore stays the sole mint of a Principal.
+  const accounts = new AccountService({
+    accounts: new AccountStore(tenants, clock, ids, store),
+    hasher: new PasswordHasher(config.passwordCost ?? PRODUCTION_SCRYPT_COST, ids),
+    tokens: new OneTimeTokenStore(tenants, clock, ids, store),
+    email,
+    sessions: sessionStore,
+    limiter: new RateLimiter(clock),
+    tenants,
+    ...(config.publicUrl === undefined ? {} : { publicUrl: config.publicUrl }),
+  })
 
   // The guest-messaging provider boundary (Phase 18): the offline simulated adapter is a deterministic
   // double (injected clock/ids — no real provider, no network), so it wires here like any dep without
@@ -201,6 +229,8 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     operators,
     onboarding,
     email: { port: email, outbox: email },
+    accounts,
+    tenants,
     webhookCredentials,
     messaging: {
       port: messagingAdapter,
@@ -236,7 +266,14 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   // The web UI gets the SessionStore typed as the narrow CsrfGuard (issue/verify only — not login/resolve),
   // so it can check anti-forgery tokens but reads no tenant data (the only-data-path-is-api.handle invariant).
   // The operator console (issue #9) gets the operator store narrowed to CsrfGuard over console sessions.
-  const ui = new ProductWebUi({ api, themes, csrf: sessionStore, operatorCsrf: operators })
+  const ui = new ProductWebUi({
+    api,
+    themes,
+    csrf: sessionStore,
+    operatorCsrf: operators,
+    // Issue #10: password sign-in everywhere; the labeled picker only on the demo tenant in demo mode.
+    accounts: { ...(seedDemo ? { simulatedSlug: demoSlug } : {}), newToken: () => ids.next('pre') },
+  })
 
   let demo: DemoSeed | undefined
   // Seed only into an empty store: a restart over existing data keeps it (issue #8). One transaction, so a

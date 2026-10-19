@@ -194,7 +194,7 @@ export {
 // census is not exported either: nothing outside the product's stores addresses raw records.
 export { type Collection, type CollectionScope, type RecordStore, type TransactionRunner } from './persistence/record_store'
 export { InMemoryRecordStore } from './persistence/in_memory_record_store'
-export { SESSION_TTL_SECONDS, type SessionAuth, type SessionExpiryOptions, type StoredSession } from './auth/session_store'
+export { SESSION_TTL_SECONDS, type SessionAuth, type SessionStoreOptions, type StoredSession } from './auth/session_store'
 
 // The email boundary (issue #9, ADR 0040): the provider-agnostic port, the offline simulated adapter whose outbox
 // the operator reads, and the operator console that serves it to a browser.
@@ -215,6 +215,35 @@ export {
   SimulatedEmailAdapter,
 } from './email/simulated_email_adapter'
 export { OperatorConsole, type OperatorConsoleDeps } from './web/operator_console'
+
+// Real accounts (issue #10, ADR 0041): scrypt password hashing, the account store, single-use emailed links,
+// in-process rate limits, and the service that ties them to the SessionStore (still the sole Principal mint).
+export {
+  ACCOUNT_RATE_LIMITS,
+  AccountService,
+  type AccountServiceDeps,
+  RESET_TOKEN_TTL_SECONDS,
+  SETUP_TOKEN_TTL_SECONDS,
+} from './accounts/account_service'
+export {
+  type AccountRole,
+  AccountStore,
+  normalizeEmail,
+  type PublicAccountView,
+  publicAccountView,
+  type UserAccount,
+} from './accounts/account_store'
+export { OneTimeTokenStore, type OneTimeTokenPurpose } from './accounts/one_time_token_store'
+export {
+  assertAcceptablePassword,
+  PASSWORD_LIMITS,
+  type PasswordHash,
+  PasswordHasher,
+  PRODUCTION_SCRYPT_COST,
+  type ScryptCost,
+} from './accounts/password_hasher'
+export { RateLimiter, type RateLimitRule } from './accounts/rate_limiter'
+export { type AuthenticatedAccount } from './auth/session_store'
 export {
   OPERATOR_SESSION_TTL_SECONDS,
   type OperatorSession,

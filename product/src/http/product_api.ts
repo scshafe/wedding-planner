@@ -9,6 +9,8 @@ import {
   WeddingPlannerError,
 } from '@wedding-planner/shared'
 
+import type { AccountService } from '../accounts/account_service'
+import { publicAccountView } from '../accounts/account_store'
 import type { GuestAuthorizer } from '../auth/guest_authorizer'
 import type { OperatorCredentialStore } from '../auth/operator_credential'
 import type { Principal } from '../auth/principal'
@@ -82,6 +84,12 @@ const RESP_BAD_REQUEST: ApiResponse = deepFreeze({ status: 400, body: { error: '
 const RESP_CONFLICT: ApiResponse = deepFreeze({ status: 409, body: { error: 'conflict' } })
 const RESP_METHOD_NOT_ALLOWED: ApiResponse = deepFreeze({ status: 405, body: { error: 'method_not_allowed' } })
 const RESP_INTERNAL: ApiResponse = deepFreeze({ status: 500, body: { error: 'internal_error' } })
+/** Issue #10: a rate-limited sign-in or reset request (keyed on what was submitted — no existence oracle). */
+const RESP_TOO_MANY: ApiResponse = deepFreeze({ status: 429, body: { error: 'too_many_requests' } })
+/** Issue #10: a new password outside the length bounds (checked before the link is used). */
+const RESP_WEAK_PASSWORD: ApiResponse = deepFreeze({ status: 400, body: { error: 'weak_password' } })
+/** Issue #10: an unknown, used, expired or foreign reset/setup link — one indistinguishable failure. */
+const RESP_INVALID_LINK: ApiResponse = deepFreeze({ status: 400, body: { error: 'invalid_link' } })
 const RESP_HEALTHZ: ApiResponse = deepFreeze({ status: 200, body: { status: 'ok' } })
 /**
  * The inbound-webhook acknowledgement (Phase 19). ONE frozen, byte-identical 202 returned on EVERY
@@ -147,6 +155,8 @@ export interface AdminHandlerDeps {
   readonly onboarding: OnboardingService
   /** Issue #9: the email outbox (read) + the port (the operator's test send). Absent ⇒ /admin/outbox 404s. */
   readonly email?: AdminEmailDeps
+  /** Issue #10: the tenant list the operator reads (`GET /admin/tenants`). Absent ⇒ only POST is mounted. */
+  readonly tenants?: { list(): readonly Tenant[] }
 }
 
 /** The email collaborators the operator console uses (issue #9). */
@@ -264,6 +274,13 @@ export interface ProductApiDeps {
   /** Issue #9: the email port + the simulated outbox the operator reads. Absent ⇒ /admin/outbox is not mounted. */
   readonly email?: AdminEmailDeps
   /**
+   * Issue #10: real accounts — email + password sign-in, password reset, the operator's owner setup. Absent ⇒ only
+   * the simulated login exists (the hand-built fixtures). `composeProductSurface` always wires it.
+   */
+  readonly accounts?: AccountService
+  /** Issue #10: the tenant list for `GET /admin/tenants`. */
+  readonly tenants?: { list(): readonly Tenant[] }
+  /**
    * Phase 19: the provider-webhook credential store — the FOURTH token namespace, authenticating the
    * server-to-server inbound webhook (`/t/:slug/messaging/inbound`). Lives ONLY in the pipeline (like
    * `operators`/`sessionStore`); a webhook is not a Principal, so the inbound route skips stages 3–4.
@@ -338,6 +355,8 @@ export class ProductApi {
   readonly #strategyGuidance: StrategyGuidance | undefined
   /** One transaction per request (issue #8). */
   readonly #transactions: TransactionRunner
+  /** Real accounts (issue #10), or undefined when not wired. Lives in the pipeline, like the session store. */
+  readonly #accounts: AccountService | undefined
 
   constructor(deps: ProductApiDeps) {
     this.#resolver = deps.resolver
@@ -349,7 +368,12 @@ export class ProductApi {
     this.#billing = deps.billing
     this.#handlerDeps = { weddings: deps.weddings, authorizer: deps.authorizer }
     this.#guests = deps.guests
-    this.#adminDeps = { onboarding: deps.onboarding, ...(deps.email === undefined ? {} : { email: deps.email }) }
+    this.#adminDeps = {
+      onboarding: deps.onboarding,
+      ...(deps.email === undefined ? {} : { email: deps.email }),
+      ...(deps.tenants === undefined ? {} : { tenants: deps.tenants }),
+    }
+    this.#accounts = deps.accounts
     this.#strategyGuidance =
       deps.championStrategy === undefined ? undefined : deepFreeze(describeStrategy(deps.championStrategy))
     this.#transactions = deps.transactions ?? NO_TRANSACTION
@@ -391,6 +415,12 @@ export class ProductApi {
       // /admin/sessions — the operator console session mint/revoke (issue #9). Handled HERE, in the pipeline,
       // because it needs the operator store, which the /admin handlers deliberately do not get.
       if (segments.length === 2 && segments[1] === 'sessions') return this.#handleOperatorSession(req)
+      // /admin/tenants/:id/owner — set up the workspace owner's account (issue #10). In the pipeline because it
+      // mints the tenant's context (the operator is platform-wide; the /admin handlers hold no resolver).
+      if (this.#accounts !== undefined && segments.length === 4 && segments[1] === 'tenants' && segments[3] === 'owner') {
+        if (req.method !== 'POST') throw methodNotAllowed()
+        return this.#handleOwnerSetup(segments[2] ?? '', req, this.#accounts)
+      }
       return dispatchAdmin(req, segments, this.#adminDeps)
     }
 
@@ -411,6 +441,20 @@ export class ProductApi {
           return { status: 200, body: { signed_out: this.#sessionStore.revoke(bearerToken(req.headers.authorization)) } }
         }
         throw methodNotAllowed()
+      }
+
+      // /t/:slug/password-reset[/complete] — real accounts (issue #10). Unauthenticated by design (they recover
+      // access): the request answers the same whether or not the account exists, and the completion consumes a
+      // single-use link token minted for THIS tenant.
+      if (this.#accounts !== undefined && segments[2] === 'password-reset') {
+        if (segments.length === 3) {
+          if (req.method !== 'POST') throw methodNotAllowed()
+          return handlePasswordResetRequest(context, req, this.#accounts)
+        }
+        if (segments.length === 4 && segments[3] === 'complete') {
+          if (req.method !== 'POST') throw methodNotAllowed()
+          return handlePasswordResetComplete(context, req, this.#accounts)
+        }
       }
 
       // /t/:slug/weddings[...] — PROTECTED: stages 3–4 run BEFORE any method/shape distinction.
@@ -539,9 +583,27 @@ export class ProductApi {
     throw methodNotAllowed()
   }
 
-  /** POST /t/:slug/sessions — the simulated login. Mints a principal bound to the RESOLVED tenant. */
+  /** POST /admin/tenants/:id/owner {email} — create (or re-invite) the workspace owner and email the setup link. */
+  #handleOwnerSetup(tenantId: string, req: ApiRequest, accounts: AccountService): ApiResponse {
+    const email = requireString(parseObjectBody(req.rawBody), 'email').trim()
+    if (!isEmailAddress(email)) throw new ProductError('PRODUCT.BAD_REQUEST', "Field 'email' must be an email address.", {})
+    // The operator legitimately addresses any tenant; an unknown or not-yet-active tenant is an honest 404/409.
+    const context = this.#resolver.resolveById(tenantId)
+    return { status: 201, body: { account: publicAccountView(accounts.setUpOwner(context, email)) } }
+  }
+
+  /**
+   * POST /t/:slug/sessions — sign in. `{email, password}` is the real sign-in (issue #10); `{role, wedding_id?}` is
+   * the simulated role picker, honored only where the session store's policy allows it (the demo tenant, in demo
+   * mode). Either way the SessionStore mints the principal, bound to the RESOLVED tenant.
+   */
   #handleLogin(context: TenantContext, req: ApiRequest): ApiResponse {
     const body = parseObjectBody(req.rawBody)
+    if (body.email !== undefined || body.password !== undefined) {
+      if (this.#accounts === undefined) throw new ProductError('PRODUCT.BAD_REQUEST', 'Password sign-in is not available.', {})
+      const session = this.#accounts.signIn(context, requireString(body, 'email'), requireString(body, 'password'))
+      return { status: 201, body: { token: session.token, principal: principalView(session.principal) } }
+    }
     const role = body.role
     if (role !== 'planner' && role !== 'couple') {
       throw new ProductError('PRODUCT.BAD_REQUEST', 'role must be "planner" or "couple".', {})
@@ -593,6 +655,21 @@ function errorToResponse(error: WeddingPlannerError): ApiResponse {
       return RESP_CONFLICT
     case 'PRODUCT.METHOD_NOT_ALLOWED':
       return RESP_METHOD_NOT_ALLOWED
+    // Issue #10. INVALID_CREDENTIALS is the same constant 401 as any unauthenticated request; the others carry a
+    // reason the requester already knows (their own password's length, their own link, their own rate).
+    case 'PRODUCT.INVALID_CREDENTIALS':
+      return RESP_UNAUTHORIZED
+    case 'PRODUCT.RATE_LIMITED':
+      return RESP_TOO_MANY
+    case 'PRODUCT.WEAK_PASSWORD':
+      return RESP_WEAK_PASSWORD
+    case 'PRODUCT.INVALID_LINK':
+      return RESP_INVALID_LINK
+    case 'PRODUCT.SIMULATED_LOGIN_DISABLED':
+      return RESP_BAD_REQUEST
+    // ACCOUNT_EXISTS: an honest 409 to the TRUSTED operator (owner setup), like DUPLICATE_SLUG.
+    case 'PRODUCT.ACCOUNT_EXISTS':
+      return RESP_CONFLICT
     // FORGED_CONTEXT / FORGED_PRINCIPAL / CROSS_TENANT_WRITE / anything else: an internal invariant
     // violation a real request can never construct — a 500 bug, never a normal client path, never leaked.
     default:
@@ -1292,10 +1369,11 @@ function dispatchAdmin(req: ApiRequest, segments: readonly string[], deps: Admin
     if (req.method === 'POST') return handleOutboxTestSend(req, deps.email)
     throw methodNotAllowed()
   }
-  // /admin/tenants — provision a new tenant.
+  // /admin/tenants — provision a new tenant (POST), or list them (GET, issue #10).
   if (segments.length === 2 && segments[1] === 'tenants') {
-    if (req.method !== 'POST') throw methodNotAllowed()
-    return handleProvision(req, deps)
+    if (req.method === 'POST') return handleProvision(req, deps)
+    if (req.method === 'GET' && deps.tenants !== undefined) return { status: 200, body: { tenants: deps.tenants.list() } }
+    throw methodNotAllowed()
   }
   // /admin/tenants/:id/<action>
   if (segments.length === 4 && segments[1] === 'tenants') {
@@ -1314,6 +1392,21 @@ function dispatchAdmin(req: ApiRequest, segments: readonly string[], deps: Admin
     throw routeNotFound()
   }
   throw routeNotFound()
+}
+
+/** POST /t/:slug/password-reset {email} — always the same 202 (no account-existence oracle). */
+function handlePasswordResetRequest(context: TenantContext, req: ApiRequest, accounts: AccountService): ApiResponse {
+  const email = requireString(parseObjectBody(req.rawBody), 'email')
+  // A malformed address cannot belong to an account: same answer, nothing sent, no lookup.
+  if (isEmailAddress(email.trim())) accounts.requestPasswordReset(context, email)
+  return RESP_ACCEPTED
+}
+
+/** POST /t/:slug/password-reset/complete {token, password} — set the password through a reset or setup link. */
+function handlePasswordResetComplete(context: TenantContext, req: ApiRequest, accounts: AccountService): ApiResponse {
+  const body = parseObjectBody(req.rawBody)
+  accounts.completePasswordReset(context, requireString(body, 'token'), requireString(body, 'password'))
+  return { status: 200, body: { password_set: true } }
 }
 
 function handleOutboxTestSend(req: ApiRequest, email: AdminEmailDeps): ApiResponse {

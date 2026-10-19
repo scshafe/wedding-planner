@@ -88,21 +88,31 @@ simulated.</p>
 </html>`)
 }
 
-/** The themed login form. A LABELED simulation: no password — pick a role (the Phase-13 auth model). */
-export function renderLogin(theme: Tenant['theme'], slug: string, invalid = false): string {
+/**
+ * How the login page renders since issue #10 (ADR 0041). Absent ⇒ the legacy picker-only page (hand-built
+ * fixtures without accounts).
+ */
+export interface LoginPageOptions {
+  /** The pre-session anti-forgery token the password, forgot and reset forms carry (double-submit cookie). */
+  readonly preCsrf: string
+  /** Whether the simulated role picker is offered (the demo tenant, in demo mode). */
+  readonly simulated: boolean
+  readonly notice?: 'credentials' | 'rate_limited' | 'expired' | 'reset_done'
+}
+
+const LOGIN_NOTICES: Readonly<Record<NonNullable<LoginPageOptions['notice']>, string>> = Object.freeze({
+  credentials: 'That email or password was not accepted.',
+  rate_limited: 'Too many attempts. Wait a few minutes and try again.',
+  expired: 'That form expired. Please try again.',
+  reset_done: 'Your password is set. Sign in with it below.',
+})
+
+/** The themed sign-in page: email + password, and (demo only, clearly labeled) the simulated role picker. */
+export function renderLogin(theme: Tenant['theme'], slug: string, invalid = false, options?: LoginPageOptions): string {
   const warning = invalid
     ? html`<p class="note" style="color:#b00">That login could not be completed. Check the role and wedding id.</p>`
     : html``
-  return themedShell(
-    theme,
-    slug,
-    'Sign in',
-    html`<div class="card">
-  <h2>Sign in to ${theme.brand_name}</h2>
-  <p class="note">Simulated login — no password (offline demo). Planners see every wedding in the
-  workspace; couples see only their own.</p>
-  ${warning}
-  <form method="post" action="/t/${slug}/login">
+  const picker = html`<form method="post" action="/t/${slug}/login">
     <label for="role">Role</label>
     <select id="role" name="role">
       <option value="planner">Planner (workspace staff)</option>
@@ -111,7 +121,133 @@ export function renderLogin(theme: Tenant['theme'], slug: string, invalid = fals
     <label for="wedding_id">Wedding id <span class="note">(couples only)</span></label>
     <input id="wedding_id" name="wedding_id" type="text" placeholder="wedding_…" autocomplete="off">
     <p><button type="submit">Sign in</button></p>
+  </form>`
+  if (options === undefined) {
+    return themedShell(
+      theme,
+      slug,
+      'Sign in',
+      html`<div class="card">
+  <h2>Sign in to ${theme.brand_name}</h2>
+  <p class="note">Simulated login — no password (offline demo). Planners see every wedding in the
+  workspace; couples see only their own.</p>
+  ${warning}
+  ${picker}
+</div>`,
+    )
+  }
+  const notice =
+    options.notice === undefined
+      ? html``
+      : html`<p class="note" style="color:${options.notice === 'reset_done' ? '#1a7f37' : '#b00'}">${LOGIN_NOTICES[options.notice]}</p>`
+  const simulated = options.simulated
+    ? html`<div class="card">
+  <h2>Demo workspace: simulated sign-in</h2>
+  <p class="note">This is the offline demo workspace, so you can also sign in without a password by picking a
+  role. Planners see every wedding; couples see only their own. Real workspaces never offer this.</p>
+  ${warning}
+  ${picker}
+</div>`
+    : html``
+  return themedShell(
+    theme,
+    slug,
+    'Sign in',
+    html`<div class="card">
+  <h2>Sign in to ${theme.brand_name}</h2>
+  ${notice}
+  <form method="post" action="/t/${slug}/login">
+    <input type="hidden" name="_csrf" value="${options.preCsrf}">
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" autocomplete="username" required>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <p><button type="submit">Sign in</button></p>
   </form>
+  <p class="note"><a href="/t/${slug}/forgot">Forgot your password?</a></p>
+</div>
+${simulated}`,
+  )
+}
+
+/** The "forgot password" page: ask for the email; afterwards the same answer whether or not an account exists. */
+export function renderForgot(
+  theme: Tenant['theme'],
+  slug: string,
+  preCsrf: string,
+  state: 'form' | 'sent' | 'rate_limited' | 'expired' = 'form',
+): string {
+  if (state === 'sent') {
+    return themedShell(
+      theme,
+      slug,
+      'Check your email',
+      html`<div class="card">
+  <h2>Check your email</h2>
+  <p>If an account exists for that address, we have sent it a link to choose a new password. The link works
+  once and expires in an hour.</p>
+  <p class="note"><a href="/t/${slug}/login">Back to sign in</a></p>
+</div>`,
+    )
+  }
+  const notice =
+    state === 'rate_limited'
+      ? html`<p class="note" style="color:#b00">Too many requests. Wait a while and try again.</p>`
+      : state === 'expired'
+        ? html`<p class="note" style="color:#b00">That form expired. Please try again.</p>`
+        : html``
+  return themedShell(
+    theme,
+    slug,
+    'Reset your password',
+    html`<div class="card">
+  <h2>Reset your password</h2>
+  ${notice}
+  <form method="post" action="/t/${slug}/forgot">
+    <input type="hidden" name="_csrf" value="${preCsrf}">
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" autocomplete="username" required>
+    <p><button type="submit">Send a reset link</button></p>
+  </form>
+  <p class="note"><a href="/t/${slug}/login">Back to sign in</a></p>
+</div>`,
+  )
+}
+
+const RESET_NOTICES = Object.freeze({
+  weak: 'Choose a password of 10 to 128 characters.',
+  mismatch: 'The two passwords did not match.',
+  invalid: 'This link is invalid or has expired. Ask for a new one.',
+  expired: 'That form expired. Please try again.',
+})
+
+/** The "choose a new password" page, reached from a reset or account-setup link. */
+export function renderReset(
+  theme: Tenant['theme'],
+  slug: string,
+  preCsrf: string,
+  token: string,
+  notice?: keyof typeof RESET_NOTICES,
+): string {
+  const warning = notice === undefined ? html`` : html`<p class="note" style="color:#b00">${RESET_NOTICES[notice]}</p>`
+  const askAgain = html`<p class="note"><a href="/t/${slug}/forgot">Ask for a new link</a></p>`
+  return themedShell(
+    theme,
+    slug,
+    'Choose a password',
+    html`<div class="card">
+  <h2>Choose a password</h2>
+  ${warning}
+  <form method="post" action="/t/${slug}/reset">
+    <input type="hidden" name="_csrf" value="${preCsrf}">
+    <input type="hidden" name="token" value="${token}">
+    <label for="password">New password <span class="note">(10 to 128 characters)</span></label>
+    <input id="password" name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required>
+    <label for="confirm">Repeat it</label>
+    <input id="confirm" name="confirm" type="password" autocomplete="new-password" minlength="10" maxlength="128" required>
+    <p><button type="submit">Set password</button></p>
+  </form>
+  ${notice === 'invalid' ? askAgain : html``}
 </div>`,
   )
 }

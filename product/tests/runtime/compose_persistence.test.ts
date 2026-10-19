@@ -51,6 +51,7 @@ function boot(path: string, seed: string): { surface: ComposedSurface; store: Sq
     providerWebhookToken: WEBHOOK,
     demoSlug: 'demo',
     store,
+    passwordCost: { N: 16, r: 1, p: 1 },
   })
   return { surface, store }
 }
@@ -128,6 +129,10 @@ describe('durable storage — data written before a restart is read back after i
     expect(opSession.status).toBe(201)
     const opToken = (opSession.body as { token: string }).token
     expect(api1.handle(req('POST', '/admin/outbox', { token: opToken, body: { to: 'owner@example.test' } })).status).toBe(201)
+    // A real account (issue #10): the operator sets up the demo workspace's owner; the setup link is emailed.
+    expect(
+      api1.handle(req('POST', `/admin/tenants/${demo?.tenantId}/owner`, { token: OP, body: { email: 'Owner@Demo.test' } })).status,
+    ).toBe(201)
     const usageBefore = first.surface.messaging.usageView(demo?.tenantId as string)
     expect(usageBefore.message_count).toBe(2)
     const billingBefore = api1.handle(req('GET', '/t/demo/billing', { token })).body
@@ -183,7 +188,18 @@ describe('durable storage — data written before a restart is read back after i
     // The operator console session survived (same credential), and so did the outbox.
     const outbox = api2.handle(req('GET', '/admin/outbox', { token: opToken }))
     expect(outbox.status).toBe(200)
-    expect((outbox.body as { messages: { to: string }[] }).messages.map((m) => m.to)).toEqual(['owner@example.test'])
+    const messages = (outbox.body as { messages: { to: string; text_body: string }[] }).messages
+    expect(messages.map((m) => m.to)).toEqual(['owner@demo.test', 'owner@example.test'])
+    // The setup link minted before the restart still works after it, and the owner then signs in.
+    const link = /token=([A-Za-z0-9_-]+)/.exec(messages[0]?.text_body ?? '')?.[1] as string
+    expect(
+      api2.handle(req('POST', '/t/demo/password-reset/complete', { body: { token: link, password: 'a long enough password' } })).status,
+    ).toBe(200)
+    expect(
+      api2.handle(req('POST', '/t/demo/sessions', { body: { email: 'owner@demo.test', password: 'a long enough password' } })).status,
+    ).toBe(201)
+    // ...and an outstanding reset link is left in the store for the census below.
+    expect(api2.handle(req('POST', '/t/demo/password-reset', { body: { email: 'owner@demo.test' } })).status).toBe(202)
     second.store.close()
 
     // ---- The census: every persisted collection has rows in the file (none was left on an in-memory default).

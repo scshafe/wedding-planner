@@ -71,6 +71,7 @@ function main(): void {
     demoSlug: config.demoSlug,
     championStrategy: champion,
     store,
+    ...(config.publicUrl === undefined ? {} : { publicUrl: config.publicUrl }),
   })
 
   const server = createProductWebUiServer(surface.ui)
