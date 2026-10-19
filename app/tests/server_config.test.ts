@@ -163,6 +163,24 @@ describe('resolveServerConfig — WP_PUBLIC_URL (issue #10, links in emails)', (
   })
 })
 
+describe('resolveServerConfig — the build commit (issue #13)', () => {
+  it('prefers WP_BUILD_COMMIT, then the tag of WP_IMAGE_REF, else unknown — and only ever a hex commit id', () => {
+    const at = (env: Env) => resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG, ...env }, constGen('g')).buildCommit
+    expect(at({})).toBe('unknown')
+    expect(at({ WP_BUILD_COMMIT: '2AA8F45A76B92CDC3D5E798E8D8B929350B9A9B9' })).toBe('2aa8f45a76b92cdc3d5e798e8d8b929350b9a9b9')
+    expect(at({ WP_IMAGE_REF: 'wedding-planner:2aa8f45' })).toBe('2aa8f45')
+    expect(at({ WP_BUILD_COMMIT: 'unknown', WP_IMAGE_REF: 'wedding-planner:2aa8f45' })).toBe('2aa8f45')
+    expect(at({ WP_IMAGE_REF: 'wedding-planner:latest' })).toBe('unknown')
+    expect(at({ WP_BUILD_COMMIT: '<script>' })).toBe('unknown')
+  })
+
+  it('the boot log names the build', () => {
+    expect(buildBootLog(resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG, WP_IMAGE_REF: 'x:abcdef1' }, constGen('g')), undefined)).toContain(
+      'build: abcdef1',
+    )
+  })
+})
+
 describe('buildBootLog — the disclosure allow-list', () => {
   const demo: DemoSeed = {
     slug: 'demo',

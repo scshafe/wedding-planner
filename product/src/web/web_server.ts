@@ -1,6 +1,9 @@
 import http from 'node:http'
 
+import type { Clock } from '@wedding-planner/shared'
+
 import type { ApiRequest } from '../http/api_message'
+import { formatRequestLog, logMethod, routePattern } from '../operability/request_log'
 import { MAX_BODY_BYTES } from '../http/node_server'
 import type { ProductWebUi } from './product_web_ui'
 
@@ -16,8 +19,39 @@ import type { ProductWebUi } from './product_web_ui'
  *
  * related: product_web_ui.ts (the pure handler), node_server.ts (the JSON-only adapter it reuses the cap from).
  */
-export function createProductWebUiServer(ui: ProductWebUi): http.Server {
+/**
+ * Issue #13: the per-request log. Injected by the entrypoint (the edge): where a line goes, the wall clock for `ts`,
+ * and a monotonic millisecond counter for `duration_ms`. Absent ⇒ no request logging (tests, embedding).
+ */
+export interface RequestLogging {
+  readonly write: (line: string) => void
+  readonly clock: Clock
+  readonly elapsedMs: () => number
+}
+
+export function createProductWebUiServer(ui: ProductWebUi, logging?: RequestLogging): http.Server {
   return http.createServer((req, res) => {
+    const startedMs = logging?.elapsedMs()
+    // One line per request, after the response: the route PATTERN only (request_log.ts) — never the path's ids or
+    // query, a header, a cookie, or the body.
+    res.on('finish', () => {
+      if (logging === undefined || startedMs === undefined) return
+      try {
+        const { route, tenant } = routePattern(req.url ?? '/')
+        logging.write(
+          formatRequestLog({
+            ts: logging.clock.now(),
+            method: logMethod(req.method ?? 'GET'),
+            route,
+            status: res.statusCode,
+            duration_ms: Math.round((logging.elapsedMs() - startedMs) * 10) / 10,
+            ...(tenant === undefined ? {} : { tenant }),
+          }),
+        )
+      } catch {
+        // Logging must never take a request down.
+      }
+    })
     const chunks: Buffer[] = []
     let total = 0
     let aborted = false

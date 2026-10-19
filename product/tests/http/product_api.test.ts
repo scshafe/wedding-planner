@@ -120,7 +120,7 @@ describe('product_api — endpoints', () => {
 
   it('GET /healthz -> 200 constant, no tenant/auth', () => {
     const res = w.api.handle(req('GET', '/healthz'))
-    expect(res).toEqual({ status: 200, body: { status: 'ok' } })
+    expect(res).toEqual({ status: 200, body: { status: 'ok', commit: 'unknown' } })
   })
 
   it('POST /t/:slug/sessions logs in a planner and a couple', () => {

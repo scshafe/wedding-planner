@@ -38,7 +38,7 @@ describe('the deployable front door serves over a socket', () => {
   it('GET /healthz -> 200 ok', async () => {
     const res = await fetch(`${baseUrl}/healthz`)
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ status: 'ok' })
+    expect(await res.json()).toEqual({ status: 'ok', commit: 'unknown' })
   })
 
   it('GET /t/demo -> 200 themed (the active demo tenant)', async () => {

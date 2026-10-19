@@ -16,6 +16,7 @@ import type { StoredOperatorSession } from '../auth/operator_credential'
 import type { StoredSession } from '../auth/session_store'
 import type { StoredOutboxMessage } from '../email/simulated_email_adapter'
 import type { FeedbackSubmission } from '../feedback/feedback_service'
+import type { ServerError } from '../operability/error_log'
 import type { InboundReceipt } from '../messaging/inbound_receipt_log'
 import type { SendResult } from '../messaging/messaging_service'
 import { collection } from './record_store'
@@ -76,4 +77,6 @@ export const COLLECTIONS = Object.freeze({
   invitation: collection<Invitation>('invitation', 'tenant'),
   /** Key feedback_id: in-app feedback, a platform log only the operator reads (issue #12). */
   feedback: collection<FeedbackSubmission>('feedback', 'global'),
+  /** Key error_id: the server errors the operator lists at /admin/errors (issue #13). */
+  serverError: collection<ServerError>('server_error', 'global'),
 })

@@ -11,8 +11,9 @@ set -euo pipefail
 TAG="${1:-wedding-planner-product:local}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-echo "Building ${TAG} from ${REPO_ROOT} …"
-docker build -t "${TAG}" "${REPO_ROOT}"
+COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)"
+echo "Building ${TAG} from ${REPO_ROOT} at ${COMMIT} …"
+docker build --build-arg "WP_BUILD_COMMIT=${COMMIT}" -t "${TAG}" "${REPO_ROOT}"
 
 echo
 echo "Built ${TAG}. To run it LOCALLY (offline demo), a human can:"

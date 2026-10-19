@@ -32,6 +32,10 @@ RUN npm ci --omit=dev
 FROM node:22-slim AS runtime
 ENV NODE_ENV=production
 ENV PORT=8080
+# The build commit /healthz reports (issue #13). Not a secret: `scripts/docker_build.sh` passes the full sha with
+# --build-arg. A build without it reports the tag of WP_IMAGE_REF instead (the deployed stack sets that), else unknown.
+ARG WP_BUILD_COMMIT=unknown
+ENV WP_BUILD_COMMIT=${WP_BUILD_COMMIT}
 WORKDIR /app
 
 # The production dependency tree from the builder (no vitest / eslint / typescript).

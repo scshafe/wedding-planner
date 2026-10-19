@@ -43,7 +43,7 @@ Then visit:
 
 - `http://localhost:8080/` — the generic landing page
 - `http://localhost:8080/t/demo` — the themed demo tenant console (log in as a planner or couple)
-- `http://localhost:8080/healthz` — liveness (`{"status":"ok"}`)
+- `http://localhost:8080/healthz` — liveness and the build (`{"status":"ok","commit":"…"}`)
 
 The `/admin` provisioning surface is operator-gated — present the operator token as
 `Authorization: Bearer <token>` (the token printed at boot under the demo default, or the one you injected).
@@ -60,6 +60,8 @@ The `/admin` provisioning surface is operator-gated — present the operator tok
 | `WP_PROVIDER_WEBHOOK_TOKEN` | *(unset)* | The inbound-messaging webhook credential, under the same policy as the operator token. |
 | `WP_DATABASE_PATH`  | *(unset)*   | The SQLite database file (issue #8). Created and migrated at boot (an existing database gets a `.pre-vN.sqlite` snapshot beside it first); a database migrated by a newer build with a change this build cannot read is refused. Unset is allowed only under the demo default (in-memory, reset on restart); a non-demo build without it **fails closed**. |
 | `WP_REQUIRE_DATABASE` | `false`   | When true, boot fails closed without `WP_DATABASE_PATH` even in demo mode (the deployed stack sets it). |
+| `WP_BUILD_COMMIT`   | *(build arg)* | The commit `/healthz` reports. `scripts/docker_build.sh` bakes the full sha in with `--build-arg`. |
+| `WP_IMAGE_REF`      | *(unset)*   | An image reference (`name:<short sha>`); its tag is reported as the commit when `WP_BUILD_COMMIT` is absent. The deployed stack sets it to the pinned image. |
 | `WP_PUBLIC_URL`     | *(unset)*   | The site's public origin (e.g. `https://planner.example`, no path or trailing slash) used in links inside emails (password reset, account setup). Unset ⇒ site-relative links. Never derived from a request's Host header. |
 
 ## Data and backups
@@ -75,3 +77,10 @@ This image is a **launch-ready artifact**, not a launch. Onboarding, billing, an
 simulations (no real money/messages). The operator token and the demo seed are offline placeholders. Pushing
 to a registry, deploying to real hosting, wiring DNS/secrets, or onboarding real tenants/payments/comms is the
 human crossing — build up to that line, never across it.
+
+## Logs and errors
+
+The server writes one JSON line per request to stdout: `{ts, method, route, status, duration_ms, tenant}`, where
+`route` is the route pattern (`/t/:slug/weddings/:id`). No path ids, query strings, headers, cookies or bodies are
+ever logged. Server errors (500s) are listed for the operator at `/admin/errors`, by failure code and code location,
+never by message.
