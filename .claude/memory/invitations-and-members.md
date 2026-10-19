@@ -9,11 +9,14 @@ Since issue #11 (2026-10-19):
 
 - `InvitationStore` keeps PENDING invitations only (tenant-scoped); the link is a `OneTimeTokenStore` token, purpose
   `invitation`, subject = invitation id. Accept and revoke delete the invitation.
-- `MembershipService`: any planner invites (`planner`, or `couple` + a wedding of this tenant) and reads the team;
-  only the OWNER resends, revokes, removes (never themselves). Accept: password length first, consume token, refuse
-  an email that gained an account, create the account exactly as invited, delete invitation, SessionStore mints.
+- `MembershipService`: planner MEMBERS (owner/planner accounts — never simulated principals) invite (`planner`, or
+  `couple` + a wedding of this tenant) and read the team; only the OWNER resends, revokes, removes (never themselves,
+  never an owner; removal also revokes the member's sent invitations). Invites/resends rate-limited (20/member/h,
+  50/tenant/h), max 100 pending; expired invitations read as absent and are deleted. Accept: password length first,
+  consume token, refuse an email that gained an account, create exactly as invited, SessionStore mints.
 - **Owner is an account role**: owner iff a planner principal whose `principal_id` is an `owner` account. Principals
-  still have only `planner`/`couple`, so no authorizer changed. Simulated demo planners can invite, never manage.
+  still have only `planner`/`couple`, so no authorizer changed.
+- Outbox retention is PER TENANT (one workspace cannot push out another's links); `/admin/outbox?tenant=<id>`.
 - Couples: principal `{ role: 'couple', wedding_id }` → the existing WeddingAuthorizer/guest/escalation scopes apply.
 - Web: `?view=team`, "Invite the couple" on a wedding (shown iff the team read answers 200), `/t/:slug/invite`
   accept page (wp_pre CSRF, no-referrer); team forms use the per-session CSRF token.

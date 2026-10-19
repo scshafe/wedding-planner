@@ -77,12 +77,15 @@ export class OneTimeTokenStore {
     return stored.subject
   }
 
-  /** Revoke every outstanding token of `purpose` for `subject` (or of every purpose when omitted). */
+  /**
+   * Revoke every outstanding token of `purpose` for `subject` (or of every purpose when omitted). The pass also
+   * deletes any expired token of the tenant, so lapsed links do not accumulate.
+   */
   revoke(context: TenantContext, purpose: OneTimeTokenPurpose | undefined, subject: string): void {
+    const now = Date.parse(this.clock.now())
     for (const stored of this.#repo.list(context)) {
-      if (stored.subject === subject && (purpose === undefined || stored.purpose === purpose)) {
-        this.#repo.delete(context, stored.token_hash)
-      }
+      const revoked = stored.subject === subject && (purpose === undefined || stored.purpose === purpose)
+      if (revoked || !(Date.parse(stored.expires_at) > now)) this.#repo.delete(context, stored.token_hash)
     }
   }
 }

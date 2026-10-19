@@ -22,9 +22,10 @@ import {
  * the product is offline.
  *
  * The outbox is a PLATFORM log, not tenant data: it lives in the global partition (the tenant is a field on each
- * message) and only the operator tier reads it. No tenant route exposes it. It is BOUNDED: past
- * {@link OUTBOX_RETENTION} messages the oldest are deleted, so recipient addresses and one-time links do not pile
- * up in the database and its backups. A message that carries a link secret keeps it only until the link lapses: on
+ * message) and only the operator tier reads it. No tenant route exposes it. It is BOUNDED PER TENANT: past
+ * {@link OUTBOX_RETENTION} messages of one tenant (platform mail counts as its own group) that tenant's oldest are
+ * deleted — so recipient addresses and one-time links do not pile up, and one workspace sending a lot can never push
+ * another workspace's messages out. The operator can read one tenant's messages (`recent(limit, tenant_id)`). A message that carries a link secret keeps it only until the link lapses: on
  * every send, lapsed secrets are redacted from the stored bodies, and a read never shows one.
  *
  * Deterministic: message ids and timestamps come from the injected generator and clock.
@@ -54,11 +55,11 @@ export const REDACTED_LINK = '[expired link removed]'
 
 /** The operator's read of the outbox (the simulated adapter provides it; a real provider would not). */
 export interface EmailOutboxReader {
-  /** The most recent messages, newest first, at most `limit`. */
-  recent(limit: number): readonly OutboxMessage[]
+  /** The most recent messages, newest first, at most `limit` — of one tenant when `tenant_id` is given. */
+  recent(limit: number, tenant_id?: string): readonly OutboxMessage[]
 }
 
-/** How many messages the outbox keeps (the oldest beyond this are deleted on send). */
+/** How many messages the outbox keeps per tenant (that tenant's oldest beyond this are deleted on send). */
 export const OUTBOX_RETENTION = 1000
 
 export class SimulatedEmailAdapter implements EmailPort, EmailOutboxReader {
@@ -88,11 +89,13 @@ export class SimulatedEmailAdapter implements EmailPort, EmailOutboxReader {
     }
     this.#store.put(COLLECTIONS.emailOutbox, GLOBAL_PARTITION, recorded.message_id, recorded)
     const all = this.#store.list(COLLECTIONS.emailOutbox, GLOBAL_PARTITION)
-    const excess = Math.max(0, all.length - this.retention)
-    all.forEach((old, index) => {
-      if (index < excess) this.#store.delete(COLLECTIONS.emailOutbox, GLOBAL_PARTITION, old.message_id)
+    const group = (m: StoredOutboxMessage): string => m.tenant_id ?? ''
+    const sameGroup = all.filter((m) => group(m) === group(recorded))
+    const evicted = new Set(sameGroup.slice(0, Math.max(0, sameGroup.length - this.retention)).map((m) => m.message_id))
+    for (const old of all) {
+      if (evicted.has(old.message_id)) this.#store.delete(COLLECTIONS.emailOutbox, GLOBAL_PARTITION, old.message_id)
       else if (this.#lapsed(old)) this.#store.put(COLLECTIONS.emailOutbox, GLOBAL_PARTITION, old.message_id, redact(old))
-    })
+    }
     return { message_ref: recorded.message_id, accepted_at: recorded.created_at }
   }
 
@@ -100,9 +103,10 @@ export class SimulatedEmailAdapter implements EmailPort, EmailOutboxReader {
     return this.#store.get(COLLECTIONS.emailOutbox, GLOBAL_PARTITION, message_ref)?.status ?? 'unknown'
   }
 
-  recent(limit: number): readonly OutboxMessage[] {
+  recent(limit: number, tenant_id?: string): readonly OutboxMessage[] {
     return this.#store
       .list(COLLECTIONS.emailOutbox, GLOBAL_PARTITION)
+      .filter((message) => tenant_id === undefined || message.tenant_id === tenant_id)
       .reverse()
       .slice(0, Math.max(0, limit))
       .map((message) => view(this.#lapsed(message) ? redact(message) : message))

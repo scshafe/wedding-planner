@@ -51,7 +51,7 @@ function setup() {
     expect(res.status).toBe(201)
     return res.body as { token: string; principal: { principal_id: string; role: string; wedding_id?: string } }
   }
-  return { clock, call, outbox, lastLink, ownerToken, createWedding, join }
+  return { clock, call, outbox, lastLink, ownerToken, createWedding, join, acmeId }
 }
 
 describe('inviting a teammate', () => {
@@ -172,10 +172,77 @@ describe('the owner manages invitations and members', () => {
     expect(w.call('POST', '/t/acme/members/remove', w.ownerToken, { user_id: 'user_nobody' }).body).toEqual({ removed: false })
   })
 
-  it('a demo (simulated) planner can invite but is never the owner', () => {
+  it('a demo (simulated) planner is not a member: it can neither invite nor read the team', () => {
     const w = setup()
     const demo = (w.call('POST', '/t/demo/sessions', undefined, { role: 'planner' }).body as { token: string }).token
-    expect(w.call('POST', '/t/demo/invitations', demo, { email: 'friend@demo.test', role: 'planner' }).status).toBe(201)
-    expect((w.call('GET', '/t/demo/team', demo).body as { viewer_is_owner: boolean }).viewer_is_owner).toBe(false)
+    expect(w.call('POST', '/t/demo/invitations', demo, { email: 'friend@demo.test', role: 'planner' })).toEqual(FORBIDDEN)
+    expect(w.call('GET', '/t/demo/team', demo)).toEqual(FORBIDDEN)
+  })
+
+  it('removing a member also revokes every invitation they sent', () => {
+    const w = setup()
+    const teammate = w.join(w.ownerToken, { email: 'p@acme.test', role: 'planner' })
+    expect(w.call('POST', '/t/acme/invitations', teammate.token, { email: 'mallory@evil.test', role: 'planner' }).status).toBe(201)
+    const planted = w.lastLink()
+    const team = w.call('GET', '/t/acme/team', w.ownerToken).body as { invitations: { invited_by_email?: string }[] }
+    expect(team.invitations[0]?.invited_by_email).toBe('p@acme.test')
+    w.call('POST', '/t/acme/members/remove', w.ownerToken, { user_id: teammate.principal.principal_id })
+    expect(w.call('POST', '/t/acme/invitations/accept', undefined, { token: planted, password: PASSWORD })).toEqual({ status: 400, body: { error: 'invalid_link' } })
+    expect((w.call('GET', '/t/acme/team', w.ownerToken).body as { invitations: unknown[] }).invitations).toEqual([])
+  })
+
+  it('an owner cannot be removed (another owner the operator set up)', () => {
+    const w = setup()
+    const second = (w.call('POST', `/admin/tenants/${w.acmeId}/owner`, OP, { email: 'owner2@acme.test' }).body as { account: { user_id: string } }).account.user_id
+    expect(w.call('POST', '/t/acme/members/remove', w.ownerToken, { user_id: second }).status).toBe(409)
+  })
+})
+
+describe('bounded invitations', () => {
+  it('rate-limits invites per member (20 an hour) with a 429', () => {
+    const w = setup()
+    for (let i = 0; i < 20; i++) expect(w.call('POST', '/t/acme/invitations', w.ownerToken, { email: `p${i}@acme.test`, role: 'planner' }).status).toBe(201)
+    expect(w.call('POST', '/t/acme/invitations', w.ownerToken, { email: 'p20@acme.test', role: 'planner' })).toEqual({ status: 429, body: { error: 'too_many_requests' } })
+  })
+
+  it('a workspace holds at most 100 pending invitations', () => {
+    const w = setup()
+    for (let i = 0; i < 100; i++) {
+      if (i > 0 && i % 20 === 0) w.clock.advance(60 * 60 * 1000)
+      expect(w.call('POST', '/t/acme/invitations', w.ownerToken, { email: `p${i}@acme.test`, role: 'planner' }).status).toBe(201)
+    }
+    w.clock.advance(60 * 60 * 1000)
+    expect(w.call('POST', '/t/acme/invitations', w.ownerToken, { email: 'one-more@acme.test', role: 'planner' }).status).toBe(429)
+  })
+
+  it('an expired invitation disappears: the same email can be invited again', () => {
+    const w = setup()
+    expect(w.call('POST', '/t/acme/invitations', w.ownerToken, { email: 'late@acme.test', role: 'planner' }).status).toBe(201)
+    w.clock.advance(7 * 24 * 60 * 60 * 1000)
+    // (The owner's 7-day session lapsed too: sign in again.)
+    const owner = (w.call('POST', '/t/acme/sessions', undefined, { email: 'owner@acme.test', password: PASSWORD }).body as { token: string }).token
+    expect((w.call('GET', '/t/acme/team', owner).body as { invitations: unknown[] }).invitations).toEqual([])
+    expect(w.call('POST', '/t/acme/invitations', owner, { email: 'late@acme.test', role: 'planner' }).status).toBe(201)
+  })
+})
+
+describe('an invited couple stays inside its own wedding — guests and questions too', () => {
+  it('guest and escalation reads are scoped to the couple\'s wedding, and removal ends the couple\'s session', () => {
+    const w = setup()
+    const ours = w.createWedding('Jo & Lee')
+    const theirs = w.createWedding('Sam & Kit')
+    w.call('POST', '/t/acme/guests', w.ownerToken, { recipient_ref: 'sms:+15550001', wedding_id: ours, guest_id: 'g1' })
+    w.call('POST', '/t/acme/guests', w.ownerToken, { recipient_ref: 'sms:+15550002', wedding_id: theirs, guest_id: 'g2' })
+    const inbound = (from: string, pmr: string) =>
+      w.call('POST', '/t/acme/messaging/inbound', 'team-webhook-token-0123456789', { channel: 'sms', from_ref: from, text: 'where do I park?', provider_message_ref: pmr })
+    expect(inbound('sms:+15550001', 'p1').status).toBe(202)
+    expect(inbound('sms:+15550002', 'p2').status).toBe(202)
+    const couple = w.join(w.ownerToken, { email: 'jo@couple.test', role: 'couple', wedding_id: ours })
+    const guests = w.call('GET', '/t/acme/guests', couple.token).body as { guests: { recipient_ref: string }[] }
+    expect(guests.guests.map((g) => g.recipient_ref)).toEqual(['sms:+15550001'])
+    const inbox = w.call('GET', '/t/acme/escalations', couple.token).body as { escalations: { wedding_id: string }[] }
+    expect(inbox.escalations.map((e) => e.wedding_id)).toEqual([ours])
+    expect(w.call('POST', '/t/acme/members/remove', w.ownerToken, { user_id: couple.principal.principal_id }).body).toEqual({ removed: true })
+    expect(w.call('GET', '/t/acme/weddings', couple.token)).toEqual(UNAUTHORIZED)
   })
 })

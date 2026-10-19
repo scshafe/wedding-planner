@@ -551,7 +551,7 @@ export function renderTeam(theme: Tenant['theme'], slug: string, team: TeamView,
       : team.invitations.map(
           (i) => html`<div class="card">
     <div><strong>${i.email}</strong> <span class="status">${i.role}</span></div>
-    <div class="note">${i.wedding_id === undefined ? '' : `Wedding ${i.wedding_id} · `}expires ${i.expires_at}</div>
+    <div class="note">${i.wedding_id === undefined ? '' : `Wedding ${i.wedding_id} · `}invited by ${i.invited_by_email ?? 'someone no longer a member'} · expires ${i.expires_at}</div>
     ${
       team.viewer_is_owner
         ? html`<form class="inline" method="post" action="/t/${slug}/team/resend">${csrfField(csrfToken)}<input type="hidden" name="invitation_id" value="${i.invitation_id}"><button type="submit">Resend</button></form>

@@ -713,6 +713,7 @@ function errorToResponse(error: WeddingPlannerError): ApiResponse {
     case 'PRODUCT.MEMBER_EXISTS':
     case 'PRODUCT.INVITATION_EXISTS':
     case 'PRODUCT.CANNOT_REMOVE_SELF':
+    case 'PRODUCT.CANNOT_REMOVE_OWNER':
       return RESP_CONFLICT
     // FORGED_CONTEXT / FORGED_PRINCIPAL / CROSS_TENANT_WRITE / anything else: an internal invariant
     // violation a real request can never construct — a 500 bug, never a normal client path, never leaked.
@@ -1409,7 +1410,14 @@ function dispatchAdmin(req: ApiRequest, segments: readonly string[], deps: Admin
   // /admin/outbox — the simulated email outbox (issue #9): GET lists the newest messages; POST sends a test
   // message to an address, so the operator can see the email path work end to end.
   if (deps.email !== undefined && segments.length === 2 && segments[1] === 'outbox') {
-    if (req.method === 'GET') return { status: 200, body: { messages: deps.email.outbox.recent(OUTBOX_PAGE_SIZE) } }
+    if (req.method === 'GET') {
+      // `?tenant=<tenant_id>` narrows to one workspace's messages (issue #11: one tenant cannot crowd out another).
+      const tenant = new URLSearchParams(req.path.includes('?') ? req.path.slice(req.path.indexOf('?') + 1) : '').get('tenant')
+      return {
+        status: 200,
+        body: { messages: deps.email.outbox.recent(OUTBOX_PAGE_SIZE, tenant === null || tenant.length === 0 ? undefined : tenant) },
+      }
+    }
     if (req.method === 'POST') return handleOutboxTestSend(req, deps.email)
     throw methodNotAllowed()
   }

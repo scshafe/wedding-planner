@@ -140,4 +140,12 @@ describe('SimulatedEmailAdapter — every message lands in the outbox', () => {
     email.send({ ...MESSAGE, subject: 'Later' })
     expect(JSON.stringify(backing.list(COLLECTIONS.emailOutbox, GLOBAL_PARTITION))).not.toContain('reset_abc')
   })
+
+  it('retention is per tenant: one workspace sending a lot never pushes out another\'s messages', () => {
+    const email = new SimulatedEmailAdapter(new ManualClock('2027-06-01T09:00:00.000Z'), new SequentialIdGenerator('ten'), undefined, 2)
+    email.send({ ...MESSAGE, tenant_id: 'tenant_a', subject: 'A keeps this' })
+    for (const n of [1, 2, 3, 4]) email.send({ ...MESSAGE, tenant_id: 'tenant_b', subject: `B ${n}` })
+    expect(email.recent(10, 'tenant_a').map((m) => m.subject)).toEqual(['A keeps this'])
+    expect(email.recent(10, 'tenant_b').map((m) => m.subject)).toEqual(['B 4', 'B 3'])
+  })
 })

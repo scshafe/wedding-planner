@@ -202,13 +202,15 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const hasher = new PasswordHasher(config.passwordCost ?? PRODUCTION_SCRYPT_COST, ids)
   const oneTimeTokens = new OneTimeTokenStore(tenants, clock, ids, store)
   const publicUrl = config.publicUrl === undefined ? {} : { publicUrl: config.publicUrl }
+  // One in-process limiter for sign-in, reset requests and invitations (keys are namespaced per use).
+  const limiter = new RateLimiter(clock)
   const accounts = new AccountService({
     accounts: accountStore,
     hasher,
     tokens: oneTimeTokens,
     email,
     sessions: sessionStore,
-    limiter: new RateLimiter(clock),
+    limiter,
     tenants,
     clock,
     pendingResets: new PendingResetQueue(clock, ids, store),
@@ -226,6 +228,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     hasher,
     weddings,
     tenants,
+    limiter,
     ...publicUrl,
   })
 

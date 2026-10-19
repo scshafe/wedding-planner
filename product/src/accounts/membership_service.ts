@@ -9,20 +9,25 @@ import { type AccountStore, normalizeEmail, type PublicAccountView, publicAccoun
 import type { Invitation, InvitationStore, InvitedRole } from './invitation_store'
 import type { OneTimeTokenStore } from './one_time_token_store'
 import { assertAcceptablePassword, type PasswordHasher } from './password_hasher'
+import type { RateLimiter, RateLimitRule } from './rate_limiter'
 
 /**
  * @canonical membership_service -- who belongs to a workspace: invitations and members (issue #11, ADR 0042).
  *
- *   invite        Any PLANNER may invite a teammate (role planner) or, for a wedding of this workspace, its couple
- *                 (role couple, bound to that wedding). The link is a single-use, 7-day invitation token sent through
- *                 the EmailPort. An email that already has an account, or a pending invitation, is an honest 409
- *                 to the trusted inviter.
- *   team          Planners see the members (public views — never a password hash) and the pending invitations;
- *                 couples are refused (403). `viewer_is_owner` tells the page whether to offer management.
+ *   invite        Any planner MEMBER (an owner or planner account — never a simulated demo principal) may invite a
+ *                 teammate (role planner) or, for a wedding of this workspace, its couple (role couple, bound to that
+ *                 wedding). The link is a single-use, 7-day invitation token sent through the EmailPort. Invites
+ *                 and resends are rate-limited per member and per workspace, and a workspace holds at most
+ *                 {@link MAX_PENDING_INVITATIONS} pending invitations. An email that already has an account, or a
+ *                 pending invitation, is an honest 409 to the trusted inviter.
+ *   team          Planner members see the members (public views — never a password hash) and the pending
+ *                 invitations with who sent each; couples and simulated principals are refused (403).
+ *                 `viewer_is_owner` tells the page whether to offer management.
  *   resend/revoke The workspace OWNER re-sends a pending invitation (a fresh link; the old one stops working) or
  *                 revokes it (the link dies with it).
- *   removeMember  The OWNER removes a member (never themselves): the account, every session of it, and every
- *                 outstanding link of it go.
+ *   removeMember  The OWNER removes a member (never themselves, never an owner): the account, every session of it,
+ *                 every outstanding link of it, AND every invitation it sent (with its link) go — a removed member
+ *                 cannot get back in through an invitation they planted.
  *   accept        Unauthenticated, through the link: checks the password first (a typo never burns the link), then
  *                 consumes the token, creates the account exactly as invited (email, role, wedding) with that
  *                 password, deletes the invitation, and has the SessionStore — still the sole mint — sign the new
@@ -39,8 +44,17 @@ import { assertAcceptablePassword, type PasswordHasher } from './password_hasher
 /** How long an invitation link works. */
 export const INVITATION_TTL_SECONDS = 7 * 24 * 60 * 60
 
-/** An invitation as the team page shows it (no token: there is none on the record). */
-export type InvitationView = Invitation
+/** The most pending invitations a workspace may hold. */
+export const MAX_PENDING_INVITATIONS = 100
+
+/** Invite and resend rate limits (each send is an email). */
+export const INVITATION_RATE_LIMITS = Object.freeze({
+  perMember: { limit: 20, windowSeconds: 60 * 60 },
+  perTenant: { limit: 50, windowSeconds: 60 * 60 },
+} satisfies Record<string, RateLimitRule>)
+
+/** An invitation as the team page shows it (no token: there is none on the record), with who sent it. */
+export type InvitationView = Invitation & { readonly invited_by_email?: string }
 
 export interface TeamView {
   readonly members: readonly PublicAccountView[]
@@ -65,15 +79,20 @@ export interface MembershipServiceDeps {
   readonly hasher: PasswordHasher
   readonly weddings: WeddingRepository
   readonly tenants: Pick<TenantStore, 'findById'>
+  readonly limiter: RateLimiter
   readonly publicUrl?: string
 }
 
 export class MembershipService {
   constructor(private readonly deps: MembershipServiceDeps) {}
 
-  /** Invite a teammate or a wedding's couple. Planners only. */
+  /** Invite a teammate or a wedding's couple. Planner members only. */
   invite(context: TenantContext, principal: Principal, input: InviteInput): Invitation {
-    this.#requirePlanner(principal)
+    this.#requireMember(context, principal)
+    this.#limitSends(context, principal)
+    if (this.deps.invitations.list(context).length >= MAX_PENDING_INVITATIONS) {
+      throw new ProductError('PRODUCT.RATE_LIMITED', 'This workspace has too many pending invitations.', {})
+    }
     const email = normalizeEmail(input.email)
     let weddingName: string | undefined
     if (input.role === 'couple') {
@@ -100,12 +119,17 @@ export class MembershipService {
     return invitation
   }
 
-  /** The workspace's members and pending invitations. Planners only. */
+  /** The workspace's members and pending invitations. Planner members only. */
   team(context: TenantContext, principal: Principal): TeamView {
-    this.#requirePlanner(principal)
+    this.#requireMember(context, principal)
+    const members = this.deps.accounts.list(context)
+    const emailOf = new Map(members.map((m) => [m.user_id, m.email]))
     return {
-      members: this.deps.accounts.list(context).map(publicAccountView),
-      invitations: this.deps.invitations.list(context),
+      members: members.map(publicAccountView),
+      invitations: this.deps.invitations.list(context).map((invitation) => {
+        const by = emailOf.get(invitation.invited_by)
+        return by === undefined ? invitation : { ...invitation, invited_by_email: by }
+      }),
       viewer_is_owner: this.#isOwner(context, principal),
       viewer_id: principal.principal_id,
     }
@@ -116,6 +140,7 @@ export class MembershipService {
     this.#requireOwner(context, principal)
     const invitation = this.deps.invitations.get(context, invitation_id)
     if (invitation === undefined) return false
+    this.#limitSends(context, principal)
     const renewed = this.deps.invitations.renew(context, invitation, INVITATION_TTL_SECONDS)
     const wedding = renewed.wedding_id === undefined ? undefined : this.deps.weddings.get(context, renewed.wedding_id)
     this.#send(context, renewed, wedding?.couple_display_name)
@@ -129,15 +154,26 @@ export class MembershipService {
     return this.deps.invitations.remove(context, invitation_id)
   }
 
-  /** Remove a member: the account, its sessions and its links. Owner only; never the owner themselves. */
+  /**
+   * Remove a member: the account, its sessions, its links, and every invitation it sent. Owner only; never the owner
+   * themselves, never another owner.
+   */
   removeMember(context: TenantContext, principal: Principal, user_id: string): boolean {
     this.#requireOwner(context, principal)
     if (user_id === principal.principal_id) {
       throw new ProductError('PRODUCT.CANNOT_REMOVE_SELF', 'The workspace owner cannot remove themselves.', {})
     }
-    if (this.deps.accounts.get(context, user_id) === undefined) return false
+    const target = this.deps.accounts.get(context, user_id)
+    if (target === undefined) return false
+    if (target.role === 'owner') {
+      throw new ProductError('PRODUCT.CANNOT_REMOVE_OWNER', 'A workspace owner cannot be removed here.', {})
+    }
     this.deps.sessions.revokeAllFor(context, user_id)
     this.deps.tokens.revoke(context, undefined, user_id)
+    for (const sent of this.deps.invitations.list(context).filter((i) => i.invited_by === user_id)) {
+      this.deps.tokens.revoke(context, 'invitation', sent.invitation_id)
+      this.deps.invitations.remove(context, sent.invitation_id)
+    }
     return this.deps.accounts.remove(context, user_id)
   }
 
@@ -177,9 +213,23 @@ export class MembershipService {
     return this.deps.accounts.get(context, principal.principal_id)?.role === 'owner'
   }
 
-  #requirePlanner(principal: Principal): void {
+  /** A planner principal whose principal id is an owner or planner ACCOUNT of this workspace (a password session). */
+  #requireMember(context: TenantContext, principal: Principal): void {
     assertMintedPrincipal(principal)
-    if (principal.role !== 'planner') throw new ProductError('PRODUCT.FORBIDDEN', 'Only planners manage the team.', {})
+    const role = principal.role === 'planner' ? this.deps.accounts.get(context, principal.principal_id)?.role : undefined
+    if (role !== 'owner' && role !== 'planner') {
+      throw new ProductError('PRODUCT.FORBIDDEN', 'Only planner members of the workspace manage the team.', {})
+    }
+  }
+
+  /** Each invite or resend sends an email: limited per member and per workspace. */
+  #limitSends(context: TenantContext, principal: Principal): void {
+    if (
+      !this.deps.limiter.attempt(`invite:${context.tenant_id}:${principal.principal_id}`, INVITATION_RATE_LIMITS.perMember) ||
+      !this.deps.limiter.attempt(`invite:${context.tenant_id}`, INVITATION_RATE_LIMITS.perTenant)
+    ) {
+      throw new ProductError('PRODUCT.RATE_LIMITED', 'Too many invitations at once; try again later.', {})
+    }
   }
 
   #requireOwner(context: TenantContext, principal: Principal): void {

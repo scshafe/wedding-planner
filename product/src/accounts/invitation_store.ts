@@ -13,8 +13,9 @@ import { normalizeEmail } from './account_store'
  * An invitation names who is invited (a normalized email), as what (`planner`, or `couple` bound to one
  * wedding), by whom, and until when. Its link token lives in the OneTimeTokenStore (purpose `invitation`, subject =
  * invitation id), so the invitation itself holds nothing a reader could accept it with. Only PENDING invitations
- * are kept: accepting creates the account and deletes the invitation; revoking deletes it. Tenant-scoped through
- * `TenantScopedRepository`, so isolation is inherited.
+ * are kept: accepting creates the account and deletes the invitation; revoking deletes it; an EXPIRED invitation
+ * reads as absent everywhere and is deleted when seen (so an invitee's email is not kept past its invitation).
+ * Tenant-scoped through `TenantScopedRepository`, so isolation is inherited.
  *
  * related: membership_service.ts (the flows), one_time_token_store.ts (the link), account_store.ts.
  */
@@ -72,18 +73,30 @@ export class InvitationStore {
   }
 
   get(context: TenantContext, invitation_id: string): Invitation | undefined {
-    return this.#repo.read(context, invitation_id)
+    const invitation = this.#repo.read(context, invitation_id)
+    if (invitation === undefined || !this.#expired(invitation)) return invitation
+    this.#repo.delete(context, invitation_id)
+    return undefined
   }
 
-  /** The pending invitations of the workspace, oldest first. */
+  /** The live pending invitations of the workspace, oldest first (expired ones are deleted on the way). */
   list(context: TenantContext): readonly Invitation[] {
-    return this.#repo.list(context)
+    const live: Invitation[] = []
+    for (const invitation of this.#repo.list(context)) {
+      if (this.#expired(invitation)) this.#repo.delete(context, invitation.invitation_id)
+      else live.push(invitation)
+    }
+    return live
   }
 
-  /** The pending invitation for an email, if any. */
+  /** The live pending invitation for an email, if any. */
   findByEmail(context: TenantContext, email: string): Invitation | undefined {
     const key = normalizeEmail(email)
-    return this.#repo.list(context).find((invitation) => invitation.email === key)
+    return this.list(context).find((invitation) => invitation.email === key)
+  }
+
+  #expired(invitation: Invitation): boolean {
+    return !(Date.parse(invitation.expires_at) > Date.parse(this.clock.now()))
   }
 
   /** Extend an invitation's expiry (a resend). */
