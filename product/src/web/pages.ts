@@ -44,8 +44,11 @@ const STYLE = html`<style>
     form.inline { display: inline; }
   </style>`
 
-/** Wrap themed content in the full document, injecting the validated brand colors via custom properties. */
-function themedShell(theme: Tenant['theme'], slug: string, title: string, content: SafeHtml): string {
+/**
+ * Wrap themed content in the full document, injecting the validated brand colors via custom properties. `signedIn`
+ * pages (issue #12) carry a footer with the "Send feedback" link, which passes the page's title as context.
+ */
+function themedShell(theme: Tenant['theme'], slug: string, title: string, content: SafeHtml, signedIn = false): string {
   const brand = safeColor(theme.primary_color_hex)
   const accent = safeColor(theme.accent_color_hex)
   const initial = theme.brand_name.slice(0, 1)
@@ -71,8 +74,18 @@ ${STYLE}
   <p class="note">Tenant <code>${slug}</code> · offline white-label demo.</p>
   ${content}
 </main>
+${
+  signedIn
+    ? html`<footer style="max-width:56rem;margin:0 auto;padding:0 1.5rem 1.5rem" class="note"><a href="/t/${slug}/feedback?page=${encodeURIComponent(title)}">Send feedback</a> — tell us what is wrong or missing.</footer>`
+    : html``
+}
 </body>
 </html>`)
+}
+
+/** The shell of a page only a signed-in planner or couple reaches: the themed shell plus the feedback footer. */
+function signedInShell(theme: Tenant['theme'], slug: string, title: string, content: SafeHtml): string {
+  return themedShell(theme, slug, title, content, true)
 }
 
 /** The generic landing page — tenant-independent, no theme (the front door at `/`). */
@@ -321,7 +334,7 @@ export function renderConsole(
   const createWarning = invalid
     ? html`<p class="note" style="color:#b00">That wedding could not be created. Check the name, date, and fields.</p>`
     : html``
-  return themedShell(
+  return signedInShell(
     theme,
     slug,
     'Weddings',
@@ -384,7 +397,7 @@ export function renderGuests(
   const warning = invalid
     ? html`<p class="note" style="color:#b00">That guest could not be registered. Check the contact handle and wedding.</p>`
     : html``
-  return themedShell(
+  return signedInShell(
     theme,
     slug,
     'Guests',
@@ -482,7 +495,7 @@ export function renderHome(
     <h3><a href="/t/${slug}?view=billing">Billing &amp; usage →</a></h3>
     <p><strong>${`${dollars(overview.billing.balanceCents)} owed`}</strong> · <span class="status">${overview.billing.planTier}</span></p>
   </div>`
-  return themedShell(
+  return signedInShell(
     theme,
     slug,
     'Home',
@@ -560,7 +573,7 @@ export function renderTeam(theme: Tenant['theme'], slug: string, team: TeamView,
     }
   </div>`,
         )
-  return themedShell(
+  return signedInShell(
     theme,
     slug,
     'Team',
@@ -763,7 +776,7 @@ export function renderConversation(
     return html`<div class="note">${e.at} · <strong>${transitionLabel(e.status)}</strong> by ${e.by}</div>`
   }
   const cards = timeline.map(eventCard)
-  return themedShell(
+  return signedInShell(
     theme,
     slug,
     'Guest conversation',
@@ -785,7 +798,7 @@ export function renderConversation(
  * the unknown-tenant mask; the read already proved this tenant active — a 404 here would be leakier, not safer).
  */
 export function renderConversationNotFound(theme: Tenant['theme'], slug: string): string {
-  return themedShell(
+  return signedInShell(
     theme,
     slug,
     'Guest conversation',
@@ -887,7 +900,7 @@ export function renderEscalations(
       : html`${openRows}`
   const handledBody =
     handled.length === 0 ? html`` : html`<h3>Handled</h3>${handledRows}`
-  return themedShell(
+  return signedInShell(
     theme,
     slug,
     'Guest questions',
@@ -953,7 +966,7 @@ export function renderDetail(
   const editWarning = invalid
     ? html`<p class="note" style="color:#b00">Those changes could not be saved. Check the date, time, and fields.</p>`
     : html``
-  return themedShell(
+  return signedInShell(
     theme,
     slug,
     wedding.couple_display_name,
@@ -991,7 +1004,7 @@ export function renderStrategy(theme: Tenant['theme'], slug: string, guidance: S
     <p class="note">${k.summary}</p>
   </div>`,
   )
-  return themedShell(
+  return signedInShell(
     theme,
     slug,
     'Planning strategy',
@@ -1051,7 +1064,7 @@ export function renderBilling(
   )
   const activityBody =
     activity.length === 0 ? html`<p class="note">No activity yet.</p>` : html`<ul class="activity">${activityRows}</ul>`
-  return themedShell(
+  return signedInShell(
     theme,
     slug,
     'Billing & usage',
@@ -1092,9 +1105,59 @@ function activityLabel(kind: string): string {
   return ACTIVITY_LABELS[kind] ?? kind
 }
 
+/**
+ * The "Send feedback" form (issue #12): what were you trying to do, what happened, and (prefilled from the footer
+ * link) the page you came from. Only what the person types is sent.
+ */
+export function renderFeedback(
+  theme: Tenant['theme'],
+  slug: string,
+  csrfToken: string,
+  page: string,
+  notice?: 'invalid' | 'rate_limited',
+): string {
+  const warning =
+    notice === 'invalid'
+      ? html`<p class="note" style="color:#b00">Please fill in both boxes (up to 1,000 and 4,000 characters).</p>`
+      : notice === 'rate_limited'
+        ? html`<p class="note" style="color:#b00">That is a lot of feedback at once. Please try again later.</p>`
+        : html``
+  return signedInShell(
+    theme,
+    slug,
+    'Send feedback',
+    html`<p><a href="/t/${slug}">← Home</a></p>
+  <div class="card">
+    <h2>Send feedback</h2>
+    <p class="note">Tell us what is wrong or missing. We see only what you write here, which page you came from, and whether you are a planner or a couple.</p>
+    ${warning}
+    <form method="post" action="/t/${slug}/feedback/send">
+      ${csrfField(csrfToken)}
+      <label for="trying">What were you trying to do?</label>
+      <textarea id="trying" name="trying" rows="3" maxlength="1000" required style="width:100%"></textarea>
+      <label for="happened">What happened?</label>
+      <textarea id="happened" name="happened" rows="5" maxlength="4000" required style="width:100%"></textarea>
+      <label for="page">Page <span class="note">(optional)</span></label>
+      <input id="page" name="page" type="text" maxlength="120" value="${page}">
+      <p><button type="submit">Send</button></p>
+    </form>
+  </div>`,
+  )
+}
+
+/** After sending feedback (issue #12). */
+export function renderFeedbackThanks(theme: Tenant['theme'], slug: string): string {
+  return signedInShell(
+    theme,
+    slug,
+    'Thank you',
+    html`<div class="card"><h2>Thank you</h2><p>Your feedback was sent.</p><p><a href="/t/${slug}">← Back to your workspace</a></p></div>`,
+  )
+}
+
 /** The themed forbidden page (a capability the role lacks — a 403, not a masked resource). */
 export function renderForbidden(theme: Tenant['theme'], slug: string): string {
-  return themedShell(
+  return signedInShell(
     theme,
     slug,
     'Not allowed',

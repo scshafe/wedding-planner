@@ -14,6 +14,7 @@ import { PendingResetQueue } from '../accounts/pending_reset_queue'
 import { PasswordHasher, PRODUCTION_SCRYPT_COST, type ScryptCost } from '../accounts/password_hasher'
 import { RateLimiter } from '../accounts/rate_limiter'
 import { BillingLedger } from '../billing/billing_ledger'
+import { FeedbackService } from '../feedback/feedback_service'
 import { SimulatedEmailAdapter } from '../email/simulated_email_adapter'
 import { ProductApi } from '../http/product_api'
 import { EscalationLog } from '../messaging/escalation_log'
@@ -202,7 +203,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const hasher = new PasswordHasher(config.passwordCost ?? PRODUCTION_SCRYPT_COST, ids)
   const oneTimeTokens = new OneTimeTokenStore(tenants, clock, ids, store)
   const publicUrl = config.publicUrl === undefined ? {} : { publicUrl: config.publicUrl }
-  // One in-process limiter for sign-in, reset requests and invitations (keys are namespaced per use).
+  // One in-process limiter for sign-in, reset requests, invitations and feedback (keys are namespaced per use).
   const limiter = new RateLimiter(clock)
   const accounts = new AccountService({
     accounts: accountStore,
@@ -270,6 +271,8 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     accounts,
     membership,
     tenants,
+    // In-app feedback (issue #12): stored in the shared store, read by the operator at /admin/feedback.
+    feedback: new FeedbackService(clock, ids, limiter, store),
     webhookCredentials,
     messaging: {
       port: messagingAdapter,

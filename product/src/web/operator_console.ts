@@ -4,7 +4,8 @@ import type { ApiRequest } from '../http/api_message'
 import type { ProductApi } from '../http/product_api'
 import type { Tenant } from '@wedding-planner/shared'
 
-import { renderOperatorLogin, renderOutbox, renderTenants, type TenantsNotice } from './admin_pages'
+import type { FeedbackSubmission } from '../feedback/feedback_service'
+import { renderFeedbackList, renderOperatorLogin, renderOutbox, renderTenants, type TenantsNotice } from './admin_pages'
 import { readCookie } from './cookies'
 import { ERROR_500 } from './pages'
 import { htmlResult, type HttpResult, redirect } from './web_response'
@@ -24,6 +25,7 @@ import { htmlResult, type HttpResult, redirect } from './web_response'
  *   POST /admin/outbox/send     CSRF-checked test send, then PRG back to the outbox
  *   GET  /admin/tenants         every tenant (issue #10); JSON for a Bearer request, the page for a browser
  *   POST /admin/tenants/owner   CSRF-checked owner setup (api `POST /admin/tenants/:id/owner`), then PRG back
+ *   GET  /admin/feedback        in-app feedback, newest first (issue #12); JSON for a Bearer request
  *
  * Like the tenant UI, its ONLY data path is `api.handle()`: the cookie is forwarded verbatim as the Bearer and the
  * pipeline's operator gate decides. `csrf` is the operator store narrowed to {@link CsrfGuard} (issue/verify
@@ -65,6 +67,7 @@ export class OperatorConsole {
     if (page === 'outbox/send' && req.method === 'POST') return this.#outboxSend(req)
     if (page === 'tenants' && req.method === 'GET' && req.headers.authorization === undefined) return this.#tenants(req)
     if (page === 'tenants/owner' && req.method === 'POST') return this.#ownerSetup(req)
+    if (page === 'feedback' && req.method === 'GET' && req.headers.authorization === undefined) return this.#feedback(req)
     return undefined
   }
 
@@ -117,6 +120,20 @@ export class OperatorConsole {
     const messages = (res.body as { messages?: OutboxMessage[] }).messages ?? []
     const shown = notice ?? (queryParam(req.path, 'sent') === '1' ? 'sent' : undefined)
     return htmlResult(status, renderOutbox(messages, csrf, shown, tenantId))
+  }
+
+  #feedback(req: ApiRequest): HttpResult {
+    const token = readCookie(req.headers.cookie, OPERATOR_COOKIE)
+    const res = this.#api.handle({
+      method: 'GET',
+      path: '/admin/feedback',
+      headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
+    })
+    if (res.status === 401) return redirect(303, '/admin/login')
+    if (res.status !== 200) return ERROR_500
+    const csrf = this.#csrf.issueCsrf(token)
+    if (csrf === undefined) return redirect(303, '/admin/login')
+    return htmlResult(200, renderFeedbackList((res.body as { feedback?: FeedbackSubmission[] }).feedback ?? [], csrf))
   }
 
   #tenants(req: ApiRequest): HttpResult {

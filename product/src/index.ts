@@ -256,6 +256,16 @@ export {
   type ScryptCost,
 } from './accounts/password_hasher'
 export { MAX_KEYS, RateLimiter, type RateLimitRule } from './accounts/rate_limiter'
+
+// In-app feedback (issue #12, ADR 0043).
+export {
+  FEEDBACK_LIMITS,
+  FEEDBACK_RATE_LIMITS,
+  FEEDBACK_RETENTION,
+  FeedbackService,
+  type FeedbackSubmission,
+  type SubmitFeedbackInput,
+} from './feedback/feedback_service'
 export { type AuthenticatedAccount } from './auth/session_store'
 export {
   OPERATOR_SESSION_TTL_SECONDS,

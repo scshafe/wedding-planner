@@ -201,6 +201,8 @@ describe('durable storage — data written before a restart is read back after i
     expect(ownerSignIn.status).toBe(201)
     // The owner invites a planner (issue #11): a pending invitation stays in the store for the census below.
     const ownerToken = (ownerSignIn.body as { token: string }).token
+    // ...and sends feedback (issue #12).
+    expect(api2.handle(req('POST', '/t/demo/feedback', { token: ownerToken, body: { trying: 'invite', happened: 'it worked' } })).status).toBe(201)
     expect(
       api2.handle(req('POST', '/t/demo/invitations', { token: ownerToken, body: { email: 'planner@demo.test', role: 'planner' } })).status,
     ).toBe(201)
