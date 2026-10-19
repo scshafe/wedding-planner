@@ -27,9 +27,10 @@ there was no way to use it from a browser.
 - An `OutboundEmail` is `to`, a one-line `subject`, a plain-text `text_body`, a platform `purpose` label
   (`operator_test`, `password_reset`, `account_setup`, `invitation`) and an optional `tenant_id`.
 - No template ids, no provider message shapes, no HTML bodies.
-- `assertValidOutboundEmail` is the shared shape check every adapter runs: an address shape, a CR/LF in the
-  subject (header injection), and bounds on all three fields. It lives with the port, so a future real
-  adapter cannot skip it.
+- `assertValidOutboundEmail` is the shared shape check every adapter runs: an address shape, any control
+  character or Unicode line separator in the address or subject (header injection and truncation vectors in some
+  mail libraries), and bounds on all three fields. It lives with the port, so a future real adapter cannot skip
+  it.
 
 The message contract, binding on callers and tested by them in #10 and #11: a message never carries a session
 token, an operator credential or a password. A link that authenticates its holder carries its own single-use,
@@ -43,7 +44,8 @@ to the durable store's `email_outbox` collection.
 
 The outbox is a platform log, not tenant data. It lives in the global partition, with the tenant as a field,
 and only the operator tier reads it through `EmailOutboxReader.recent(limit)`, newest first. No tenant route
-exposes it.
+exposes it. It is bounded: past 1000 messages the oldest are deleted on send, so recipient addresses and one-time
+links do not pile up in the database and its backups.
 
 ### Operator API
 
@@ -61,9 +63,16 @@ the console exchanges the credential for a session:
 - `POST /admin/sessions` (Bearer = the static credential) returns `{token, csrf_token, expires_at}`. The session
   lasts 12 hours and is persisted keyed by `sha256(token)`.
 - `OperatorCredentialStore.resolve` accepts the static credential or a live session.
+- **Each session is bound to the credential that minted it.** The row stores `sha256(token NUL credential)`, never
+  a hash of the credential alone, and a session resolves only while a currently configured credential reproduces
+  that binding. Rotating `WP_OPERATOR_TOKEN`, the owner's lever after a stolen cookie, therefore ends every console
+  session at the next deploy.
 - A session cannot mint another session (403), so stealing one never extends it.
-- `DELETE /admin/sessions` revokes the presented session on the server.
-- An expired session fails like an unknown token and is deleted when next seen.
+- `DELETE /admin/sessions` revokes the presented session. Presented with the static credential, it revokes
+  **every** console session ("sign out everywhere").
+- An expired session, or one with an unparseable expiry, fails like an unknown token. The boot sweep deletes
+  expired rows. A row from a rotated-away credential cannot be recognized without its token, so it stays until it
+  lapses, and it never resolves meanwhile.
 
 The session code lives in `OperatorCredentialStore`, so that store stays the sole mint of an `Operator`. The
 `/admin/sessions` handler sits in the pipeline next to the tenant login, because the `/admin` handlers
@@ -87,6 +96,13 @@ Rules the console follows:
   page runs under the strict CSP (no script).
 - Sign-in is the CSRF exemption, as tenant login is: there is no session yet, the cookie is SameSite=Strict, and
   forging a sign-in would need the credential anyway.
+- Every HTML page and JSON response is `Cache-Control: no-store`, so the outbox's one-time links are not
+  redisplayed from the cache or the back/forward cache after sign-out. The CSP adds `frame-ancestors 'none'`.
+- The byte-identical-401-before-auth invariant still holds for the JSON pipeline. The fixed console routes
+  (`/admin`, `/admin/login`, …) answer with their own pages or redirects; they are public in the source, and none
+  of them depends on data before auth.
+- There is no rate limit on operator sign-in yet. The 16-character credential floor is the control, and a lockout
+  is going-live hardening.
 
 Like `wp_session`, the cookie is not marked `Secure`, because the local demo runs on plain HTTP. The deployed
 node is HTTPS-only through tailscale serve.
@@ -98,8 +114,7 @@ node is HTTPS-only through tailscale serve.
 - The outbox shows full bodies, one-time links included. That is the point while email is simulated: the
   operator relays the link. When a real provider replaces the adapter, the outbox goes away with it, or must
   redact link tokens.
-- The outbox is unbounded, and `recent` reads the whole collection. That is fine at studio scale. Add a
-  retention bound or a dedicated table if it ever matters.
+- `recent` reads the whole (bounded) collection, which is fine at 1000 rows.
 - Two collections join the census: `operator_session` and `email_outbox`.
 
 ## Alternatives considered

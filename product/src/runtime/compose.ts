@@ -273,7 +273,10 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     }
   })
 
-  store.transaction(() => sessionStore.sweepExpired())
+  store.transaction(() => {
+    sessionStore.sweepExpired()
+    operators.sweepExpired()
+  })
 
   return { ui, api, themes, operatorToken, demo, messaging, escalations, resolutions, email }
 }

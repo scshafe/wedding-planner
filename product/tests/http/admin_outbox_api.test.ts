@@ -86,6 +86,15 @@ describe('POST/DELETE /admin/sessions — operator console sessions', () => {
     expect(api.handle(req('GET', '/admin/outbox', { token: OP })).status).toBe(200)
   })
 
+  it('DELETE with the static credential signs out every console session', () => {
+    const { api } = surface()
+    const a = api.handle(req('POST', '/admin/sessions', { token: OP })).body as { token: string }
+    const b = api.handle(req('POST', '/admin/sessions', { token: OP })).body as { token: string }
+    expect(api.handle(req('DELETE', '/admin/sessions', { token: OP }))).toEqual({ status: 200, body: { signed_out: true } })
+    expect(api.handle(req('GET', '/admin/outbox', { token: a.token }))).toEqual(UNAUTHORIZED)
+    expect(api.handle(req('GET', '/admin/outbox', { token: b.token }))).toEqual(UNAUTHORIZED)
+  })
+
   it('a session does not reach tenant routes (separate token namespaces)', () => {
     const { api } = surface()
     const session = api.handle(req('POST', '/admin/sessions', { token: OP })).body as { token: string }

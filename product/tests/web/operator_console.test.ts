@@ -107,6 +107,9 @@ describe('operator console — the outbox page', () => {
     expect(page.body).toContain('&lt;img src=x onerror=alert(2)&gt;')
     expect(page.body).not.toContain('<script>alert(1)')
     expect(page.body).toContain('tenant_x')
+    // One-time links live here: never cached, never framed.
+    expect(page.headers['cache-control']).toBe('no-store')
+    expect(page.headers['content-security-policy']).toContain("frame-ancestors 'none'")
   })
 
   it('a script presenting a Bearer gets the JSON API at the same path', () => {

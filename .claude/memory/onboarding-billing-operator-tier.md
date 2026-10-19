@@ -65,3 +65,10 @@ lifecycle drive end-to-end through `api.handle()`; (5) per-tenant billing fold. 
 APPROVE; the only built-code fold was the `billingView` existence guard. Related: [[web-ui-themed-edge]],
 [[http-edge-and-intra-tenant-auth]], [[multi-tenant-isolation-boundary]],
 [[customer-facing-product-surface-is-a-first-class-goal]].
+
+**Update (issue #9, ADR 0040):** the byte-identical 401 for any unauthenticated `/admin` path+method now holds for the
+JSON pipeline only. The operator CONSOLE adds fixed browser routes (`/admin`, `/admin/login`, `/admin/logout`,
+`/admin/outbox` without an Authorization header, `/admin/outbox/send`) that answer with their own page or a redirect
+before auth; they are public in the source and depend on no data. Console sessions are bound to the credential
+(`sha256(token NUL credential)`): rotating `WP_OPERATOR_TOKEN` ends them. See [[operator-console-and-email-outbox]].
+

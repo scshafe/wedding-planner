@@ -16,8 +16,9 @@ import { ProductError } from '../product_error'
  *     (a password reset, an invitation) carries its OWN single-use, expiring token, minted for that one purpose.
  *   - Plain text only: there is no HTML body, so a message renders nothing executable anywhere it is shown.
  *
- * `assertValidOutboundEmail` is the shared shape check every adapter runs, so a header-injection attempt (a CR/LF
- * in the subject or address) or an unbounded body is refused the same way whichever provider is wired.
+ * `assertValidOutboundEmail` is the shared shape check every adapter runs, so a header-injection attempt (a control
+ * character or line separator in the subject or address) or an unbounded body is refused the same way whichever
+ * provider is wired.
  *
  * related: simulated_email_adapter.ts (the offline adapter + outbox), messaging_port.ts (the pattern this mirrors).
  */
@@ -58,19 +59,30 @@ export interface EmailPort {
 /** Bounds on a message (hygiene: an outbox entry stays readable; a body is never unbounded). */
 export const EMAIL_LIMITS = Object.freeze({ addressMax: 254, subjectMax: 200, bodyMax: 20_000 })
 
-/** A deliberately simple address shape: one `@`, a dot in the domain, no whitespace or control characters. */
+/** A deliberately simple address shape: one `@`, a dot in the domain, no whitespace or listed punctuation. */
 const EMAIL_ADDRESS = /^[^\s@<>"'\\,;:]+@[^\s@<>"'\\,;:]+\.[^\s@<>"'\\,;:]+$/
+
+/**
+ * C0 and C1 control characters and the Unicode line/paragraph separators: line breaks or truncation points in some
+ * mail libraries, so refused in addresses and subjects (a header-injection vector once a real adapter exists).
+ */
+// eslint-disable-next-line no-control-regex -- matching control characters is the point
+const CONTROL_OR_LINE_BREAK = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/
 
 /** Whether `value` has the shape of an email address (used by the forms that collect one, too). */
 export function isEmailAddress(value: string): boolean {
-  return value.length <= EMAIL_LIMITS.addressMax && EMAIL_ADDRESS.test(value)
+  return value.length <= EMAIL_LIMITS.addressMax && !CONTROL_OR_LINE_BREAK.test(value) && EMAIL_ADDRESS.test(value)
 }
 
 /** The shared shape check every adapter runs before sending. */
 export function assertValidOutboundEmail(message: OutboundEmail): void {
   const reasons: string[] = []
   if (!isEmailAddress(message.to)) reasons.push('to')
-  if (message.subject.length === 0 || message.subject.length > EMAIL_LIMITS.subjectMax || /[\r\n]/.test(message.subject)) {
+  if (
+    message.subject.length === 0 ||
+    message.subject.length > EMAIL_LIMITS.subjectMax ||
+    CONTROL_OR_LINE_BREAK.test(message.subject)
+  ) {
     reasons.push('subject')
   }
   if (message.text_body.length === 0 || message.text_body.length > EMAIL_LIMITS.bodyMax) reasons.push('text_body')

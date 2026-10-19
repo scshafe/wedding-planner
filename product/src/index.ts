@@ -208,7 +208,12 @@ export {
   isEmailAddress,
   type OutboundEmail,
 } from './email/email_port'
-export { type EmailOutboxReader, type OutboxMessage, SimulatedEmailAdapter } from './email/simulated_email_adapter'
+export {
+  type EmailOutboxReader,
+  OUTBOX_RETENTION,
+  type OutboxMessage,
+  SimulatedEmailAdapter,
+} from './email/simulated_email_adapter'
 export { OperatorConsole, type OperatorConsoleDeps } from './web/operator_console'
 export {
   OPERATOR_SESSION_TTL_SECONDS,

@@ -34,9 +34,16 @@ import { constantTimeEqual, type CsrfGuard } from './csrf_guard'
  * OPERATOR SESSIONS (issue #9, ADR 0040) let a browser use the operator console without holding the credential:
  * `startSession` exchanges the STATIC credential (never another session) for an opaque, expiring session token
  * plus its own CSRF token, persisted like tenant sessions — keyed by sha256(token), so the database and its
- * backups hold nothing replayable. `resolve` accepts either the static credential or a live session (an expired
- * one is deleted and fails like an unknown token); `endSession` revokes one. The browser keeps the session in an
- * HttpOnly cookie scoped to `/admin`, so the long-lived credential never sits in a cookie jar.
+ * backups hold nothing replayable. The browser keeps the session in an HttpOnly cookie scoped to `/admin`, so
+ * the long-lived credential never sits in a cookie jar.
+ *
+ * Each session is BOUND to the credential that minted it: the row stores sha256(token NUL credential), and a
+ * session resolves only while one of the CURRENTLY configured credentials reproduces that binding. Rotating
+ * `WP_OPERATOR_TOKEN` (the owner's incident lever) therefore ends every console session at the next boot, and
+ * the row never holds a hash of the credential alone. `resolve` accepts the static credential or a live, bound
+ * session (expired or unbound ⇒ the same unknown-token failure). `endSession` with a session revokes it; with the
+ * static credential it revokes EVERY console session ("sign out everywhere"). `sweepExpired` prunes expired rows
+ * at boot.
  *
  * related: session_store.ts (the intra-tenant analogue), principal.ts (the mint pattern this mirrors),
  * product_api.ts (#authenticateOperator — the sole consumer).
@@ -59,11 +66,20 @@ export interface OperatorSession {
   readonly expires_at: string
 }
 
-/** An operator session as persisted (keyed by sha256 of its token; the token is not in the record). */
+/** An operator session as persisted (keyed by sha256 of its token; neither the token nor the credential is in it). */
 export interface StoredOperatorSession {
-  readonly operator_id: string
+  /** sha256(token): the record's own key (lets the sweep delete it). */
+  readonly token_hash: string
+  /** sha256(token NUL credential): which credential minted it. */
+  readonly credential_binding: string
   readonly csrf_token: string
   readonly expires_at: string
+}
+
+/** A resolved console session: the stored row and the live operator of the credential it is bound to. */
+interface LiveOperatorSession {
+  readonly session: StoredOperatorSession
+  readonly operator: Operator
 }
 
 /**
@@ -148,8 +164,7 @@ export class OperatorCredentialStore implements CsrfGuard {
     if (token === undefined) return undefined
     const operator = this.#byToken.get(token)
     if (operator !== undefined) return operator
-    const session = this.#liveSession(token)
-    return session === undefined ? undefined : mintOperator(session.operator_id)
+    return this.#liveSession(token)?.operator
   }
 
   /**
@@ -164,40 +179,83 @@ export class OperatorCredentialStore implements CsrfGuard {
     const token = this.#ids.next('opsession')
     const csrf_token = this.#ids.next('opcsrf')
     const expires_at = new Date(Date.parse(clock.now()) + ttlSeconds * 1000).toISOString()
-    const stored: StoredOperatorSession = { operator_id: operator.operator_id, csrf_token, expires_at }
-    store.put(COLLECTIONS.operatorSession, GLOBAL_PARTITION, sha256Hex(token), stored)
+    const token_hash = sha256Hex(token)
+    const stored: StoredOperatorSession = {
+      token_hash,
+      credential_binding: bindingOf(token, credentialToken),
+      csrf_token,
+      expires_at,
+    }
+    store.put(COLLECTIONS.operatorSession, GLOBAL_PARTITION, token_hash, stored)
     return { token, csrf_token, expires_at }
   }
 
-  /** Revoke a console session (idempotent). Returns whether a session was removed. */
-  endSession(sessionToken: string | undefined): boolean {
-    if (sessionToken === undefined || sessionToken.length === 0 || this.#sessions === undefined) return false
-    return this.#sessions.store.delete(COLLECTIONS.operatorSession, GLOBAL_PARTITION, sha256Hex(sessionToken))
+  /**
+   * Revoke console sessions (idempotent): the presented session, or — presented with the STATIC credential —
+   * every console session. Returns whether any session was removed.
+   */
+  endSession(token: string | undefined): boolean {
+    if (token === undefined || token.length === 0 || this.#sessions === undefined) return false
+    const { store } = this.#sessions
+    if (this.#byToken.has(token)) {
+      const all = store.list(COLLECTIONS.operatorSession, GLOBAL_PARTITION)
+      for (const session of all) store.delete(COLLECTIONS.operatorSession, GLOBAL_PARTITION, session.token_hash)
+      return all.length > 0
+    }
+    return store.delete(COLLECTIONS.operatorSession, GLOBAL_PARTITION, sha256Hex(token))
+  }
+
+  /**
+   * Delete every expired (or malformed) console session. Run at boot. A session bound to a rotated-away credential
+   * cannot be recognized without its token, so it stays until it lapses — it never resolves meanwhile.
+   */
+  sweepExpired(): number {
+    if (this.#sessions === undefined) return 0
+    const { clock, store } = this.#sessions
+    let removed = 0
+    for (const session of store.list(COLLECTIONS.operatorSession, GLOBAL_PARTITION)) {
+      if (isExpired(session.expires_at, clock) || typeof session.credential_binding !== 'string') {
+        store.delete(COLLECTIONS.operatorSession, GLOBAL_PARTITION, session.token_hash)
+        removed += 1
+      }
+    }
+    return removed
   }
 
   /** {@link CsrfGuard.issueCsrf} for a console session; undefined for an unknown/expired one. */
   issueCsrf(sessionToken: string | undefined): string | undefined {
-    return this.#liveSession(sessionToken)?.csrf_token
+    return this.#liveSession(sessionToken)?.session.csrf_token
   }
 
   /** {@link CsrfGuard.verifyCsrf} for a console session: fail-closed and constant-time. */
   verifyCsrf(sessionToken: string | undefined, candidate: string | undefined): boolean {
     if (candidate === undefined || candidate.length === 0) return false
-    const session = this.#liveSession(sessionToken)
-    return session !== undefined && constantTimeEqual(session.csrf_token, candidate)
+    const live = this.#liveSession(sessionToken)
+    return live !== undefined && constantTimeEqual(live.session.csrf_token, candidate)
   }
 
-  /** The unexpired session for a token, or undefined. An expired session is deleted on sight. */
-  #liveSession(token: string | undefined): StoredOperatorSession | undefined {
+  /**
+   * The live session for a token: unexpired and bound to a currently configured credential, with that
+   * credential's operator. Anything else is undefined (the same failure as an unknown token).
+   */
+  #liveSession(token: string | undefined): LiveOperatorSession | undefined {
     if (token === undefined || token.length === 0 || this.#sessions === undefined) return undefined
     const { clock, store } = this.#sessions
-    const key = sha256Hex(token)
-    const session = store.get(COLLECTIONS.operatorSession, GLOBAL_PARTITION, key)
-    if (session === undefined) return undefined
-    if (Date.parse(session.expires_at) <= Date.parse(clock.now())) {
-      store.delete(COLLECTIONS.operatorSession, GLOBAL_PARTITION, key)
-      return undefined
+    const session = store.get(COLLECTIONS.operatorSession, GLOBAL_PARTITION, sha256Hex(token))
+    if (session === undefined || isExpired(session.expires_at, clock)) return undefined
+    for (const [credential, operator] of this.#byToken) {
+      if (constantTimeEqual(bindingOf(token, credential), session.credential_binding)) return { session, operator }
     }
-    return session
+    return undefined
   }
+}
+
+/** sha256(token NUL credential): binds a console session to the credential that minted it. */
+function bindingOf(token: string, credential: string): string {
+  return sha256Hex(`${token}\u0000${credential}`)
+}
+
+/** Expiry check that fails CLOSED: an unparseable timestamp counts as expired. */
+function isExpired(expires_at: string, clock: Clock): boolean {
+  return !(Date.parse(expires_at) > Date.parse(clock.now()))
 }

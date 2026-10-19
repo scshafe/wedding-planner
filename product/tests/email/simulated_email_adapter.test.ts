@@ -43,6 +43,16 @@ describe('email port — the shared shape check', () => {
       expect(isEmailAddress(bad)).toBe(false)
     }
     expect(isEmailAddress(`${'a'.repeat(EMAIL_LIMITS.addressMax)}@b.co`)).toBe(false)
+    // Control characters and Unicode line separators (line-break / truncation vectors in some mail libraries).
+    for (const bad of ['a\u0000b@x.yz', 'a\u001bb@x.yz', 'a\u0085b@x.yz', 'a\u2028b@x.yz', 'a@x.yz\u007f']) {
+      expect(isEmailAddress(bad)).toBe(false)
+    }
+  })
+
+  it('refuses control characters and line separators in the subject', () => {
+    for (const subject of ['ok\u0000x', 'ok\u000bx', 'ok\u0085Bcc: x@y.z', 'ok\u2028Bcc: x@y.z', 'tab\there']) {
+      expect(codeOfThrow(() => assertValidOutboundEmail({ ...MESSAGE, subject }))).toBe('PRODUCT.BAD_REQUEST')
+    }
   })
 
   it('refuses header injection in the subject, an empty or oversized body, and a bad recipient', () => {
@@ -97,6 +107,13 @@ describe('SimulatedEmailAdapter — every message lands in the outbox', () => {
     }
     expect(email.recent(2).map((m) => m.subject)).toEqual(['Message 3', 'Message 2'])
     expect(email.recent(0)).toEqual([])
+  })
+
+  it('keeps a bounded outbox: past the retention the oldest messages are deleted', () => {
+    const email = new SimulatedEmailAdapter(new ManualClock('2027-06-01T09:00:00.000Z'), new SequentialIdGenerator('ret'), undefined, 3)
+    for (const n of [1, 2, 3, 4, 5]) email.send({ ...MESSAGE, subject: `Message ${n}` })
+    expect(email.recent(10).map((m) => m.subject)).toEqual(['Message 5', 'Message 4', 'Message 3'])
+    expect(email.deliveryStatus('email_ret_1')).toBe('unknown')
   })
 
   it('a malformed message is refused and not recorded', () => {

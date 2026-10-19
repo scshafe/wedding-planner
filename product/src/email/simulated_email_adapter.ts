@@ -22,7 +22,9 @@ import {
  * the product is offline.
  *
  * The outbox is a PLATFORM log, not tenant data: it lives in the global partition (the tenant is a field on each
- * message) and only the operator tier reads it. No tenant route exposes it.
+ * message) and only the operator tier reads it. No tenant route exposes it. It is BOUNDED: past
+ * {@link OUTBOX_RETENTION} messages the oldest are deleted, so recipient addresses and one-time links do not pile
+ * up in the database and its backups.
  *
  * Deterministic: message ids and timestamps come from the injected generator and clock.
  *
@@ -47,6 +49,9 @@ export interface EmailOutboxReader {
   recent(limit: number): readonly OutboxMessage[]
 }
 
+/** How many messages the outbox keeps (the oldest beyond this are deleted on send). */
+export const OUTBOX_RETENTION = 1000
+
 export class SimulatedEmailAdapter implements EmailPort, EmailOutboxReader {
   readonly #store: RecordStore
 
@@ -54,6 +59,7 @@ export class SimulatedEmailAdapter implements EmailPort, EmailOutboxReader {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     store: RecordStore = new InMemoryRecordStore(),
+    private readonly retention: number = OUTBOX_RETENTION,
   ) {
     this.#store = store
   }
@@ -71,6 +77,10 @@ export class SimulatedEmailAdapter implements EmailPort, EmailOutboxReader {
       status: 'delivered',
     }
     this.#store.put(COLLECTIONS.emailOutbox, GLOBAL_PARTITION, recorded.message_id, recorded)
+    const all = this.#store.list(COLLECTIONS.emailOutbox, GLOBAL_PARTITION)
+    for (const old of all.slice(0, Math.max(0, all.length - this.retention))) {
+      this.#store.delete(COLLECTIONS.emailOutbox, GLOBAL_PARTITION, old.message_id)
+    }
     return { message_ref: recorded.message_id, accepted_at: recorded.created_at }
   }
 
