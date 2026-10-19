@@ -380,6 +380,19 @@ export class ProductApi {
   }
 
   /**
+   * Work that must happen AFTER a response has been sent (issue #10): the queued password-reset requests, whose
+   * lookup and email would otherwise make the request's timing depend on whether the account exists. The socket
+   * adapter calls this once the response is written; each step is its own store transaction. Never throws.
+   */
+  runDeferredWork(): void {
+    try {
+      this.#accounts?.processPendingResets((fn) => this.#transactions.transaction(fn))
+    } catch {
+      // Deferred work never affects a response; a failure is retried on the next request's pass.
+    }
+  }
+
+  /**
    * Run a request through the pipeline. Never throws — every failure maps to a code-free response. The whole
    * route runs inside one store transaction: a throw rolls back every write the request made before the error
    * is mapped (so a handler that must persist something on a failure path returns its response, never throws).

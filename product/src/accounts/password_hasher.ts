@@ -9,10 +9,10 @@ import { ProductError } from '../product_error'
  *
  * A password is stored ONLY as `{ algorithm, N, r, p, salt, hash }` — never in plaintext, never in a log, an error
  * context or a response. The cost parameters travel with each hash, so raising the production cost later leaves
- * existing hashes verifiable (and they can be re-hashed at the next sign-in).
+ * existing hashes verifiable; `needsRehash` tells the sign-in to re-hash one below the current cost.
  *
- * `verify` is constant-work: an unknown account is checked against a dummy hash (computed once, on first need)
- * with the same cost, so a sign-in for an email with no account takes as long as a wrong password for a real one (no
+ * `verify` is constant-work: an unknown account is checked against a dummy hash (computed at boot by `warm`, or on
+ * first need) with the same cost, so a sign-in for an email with no account takes as long as a wrong password for a real one (no
  * timing oracle for account existence). The comparison itself is `timingSafeEqual`.
  *
  * Salts come from the injected `IdGenerator` (the determinism rail): in production it is the edge
@@ -29,8 +29,8 @@ export interface ScryptCost {
   readonly p: number
 }
 
-/** The production cost: N=2^15, r=8, p=1 (~32 MiB, ~100 ms per hash on the deploy host). */
-export const PRODUCTION_SCRYPT_COST: ScryptCost = Object.freeze({ N: 2 ** 15, r: 8, p: 1 })
+/** The production cost: N=2^15, r=8, p=3 — one of OWASP's scrypt settings (~32 MiB, ~300 ms on the deploy host). */
+export const PRODUCTION_SCRYPT_COST: ScryptCost = Object.freeze({ N: 2 ** 15, r: 8, p: 3 })
 
 /** Password length bounds. The upper bound keeps one hash request from being a CPU lever. */
 export const PASSWORD_LIMITS = Object.freeze({ min: 10, max: 128 })
@@ -56,6 +56,16 @@ export class PasswordHasher {
     private readonly cost: ScryptCost,
     private readonly ids: IdGenerator,
   ) {}
+
+  /** Compute the dummy hash now (the entrypoint calls this before serving, so no request pays for it). */
+  warm(): void {
+    this.#dummy ??= this.hash('dummy-password-for-unknown-accounts')
+  }
+
+  /** Whether a stored hash is below the configured cost (re-hash it at the next successful sign-in). */
+  needsRehash(stored: PasswordHash): boolean {
+    return stored.N !== this.cost.N || stored.r !== this.cost.r || stored.p !== this.cost.p
+  }
 
   /** Hash a password with a fresh salt at the configured cost. */
   hash(password: string): PasswordHash {

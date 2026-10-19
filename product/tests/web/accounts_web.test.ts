@@ -140,6 +140,7 @@ describe('forgot password and the reset page', () => {
       expect(res.status).toBe(200)
       expect(res.body).toContain('If an account exists for that address')
     }
+    w.ui.runDeferredWork()
     expect(w.outbox().length).toBe(before + 1)
   })
 
@@ -148,6 +149,7 @@ describe('forgot password and the reset page', () => {
     owner(w)
     const { cookie, csrf } = pre(w.ui.handle(get('/t/acme/forgot')))
     w.ui.handle(form('/t/acme/forgot', { _csrf: csrf, email: 'owner@acme.test' }, cookie))
+    w.ui.runDeferredWork()
     const token = /token=([A-Za-z0-9_-]+)/.exec(w.outbox()[0]?.text_body ?? '')?.[1] as string
     const page = w.ui.handle(get(`/t/acme/reset?token=${token}`))
     expect(page.headers['referrer-policy']).toBe('no-referrer')

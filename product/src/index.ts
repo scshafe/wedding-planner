@@ -212,7 +212,9 @@ export {
   type EmailOutboxReader,
   OUTBOX_RETENTION,
   type OutboxMessage,
+  REDACTED_LINK,
   SimulatedEmailAdapter,
+  type StoredOutboxMessage,
 } from './email/simulated_email_adapter'
 export { OperatorConsole, type OperatorConsoleDeps } from './web/operator_console'
 
@@ -234,6 +236,7 @@ export {
   type UserAccount,
 } from './accounts/account_store'
 export { OneTimeTokenStore, type OneTimeTokenPurpose } from './accounts/one_time_token_store'
+export { type PendingReset, PendingResetQueue } from './accounts/pending_reset_queue'
 export {
   assertAcceptablePassword,
   PASSWORD_LIMITS,
@@ -242,7 +245,7 @@ export {
   PRODUCTION_SCRYPT_COST,
   type ScryptCost,
 } from './accounts/password_hasher'
-export { RateLimiter, type RateLimitRule } from './accounts/rate_limiter'
+export { MAX_KEYS, RateLimiter, type RateLimitRule } from './accounts/rate_limiter'
 export { type AuthenticatedAccount } from './auth/session_store'
 export {
   OPERATOR_SESSION_TTL_SECONDS,

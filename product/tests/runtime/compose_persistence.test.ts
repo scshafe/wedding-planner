@@ -198,8 +198,11 @@ describe('durable storage — data written before a restart is read back after i
     expect(
       api2.handle(req('POST', '/t/demo/sessions', { body: { email: 'owner@demo.test', password: 'a long enough password' } })).status,
     ).toBe(201)
-    // ...and an outstanding reset link is left in the store for the census below.
+    // ...and an outstanding reset link (processed after the response) plus a still-queued request are left in the
+    // store for the census below.
     expect(api2.handle(req('POST', '/t/demo/password-reset', { body: { email: 'owner@demo.test' } })).status).toBe(202)
+    api2.runDeferredWork()
+    expect(api2.handle(req('POST', '/t/demo/password-reset', { body: { email: 'someone@demo.test' } })).status).toBe(202)
     second.store.close()
 
     // ---- The census: every persisted collection has rows in the file (none was left on an in-memory default).

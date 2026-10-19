@@ -103,10 +103,10 @@ export interface ProductWebUiDeps {
   readonly operatorCsrf?: CsrfGuard
   /**
    * Issue #10: real sign-in. Present ⇒ the login page offers email + password (and forgot / reset pages exist),
-   * with the simulated role picker only on `simulatedSlug` (the demo tenant in demo mode); `newToken` mints the
+   * with the simulated role picker only where `isSimulatedSlug` says (the demo tenant in demo mode); `newToken` mints the
    * pre-session anti-forgery values. Absent ⇒ the legacy picker-only page (hand-built fixtures).
    */
-  readonly accounts?: { readonly simulatedSlug?: string; readonly newToken: () => string }
+  readonly accounts?: { readonly isSimulatedSlug: (slug: string) => boolean; readonly newToken: () => string }
 }
 
 export class ProductWebUi {
@@ -123,6 +123,11 @@ export class ProductWebUi {
     this.#operatorConsole =
       deps.operatorCsrf === undefined ? undefined : new OperatorConsole({ api: deps.api, csrf: deps.operatorCsrf })
     this.#accounts = deps.accounts
+  }
+
+  /** Work to run after a response has been sent (issue #10) — forwarded to the pipeline. Never throws. */
+  runDeferredWork(): void {
+    this.#api.runDeferredWork()
   }
 
   /** Run a request through the HTML front door. Never throws — any slip becomes the constant 500. */
@@ -597,7 +602,7 @@ export class ProductWebUi {
     if (theme === undefined) return GENERIC_404
     if (this.#accounts === undefined) return htmlResult(status, renderLogin(theme, slug, invalid))
     const preCsrf = this.#accounts.newToken()
-    const simulated = this.#accounts.simulatedSlug === slug
+    const simulated = this.#accounts.isSimulatedSlug(slug)
     return htmlResult(
       status,
       renderLogin(theme, slug, invalid, { preCsrf, simulated, ...(notice === undefined ? {} : { notice }) }),

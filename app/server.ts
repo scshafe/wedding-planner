@@ -74,6 +74,8 @@ function main(): void {
     ...(config.publicUrl === undefined ? {} : { publicUrl: config.publicUrl }),
   })
 
+  // Precompute the dummy password hash so no request pays for it (uniform sign-in timing from the first request).
+  surface.warmUp()
   const server = createProductWebUiServer(surface.ui)
   server.listen(config.port, config.host, () => {
     console.log(buildBootLog(config, surface.demo))

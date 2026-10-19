@@ -1,7 +1,14 @@
 import { ManualClock, SequentialIdGenerator, type Tenant } from '@wedding-planner/shared'
 import { describe, expect, it } from 'vitest'
 
-import { type ApiRequest, type ApiResponse, composeProductSurface, InMemoryRecordStore } from '@wedding-planner/product'
+import {
+  type ApiRequest,
+  type ApiResponse,
+  type Collection,
+  composeProductSurface,
+  InMemoryRecordStore,
+  type RecordStore,
+} from '@wedding-planner/product'
 
 /**
  * Issue #10 — real planner accounts through the HTTP edge: the operator sets up a workspace owner, the setup link
@@ -122,17 +129,27 @@ describe('email + password sign-in', () => {
     expect(signIn(fresh, 'new@acme.test', PASSWORD)).toEqual(UNAUTHORIZED)
   })
 
-  it('rate-limits sign-in per submitted email (known or not) with the same 429, and a success resets it', () => {
+  it('limits sign-in FAILURES per submitted email (known or not) with the same 429; a success clears the count', () => {
     const w = setup()
     ownerWithPassword(w)
+    // A success before the limit clears the failures so far.
+    for (let i = 0; i < 9; i++) expect(signIn(w, 'owner@acme.test', 'wrong password!!').status).toBe(401)
+    expect(signIn(w, 'owner@acme.test', PASSWORD).status).toBe(201)
     for (const email of ['owner@acme.test', 'ghost@acme.test']) {
-      for (let i = 0; i < 5; i++) expect(signIn(w, email, 'wrong password!!').status).toBe(401)
+      for (let i = 0; i < 10; i++) expect(signIn(w, email, 'wrong password!!').status).toBe(401)
       expect(signIn(w, email, 'wrong password!!')).toEqual({ status: 429, body: { error: 'too_many_requests' } })
     }
-    // Even the right password waits out the window...
+    // While blocked, even the right password waits out the window (that is what stops guessing)...
     expect(signIn(w, 'owner@acme.test', PASSWORD).status).toBe(429)
+    // ...but nobody else in the workspace is affected (no tenant-wide lockout).
     w.clock.advance(15 * 60 * 1000)
     expect(signIn(w, 'owner@acme.test', PASSWORD).status).toBe(201)
+  })
+
+  it('a malformed email is the same 401 and is never counted (no unbounded limiter keys)', () => {
+    const w = setup()
+    for (let i = 0; i < 20; i++) expect(signIn(w, `${'x'.repeat(2000)}${i}`, PASSWORD)).toEqual(UNAUTHORIZED)
+    expect(signIn(w, 'not-an-email', PASSWORD)).toEqual(UNAUTHORIZED)
   })
 
   it('sign-out revokes a password session', () => {
@@ -155,6 +172,9 @@ describe('password reset', () => {
     expect(known).toEqual({ status: 202, body: { status: 'accepted' } })
     expect(unknown).toEqual(known)
     expect(malformed).toEqual(known)
+    // Nothing is sent while the request is being answered: the link goes out after the response.
+    expect(w.outbox().length).toBe(before)
+    w.api.runDeferredWork()
     const mails = w.outbox()
     expect(mails.length).toBe(before + 1)
     expect(mails[0]).toMatchObject({ to: 'owner@acme.test', purpose: 'password_reset', subject: 'Reset your Acme Weddings password' })
@@ -167,6 +187,7 @@ describe('password reset', () => {
     ownerWithPassword(w)
     const session = (signIn(w, 'owner@acme.test', PASSWORD).body as { token: string }).token
     w.api.handle(req('POST', '/t/acme/password-reset', { body: { email: 'owner@acme.test' } }))
+    w.api.runDeferredWork()
     const token = w.linkToken(w.outbox()[0]?.text_body ?? '')
     const complete = (password: string): ApiResponse =>
       w.api.handle(req('POST', '/t/acme/password-reset/complete', { body: { token, password } }))
@@ -183,6 +204,7 @@ describe('password reset', () => {
     const w = setup()
     ownerWithPassword(w)
     w.api.handle(req('POST', '/t/acme/password-reset', { body: { email: 'owner@acme.test' } }))
+    w.api.runDeferredWork()
     const token = w.linkToken(w.outbox()[0]?.text_body ?? '')
     expect(w.api.handle(req('POST', '/t/demo/password-reset/complete', { body: { token, password: 'a new long password' } }))).toEqual({
       status: 400,
@@ -230,4 +252,90 @@ describe('the simulated role picker survives only on the demo tenant, in demo mo
     expect(real.api.handle(req('GET', '/t/demo/weddings', { token }))).toEqual(UNAUTHORIZED)
     expect(real.api.handle(req('POST', '/t/demo/sessions', { body: { role: 'planner' } })).status).toBe(400)
   })
+
+describe('no timing oracle in a reset request: known and unknown emails do identical store work', () => {
+  it('both enqueue exactly one pending-reset row and nothing else while the request is answered', () => {
+    const inner = new InMemoryRecordStore()
+    const writes: string[] = []
+    const spy: RecordStore = {
+      get: (c, p, k) => inner.get(c, p, k),
+      list: (c, p) => inner.list(c, p),
+      isEmpty: (c) => inner.isEmpty(c),
+      transaction: (fn) => inner.transaction(fn),
+      put: <T,>(c: Collection<T>, p: string, k: string, r: T) => {
+        writes.push(`put ${c.name}`)
+        inner.put(c, p, k, r)
+      },
+      delete: <T,>(c: Collection<T>, p: string, k: string) => {
+        writes.push(`delete ${c.name}`)
+        return inner.delete(c, p, k)
+      },
+    }
+    const w = composeProductSurface({
+      clock: new ManualClock('2027-06-01T00:00:00.000Z'),
+      ids: new SequentialIdGenerator('spy'),
+      operatorToken: OP,
+      providerWebhookToken: WEBHOOK,
+      demoSlug: 'demo',
+      store: spy,
+      passwordCost: { N: 16, r: 1, p: 1 },
+    })
+    const demoId = w.demo?.tenantId as string
+    w.api.handle(req('POST', `/admin/tenants/${demoId}/owner`, { token: OP, body: { email: 'owner@demo.test' } }))
+    const measure = (email: string): string[] => {
+      writes.length = 0
+      expect(w.api.handle(req('POST', '/t/demo/password-reset', { body: { email } })).status).toBe(202)
+      return [...writes]
+    }
+    const known = measure('owner@demo.test')
+    const unknown = measure('ghost@demo.test')
+    expect(known).toEqual(['put pending_reset'])
+    expect(unknown).toEqual(known)
+  })
+})
+
+describe('the password-verification budget and re-hashing', () => {
+  it('caps password verifications per minute process-wide (scrypt is the expensive part)', () => {
+    const w = setup()
+    let limited = 0
+    for (let i = 0; i < 130; i++) if (signIn(w, `user${i}@acme.test`, PASSWORD).status === 429) limited += 1
+    expect(limited).toBe(10)
+    w.clock.advance(60 * 1000)
+    expect(signIn(w, 'user0@acme.test', PASSWORD)).toEqual(UNAUTHORIZED)
+  })
+
+  it('re-hashes a password stored below the current cost on a successful sign-in', () => {
+    const store = new InMemoryRecordStore()
+    const compose = (cost: { N: number; r: number; p: number }, seed: string) =>
+      composeProductSurface({
+        clock: new ManualClock('2027-06-01T00:00:00.000Z'),
+        ids: new SequentialIdGenerator(seed),
+        operatorToken: OP,
+        providerWebhookToken: WEBHOOK,
+        demoSlug: 'demo',
+        store,
+        passwordCost: cost,
+      })
+    const weak = compose({ N: 16, r: 1, p: 1 }, 'old')
+    const demoId = weak.demo?.tenantId as string
+    weak.api.handle(req('POST', `/admin/tenants/${demoId}/owner`, { token: OP, body: { email: 'owner@demo.test' } }))
+    const outbox = weak.api.handle(req('GET', '/admin/outbox', { token: OP })).body as { messages: { text_body: string }[] }
+    const token = /token=([A-Za-z0-9_-]+)/.exec(outbox.messages[0]?.text_body ?? '')?.[1] as string
+    weak.api.handle(req('POST', '/t/demo/password-reset/complete', { body: { token, password: PASSWORD } }))
+    const strong = compose({ N: 32, r: 1, p: 2 }, 'new')
+    expect(strong.api.handle(req('POST', '/t/demo/sessions', { body: { email: 'owner@demo.test', password: PASSWORD } })).status).toBe(201)
+    // The stored hash now carries the new cost, and the password still works.
+    const [account] = store.list({ name: 'user_account', scope: 'tenant' } as Collection<{ password: { N: number; p: number } }>, demoId)
+    expect(account?.password).toMatchObject({ N: 32, p: 2 })
+    expect(strong.api.handle(req('POST', '/t/demo/sessions', { body: { email: 'owner@demo.test', password: PASSWORD } })).status).toBe(201)
+  })
+
+  it('re-inviting an existing owner says the link replaces the password', () => {
+    const w = setup()
+    ownerWithPassword(w)
+    w.api.handle(req('POST', `/admin/tenants/${w.acmeId}/owner`, { token: OP, body: { email: 'owner@acme.test' } }))
+    expect(w.outbox()[0]).toMatchObject({ subject: 'Set your Acme Weddings password' })
+    expect(w.outbox()[0]?.text_body).toContain('Using it replaces your current password.')
+  })
+})
 })

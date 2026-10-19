@@ -11,7 +11,8 @@ import type { TenantLivenessCheck } from '../tenant/tenant_store'
  *
  * A password-reset or account-setup link carries its OWN token, minted for one purpose and one subject (a user
  * id; an invitation id later), never a session token. Each is:
- *   - stored only as sha256(token) — the database and its backups hold nothing a reader could open a link with;
+ *   - stored only as sha256(token) — the token store holds nothing a reader could open a link with (while email is
+ *     simulated, the outbox keeps the emailed body, link included, until the link lapses; then it is redacted);
  *   - tenant-scoped (the link's tenant comes from its route, and a token minted for one tenant does not exist in
  *     another's partition);
  *   - bound to a purpose (a reset token cannot complete an invitation);

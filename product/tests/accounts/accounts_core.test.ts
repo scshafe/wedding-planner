@@ -72,6 +72,8 @@ describe('PasswordHasher', () => {
     const old = hasher.hash('an older password')
     const stronger = new PasswordHasher({ N: 32, r: 1, p: 1 }, new SequentialIdGenerator('h2'))
     expect(stronger.verify('an older password', old)).toBe(true)
+    expect(stronger.needsRehash(old)).toBe(true)
+    expect(stronger.needsRehash(stronger.hash('x'.repeat(12)))).toBe(false)
   })
 
   it('normalizes Unicode (NFKC), so the same visible password verifies however it was typed', () => {
@@ -95,6 +97,37 @@ describe('RateLimiter', () => {
     expect(limiter.attempt('other', rule)).toBe(true)
     clock.advance(60_000)
     expect(limiter.attempt('k', rule)).toBe(true)
+  })
+
+  it('stores keys as fixed-size digests and caps the table, evicting the oldest first', () => {
+    const limiter = new RateLimiter(new ManualClock('2027-06-01T00:00:00.000Z'), 3)
+    const rule = { limit: 1, windowSeconds: 60 }
+    for (const key of ['a', 'b', 'c', 'x'.repeat(100_000)]) limiter.attempt(key, rule)
+    expect(limiter.size()).toBe(3)
+    // 'a' was evicted, so it starts fresh; 'b' is still counted.
+    expect(limiter.attempt('a', rule)).toBe(true)
+    expect(limiter.blocked('c', rule)).toBe(true)
+  })
+
+  it('each entry keeps its own window, whatever rule another key uses', () => {
+    const clock = new ManualClock('2027-06-01T00:00:00.000Z')
+    const limiter = new RateLimiter(clock)
+    const hourly = { limit: 1, windowSeconds: 3600 }
+    limiter.attempt('reset', hourly)
+    clock.advance(16 * 60 * 1000)
+    limiter.attempt('signin', { limit: 1, windowSeconds: 15 * 60 })
+    expect(limiter.attempt('reset', hourly)).toBe(false)
+  })
+
+  it('blocked answers without counting; hit counts without answering (a failures-only limit)', () => {
+    const limiter = new RateLimiter(new ManualClock('2027-06-01T00:00:00.000Z'))
+    const rule = { limit: 2, windowSeconds: 60 }
+    expect(limiter.blocked('k', rule)).toBe(false)
+    expect(limiter.blocked('k', rule)).toBe(false)
+    limiter.hit('k', rule)
+    expect(limiter.blocked('k', rule)).toBe(false)
+    limiter.hit('k', rule)
+    expect(limiter.blocked('k', rule)).toBe(true)
   })
 
   it('reset forgets a key', () => {

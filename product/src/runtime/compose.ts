@@ -8,6 +8,7 @@ import { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import { AccountService } from '../accounts/account_service'
 import { AccountStore } from '../accounts/account_store'
 import { OneTimeTokenStore } from '../accounts/one_time_token_store'
+import { PendingResetQueue } from '../accounts/pending_reset_queue'
 import { PasswordHasher, PRODUCTION_SCRYPT_COST, type ScryptCost } from '../accounts/password_hasher'
 import { RateLimiter } from '../accounts/rate_limiter'
 import { BillingLedger } from '../billing/billing_ledger'
@@ -23,7 +24,8 @@ import { MessagingService } from '../messaging/messaging_service'
 import { SimulatedMessagingAdapter } from '../messaging/simulated_messaging_adapter'
 import { OnboardingService } from '../onboarding/onboarding_service'
 import { InMemoryRecordStore } from '../persistence/in_memory_record_store'
-import type { RecordStore } from '../persistence/record_store'
+import { COLLECTIONS } from '../persistence/collections'
+import { GLOBAL_PARTITION, type RecordStore } from '../persistence/record_store'
 import { TenantContextResolver } from '../tenant/tenant_context'
 import { TenantStore } from '../tenant/tenant_store'
 import { ProductWebUi } from '../web/product_web_ui'
@@ -145,9 +147,17 @@ export interface ComposedSurface {
   readonly resolutions: EscalationResolutionLog
   /** Issue #9: the simulated email adapter (port + operator outbox). Exposed for tests/inspection. */
   readonly email: SimulatedEmailAdapter
+  /** Issue #10: precompute what the first request would otherwise pay for (the dummy password hash). */
+  readonly warmUp: () => void
 }
 
 /** The demo theme — an obvious offline placeholder (no real brand). Colors are lowercase 6-hex per contract. */
+/** The platform setting naming the tenant the demo seed created (issue #10). */
+const DEMO_TENANT_SETTING = 'demo_tenant'
+
+/** The demo tenant's display name (also the fingerprint that adopts a pre-#10 seeded demo tenant). */
+const DEMO_DISPLAY_NAME = 'Demo Weddings Co.'
+
 const DEMO_THEME: Tenant['theme'] = {
   brand_name: 'Demo Weddings Co.',
   primary_color_hex: '#3b5bdb',
@@ -161,6 +171,9 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const seedDemo = config.seedDemo ?? true
   const demoSlug = config.demoSlug ?? 'demo'
   const store = config.store ?? new InMemoryRecordStore()
+  // Issue #10: the role picker is tied to the tenant the demo seed CREATED (recorded when it ran), never to whatever
+  // tenant holds the demo slug.
+  const demoTenantId = (): string | undefined => store.get(COLLECTIONS.platformSetting, GLOBAL_PARTITION, DEMO_TENANT_SETTING)?.value
 
   // The shared backbone: one tenant store the resolver, theme resolver, onboarding, and repo all read.
   const tenants = new TenantStore(clock, ids, store)
@@ -169,7 +182,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   // role picker signs in (and its sessions resolve) ONLY on the demo tenant, and only in demo mode.
   const sessionStore = new SessionStore(ids, store, {
     clock,
-    simulatedLogin: (tenant_id) => seedDemo && tenants.findById(tenant_id)?.slug === demoSlug,
+    simulatedLogin: (tenant_id) => seedDemo && tenant_id === demoTenantId(),
   })
   // Operator console sessions (issue #9) persist in the shared store, like tenant sessions.
   const operators = new OperatorCredentialStore(ids, [operatorToken], { clock, store })
@@ -191,6 +204,9 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     sessions: sessionStore,
     limiter: new RateLimiter(clock),
     tenants,
+    clock,
+    pendingResets: new PendingResetQueue(clock, ids, store),
+    contexts: resolver,
     ...(config.publicUrl === undefined ? {} : { publicUrl: config.publicUrl }),
   })
 
@@ -272,7 +288,10 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     csrf: sessionStore,
     operatorCsrf: operators,
     // Issue #10: password sign-in everywhere; the labeled picker only on the demo tenant in demo mode.
-    accounts: { ...(seedDemo ? { simulatedSlug: demoSlug } : {}), newToken: () => ids.next('pre') },
+    accounts: {
+      isSimulatedSlug: (slug) => seedDemo && demoTenantId() !== undefined && tenants.findBySlug(slug)?.tenant_id === demoTenantId(),
+      newToken: () => ids.next('pre'),
+    },
   })
 
   let demo: DemoSeed | undefined
@@ -283,11 +302,12 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     // tenant is a faithful active tenant: it passes the legal-transition guard and records billing events.
     const tenant = onboarding.provision({
       slug: demoSlug,
-      display_name: 'Demo Weddings Co.',
+      display_name: DEMO_DISPLAY_NAME,
       plan_tier: 'studio',
       theme: DEMO_THEME,
     })
     onboarding.activate(tenant.tenant_id)
+    store.put(COLLECTIONS.platformSetting, GLOBAL_PARTITION, DEMO_TENANT_SETTING, { value: tenant.tenant_id })
     // The tenant is now active, so the resolver mints a usable context — seed one wedding through it.
     const context = resolver.resolveBySlug(demoSlug)
     const wedding = weddings.create(context, {
@@ -310,10 +330,19 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     }
   })
 
+  // A database seeded before the demo tenant was recorded (issue #8/#9 deployments): adopt the tenant the seed made —
+  // it carries the seed's exact name and brand — exactly once.
+  if (seedDemo && demoTenantId() === undefined) {
+    const candidate = tenants.findBySlug(demoSlug)
+    if (candidate !== undefined && candidate.display_name === DEMO_DISPLAY_NAME && candidate.theme.brand_name === DEMO_THEME.brand_name) {
+      store.put(COLLECTIONS.platformSetting, GLOBAL_PARTITION, DEMO_TENANT_SETTING, { value: candidate.tenant_id })
+    }
+  }
+
   store.transaction(() => {
     sessionStore.sweepExpired()
     operators.sweepExpired()
   })
 
-  return { ui, api, themes, operatorToken, demo, messaging, escalations, resolutions, email }
+  return { ui, api, themes, operatorToken, demo, messaging, escalations, resolutions, email, warmUp: () => accounts.warm() }
 }
