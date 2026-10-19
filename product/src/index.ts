@@ -195,3 +195,23 @@ export {
 export { type Collection, type CollectionScope, type RecordStore, type TransactionRunner } from './persistence/record_store'
 export { InMemoryRecordStore } from './persistence/in_memory_record_store'
 export { SESSION_TTL_SECONDS, type SessionAuth, type SessionExpiryOptions, type StoredSession } from './auth/session_store'
+
+// The email boundary (issue #9, ADR 0040): the provider-agnostic port, the offline simulated adapter whose outbox
+// the operator reads, and the operator console that serves it to a browser.
+export {
+  assertValidOutboundEmail,
+  EMAIL_LIMITS,
+  type EmailDeliveryStatus,
+  type EmailPort,
+  type EmailPurpose,
+  type EmailReceipt,
+  isEmailAddress,
+  type OutboundEmail,
+} from './email/email_port'
+export { type EmailOutboxReader, type OutboxMessage, SimulatedEmailAdapter } from './email/simulated_email_adapter'
+export { OperatorConsole, type OperatorConsoleDeps } from './web/operator_console'
+export {
+  OPERATOR_SESSION_TTL_SECONDS,
+  type OperatorSession,
+  type OperatorSessionOptions,
+} from './auth/operator_credential'

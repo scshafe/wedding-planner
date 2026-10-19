@@ -16,6 +16,8 @@ import type { ProviderWebhookCredentialStore } from '../auth/provider_webhook_cr
 import type { SessionStore } from '../auth/session_store'
 import type { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import type { BillingLedger } from '../billing/billing_ledger'
+import { type EmailPort, isEmailAddress } from '../email/email_port'
+import type { EmailOutboxReader } from '../email/simulated_email_adapter'
 import { buildBillingActivity } from '../billing/billing_activity'
 import { buildBillingSummary } from '../billing/billing_summary'
 import type { PlanTier } from '../billing/price_book'
@@ -143,7 +145,18 @@ export interface WeddingHandlerDeps {
 /** The narrow bag handed to the operator-gated /admin handlers — DELIBERATELY excludes the operator store. */
 export interface AdminHandlerDeps {
   readonly onboarding: OnboardingService
+  /** Issue #9: the email outbox (read) + the port (the operator's test send). Absent ⇒ /admin/outbox 404s. */
+  readonly email?: AdminEmailDeps
 }
+
+/** The email collaborators the operator console uses (issue #9). */
+export interface AdminEmailDeps {
+  readonly port: EmailPort
+  readonly outbox: EmailOutboxReader
+}
+
+/** How many outbox messages `GET /admin/outbox` returns (newest first). */
+export const OUTBOX_PAGE_SIZE = 100
 
 /**
  * The narrow bag handed to the provider-webhook inbound handler (Phase 19) — DELIBERATELY excludes the webhook
@@ -248,6 +261,8 @@ export interface ProductApiDeps {
   /** Phase 15: the platform-operator credential store (the /admin auth tier) + the onboarding driver. */
   readonly operators: OperatorCredentialStore
   readonly onboarding: OnboardingService
+  /** Issue #9: the email port + the simulated outbox the operator reads. Absent ⇒ /admin/outbox is not mounted. */
+  readonly email?: AdminEmailDeps
   /**
    * Phase 19: the provider-webhook credential store — the FOURTH token namespace, authenticating the
    * server-to-server inbound webhook (`/t/:slug/messaging/inbound`). Lives ONLY in the pipeline (like
@@ -334,7 +349,7 @@ export class ProductApi {
     this.#billing = deps.billing
     this.#handlerDeps = { weddings: deps.weddings, authorizer: deps.authorizer }
     this.#guests = deps.guests
-    this.#adminDeps = { onboarding: deps.onboarding }
+    this.#adminDeps = { onboarding: deps.onboarding, ...(deps.email === undefined ? {} : { email: deps.email }) }
     this.#strategyGuidance =
       deps.championStrategy === undefined ? undefined : deepFreeze(describeStrategy(deps.championStrategy))
     this.#transactions = deps.transactions ?? NO_TRANSACTION
@@ -373,6 +388,9 @@ export class ProductApi {
     // not a pre-auth oracle). Only after auth passes can a 404/405/400 surface.
     if (segments.length >= 1 && segments[0] === 'admin') {
       this.#authenticateOperator(req)
+      // /admin/sessions — the operator console session mint/revoke (issue #9). Handled HERE, in the pipeline,
+      // because it needs the operator store, which the /admin handlers deliberately do not get.
+      if (segments.length === 2 && segments[1] === 'sessions') return this.#handleOperatorSession(req)
       return dispatchAdmin(req, segments, this.#adminDeps)
     }
 
@@ -501,6 +519,24 @@ export class ProductApi {
       )
     }
     return principal
+  }
+
+  /**
+   * `POST /admin/sessions` starts an operator console session — only from the STATIC credential (a session
+   * presented here is authenticated but may not mint another: 403). `DELETE /admin/sessions` revokes the
+   * presented session (idempotent). Auth already ran, so this discloses nothing to an unauthenticated caller.
+   */
+  #handleOperatorSession(req: ApiRequest): ApiResponse {
+    const bearer = bearerToken(req.headers.authorization)
+    if (req.method === 'POST') {
+      const session = this.#operators.startSession(bearer)
+      if (session === undefined) throw forbidden()
+      return { status: 201, body: session }
+    }
+    if (req.method === 'DELETE') {
+      return { status: 200, body: { signed_out: this.#operators.endSession(bearer) } }
+    }
+    throw methodNotAllowed()
   }
 
   /** POST /t/:slug/sessions — the simulated login. Mints a principal bound to the RESOLVED tenant. */
@@ -1249,6 +1285,13 @@ function mostRecentEscalationForGuest(
 }
 
 function dispatchAdmin(req: ApiRequest, segments: readonly string[], deps: AdminHandlerDeps): ApiResponse {
+  // /admin/outbox — the simulated email outbox (issue #9): GET lists the newest messages; POST sends a test
+  // message to an address, so the operator can see the email path work end to end.
+  if (deps.email !== undefined && segments.length === 2 && segments[1] === 'outbox') {
+    if (req.method === 'GET') return { status: 200, body: { messages: deps.email.outbox.recent(OUTBOX_PAGE_SIZE) } }
+    if (req.method === 'POST') return handleOutboxTestSend(req, deps.email)
+    throw methodNotAllowed()
+  }
   // /admin/tenants — provision a new tenant.
   if (segments.length === 2 && segments[1] === 'tenants') {
     if (req.method !== 'POST') throw methodNotAllowed()
@@ -1271,6 +1314,20 @@ function dispatchAdmin(req: ApiRequest, segments: readonly string[], deps: Admin
     throw routeNotFound()
   }
   throw routeNotFound()
+}
+
+function handleOutboxTestSend(req: ApiRequest, email: AdminEmailDeps): ApiResponse {
+  const to = requireString(parseObjectBody(req.rawBody), 'to').trim()
+  if (!isEmailAddress(to)) throw new ProductError('PRODUCT.BAD_REQUEST', 'Field \'to\' must be an email address.', {})
+  const receipt = email.port.send({
+    to,
+    subject: 'Test message from the wedding planner',
+    text_body:
+      'This is a test message sent from the operator console.\n\n' +
+      'Email is simulated: nothing left the system, and this message is only visible in the operator outbox.',
+    purpose: 'operator_test',
+  })
+  return { status: 201, body: { message_ref: receipt.message_ref } }
 }
 
 function handleProvision(req: ApiRequest, deps: AdminHandlerDeps): ApiResponse {

@@ -8,7 +8,9 @@ import { splitPath } from '../http/path'
 import type { ProductApi } from '../http/product_api'
 import type { StrategyGuidance } from '../strategy/strategy_guidance'
 import { WEDDING_LOGISTICS_FIELDS } from '../wedding/wedding_repository'
+import { readCookie } from './cookies'
 import { normalizeSlugForRoute } from './html'
+import { OperatorConsole } from './operator_console'
 import {
   type AccountOverview,
   countOpenEscalations,
@@ -83,17 +85,25 @@ export interface ProductWebUiDeps {
    * data, so the "only data path is api.handle()" invariant holds.
    */
   readonly csrf: CsrfGuard
+  /**
+   * Issue #9: the operator store narrowed to {@link CsrfGuard} over operator CONSOLE sessions. Present ⇒ the
+   * operator console (operator_console.ts) is mounted under /admin; absent ⇒ /admin is the JSON API only.
+   */
+  readonly operatorCsrf?: CsrfGuard
 }
 
 export class ProductWebUi {
   readonly #api: ProductApi
   readonly #themes: ThemeResolver
   readonly #csrf: CsrfGuard
+  readonly #operatorConsole: OperatorConsole | undefined
 
   constructor(deps: ProductWebUiDeps) {
     this.#api = deps.api
     this.#themes = deps.themes
     this.#csrf = deps.csrf
+    this.#operatorConsole =
+      deps.operatorCsrf === undefined ? undefined : new OperatorConsole({ api: deps.api, csrf: deps.operatorCsrf })
   }
 
   /** Run a request through the HTML front door. Never throws — any slip becomes the constant 500. */
@@ -112,6 +122,12 @@ export class ProductWebUi {
     if (segments.length === 0) {
       if (req.method === 'GET') return htmlResult(200, renderLanding())
       return this.#delegate(req)
+    }
+
+    // /admin pages (issue #9) — the operator console's browser routes; anything it does not own is the JSON API.
+    if (segments[0] === 'admin' && this.#operatorConsole !== undefined) {
+      const page = this.#operatorConsole.handle(req, segments)
+      if (page !== undefined) return page
     }
 
     if (segments[0] === 't' && segments.length >= 2) {
@@ -633,16 +649,7 @@ function bearerJson(method: string, path: string, token: string | undefined, bod
 
 /** Read the `wp_session` token from a Cookie header, or undefined. */
 function readSessionCookie(cookieHeader: string | undefined): string | undefined {
-  if (cookieHeader === undefined) return undefined
-  for (const pair of cookieHeader.split(';')) {
-    const eq = pair.indexOf('=')
-    if (eq === -1) continue
-    if (pair.slice(0, eq).trim() === SESSION_COOKIE) {
-      const value = pair.slice(eq + 1).trim()
-      return value.length === 0 ? undefined : value
-    }
-  }
-  return undefined
+  return readCookie(cookieHeader, SESSION_COOKIE)
 }
 
 /** Extract a single query parameter value from a path, or undefined. */

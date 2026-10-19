@@ -123,6 +123,11 @@ describe('durable storage — data written before a restart is read back after i
       }),
     )
     expect(provisioned.status).toBe(201)
+    // The operator console session and the email outbox (issue #9).
+    const opSession = api1.handle(req('POST', '/admin/sessions', { token: OP }))
+    expect(opSession.status).toBe(201)
+    const opToken = (opSession.body as { token: string }).token
+    expect(api1.handle(req('POST', '/admin/outbox', { token: opToken, body: { to: 'owner@example.test' } })).status).toBe(201)
     const usageBefore = first.surface.messaging.usageView(demo?.tenantId as string)
     expect(usageBefore.message_count).toBe(2)
     const billingBefore = api1.handle(req('GET', '/t/demo/billing', { token })).body
@@ -174,6 +179,11 @@ describe('durable storage — data written before a restart is read back after i
       }),
     )
     expect(again.status).toBe(409)
+
+    // The operator console session survived, and so did the outbox.
+    const outbox = api2.handle(req('GET', '/admin/outbox', { token: opToken }))
+    expect(outbox.status).toBe(200)
+    expect((outbox.body as { messages: { to: string }[] }).messages.map((m) => m.to)).toEqual(['owner@example.test'])
     second.store.close()
 
     // ---- The census: every persisted collection has rows in the file (none was left on an in-memory default).
