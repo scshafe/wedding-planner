@@ -142,8 +142,9 @@ describe('resolveServerConfig — the storage policy (issue #8, fail-closed)', (
 })
 
 describe('resolveServerConfig — WP_PUBLIC_URL (issue #10, links in emails)', () => {
-  it('accepts an http(s) origin and leaves it unset by default', () => {
+  it('accepts an http(s) origin and leaves it unset by default (or when empty, as the stack passes it unset)', () => {
     expect(resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG }, constGen('g')).publicUrl).toBeUndefined()
+    expect(resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG, WP_PUBLIC_URL: '' }, constGen('g')).publicUrl).toBeUndefined()
     for (const ok of ['https://planner.example', 'http://localhost:8080', 'https://wedding-planner.tail1234.ts.net']) {
       expect(resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG, WP_PUBLIC_URL: ok }, constGen('g')).publicUrl).toBe(ok)
     }

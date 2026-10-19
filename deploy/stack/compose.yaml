@@ -84,6 +84,12 @@ services:
       # The image the deploy pinned (wedding-planner:<short sha>): /healthz
       # reports its tag as the build commit (issue #13).
       WP_IMAGE_REF: ${WEDDING_PLANNER_IMAGE}
+      # The node's public https origin, used for links in emails (reset,
+      # setup, invitation). An owner value placed on the host with
+      # `stack env-set` ([env] owner), never written here: this repository is
+      # public and the origin names the tailnet. Unset or empty: links are
+      # site-relative paths.
+      WP_PUBLIC_URL: ${WP_PUBLIC_URL:-}
       # WP_SEED_DEMO defaults to true: the demo tenant is seeded into an empty
       # database only (first boot); later boots keep the data.
     healthcheck:
