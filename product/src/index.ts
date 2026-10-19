@@ -237,6 +237,16 @@ export {
 } from './accounts/account_store'
 export { OneTimeTokenStore, type OneTimeTokenPurpose } from './accounts/one_time_token_store'
 export { type PendingReset, PendingResetQueue } from './accounts/pending_reset_queue'
+// The team (issue #11, ADR 0042): invitations and members.
+export { type CreateInvitationInput, type Invitation, InvitationStore, type InvitedRole } from './accounts/invitation_store'
+export {
+  INVITATION_TTL_SECONDS,
+  type InvitationView,
+  type InviteInput,
+  MembershipService,
+  type MembershipServiceDeps,
+  type TeamView,
+} from './accounts/membership_service'
 export {
   assertAcceptablePassword,
   PASSWORD_LIMITS,

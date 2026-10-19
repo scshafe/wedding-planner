@@ -9,6 +9,7 @@ import type {
 } from '@wedding-planner/shared'
 
 import type { AccountEmailIndex, UserAccount } from '../accounts/account_store'
+import type { Invitation } from '../accounts/invitation_store'
 import type { StoredOneTimeToken } from '../accounts/one_time_token_store'
 import type { PendingReset } from '../accounts/pending_reset_queue'
 import type { StoredOperatorSession } from '../auth/operator_credential'
@@ -70,4 +71,6 @@ export const COLLECTIONS = Object.freeze({
   pendingReset: collection<PendingReset>('pending_reset', 'global'),
   /** Key setting name: platform settings, e.g. `demo_tenant` -> the tenant the demo seed created (issue #10). */
   platformSetting: collection<{ readonly value: string }>('platform_setting', 'global'),
+  /** Key invitation_id: pending invitations to join the workspace (issue #11). */
+  invitation: collection<Invitation>('invitation', 'tenant'),
 })

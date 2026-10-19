@@ -1,5 +1,6 @@
 import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Wedding } from '@wedding-planner/shared'
 
+import type { TeamView } from '../accounts/membership_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
 import type { BillingSummary } from '../billing/billing_summary'
 import { constantTimeEqual, type CsrfGuard } from '../auth/csrf_guard'
@@ -26,11 +27,14 @@ import {
   renderForbidden,
   renderForgot,
   renderGuests,
+  renderInviteAccept,
   renderHome,
   renderLanding,
   renderLogin,
   renderReset,
   renderStrategy,
+  renderTeam,
+  type TeamNotice,
 } from './pages'
 import type { ThemeResolver } from './theme_resolver'
 import { htmlResult, type HttpResult, jsonResultFrom, redirect } from './web_response'
@@ -170,6 +174,8 @@ export class ProductWebUi {
         // Issue #10: password recovery pages (only with real accounts wired).
         if (this.#accounts !== undefined && segments[2] === 'forgot') return slug === undefined ? GENERIC_404 : this.#forgot(req, slug)
         if (this.#accounts !== undefined && segments[2] === 'reset') return slug === undefined ? GENERIC_404 : this.#reset(req, slug)
+        // Issue #11: accept an invitation through its link.
+        if (this.#accounts !== undefined && segments[2] === 'invite') return slug === undefined ? GENERIC_404 : this.#invite(req, slug)
         // GET only — a non-GET /t/:slug/strategy falls through to the JSON pipeline (401/405).
         if (segments[2] === 'strategy' && req.method === 'GET') {
           return slug === undefined ? GENERIC_404 : this.#strategy(req, slug)
@@ -183,6 +189,16 @@ export class ProductWebUi {
         if (slug === undefined) return GENERIC_404
         if (segments[3] === 'create') return this.#guestCreate(req, slug)
         if (segments[3] === 'remove') return this.#guestRemove(req, slug)
+      }
+
+      // /t/:slug/team/{invite,resend,revoke,remove} (issue #11) — the team FORM posts (CSRF-protected). Slug masked
+      // to 404 BEFORE any cookie read / CSRF verdict, like every other form post.
+      if (segments.length === 4 && segments[2] === 'team' && req.method === 'POST') {
+        if (slug === undefined) return GENERIC_404
+        const action = segments[3]
+        if (action === 'invite' || action === 'resend' || action === 'revoke' || action === 'remove') {
+          return this.#teamAction(req, slug, action)
+        }
       }
 
       // /t/:slug/escalations/resolve (Phase 27) — the browser Resolve/Dismiss FORM post (CSRF-protected).
@@ -244,6 +260,8 @@ export class ProductWebUi {
     }
     // ?view=billing — the planner billing & usage summary (Phase 30; planner-only, a couple is themed Forbidden).
     if (queryParam(req.path, 'view') === 'billing') return this.#billingPage(req, slug)
+    // ?view=team — members and invitations (issue #11; planners; a couple is themed Forbidden).
+    if (queryParam(req.path, 'view') === 'team') return this.#teamPage(req, slug)
 
     const weddingId = queryParam(req.path, 'wedding')
     if (weddingId !== undefined) return this.#detail(req, slug, weddingId)
@@ -277,6 +295,8 @@ export class ProductWebUi {
     // status is NEVER passed to #renderNonData (P1: a couple's 403 keeps the home a 200, card absent).
     const billingRes = this.#api.handle(bearerGet(`/t/${slug}/billing`, token))
     const summary = billingRes.status === 200 ? readBilling(billingRes.body) : undefined
+    // Issue #11: like billing, an affordance only — 200 (a planner) shows the Team card; anything else omits it.
+    const team = readTeam(this.#api.handle(bearerGet(`/t/${slug}/team`, token)))
     const theme = this.#themes.resolveActiveTheme(slug)
     const csrf = this.#csrf.issueCsrf(token)
     // A 200 means the session resolved; theme + CSRF token must exist in the same stores (mirrors #guestsPage).
@@ -286,6 +306,7 @@ export class ProductWebUi {
       openQuestionsCount: countOpenEscalations(readEscalations(escRes.body), readResolutions(escRes.body)),
       guestsCount: readGuests(guestsRes.body).length,
       ...(summary === undefined ? {} : { billing: { balanceCents: summary.balance_cents, planTier: summary.plan_tier } }),
+      ...(team === undefined ? {} : { team: { members: team.members.length, pending: team.invitations.length } }),
     }
     return htmlResult(200, renderHome(theme, slug, overview, csrf))
   }
@@ -327,7 +348,14 @@ export class ProductWebUi {
       if (theme === undefined || wedding === undefined) return GENERIC_404
       // A 200 means the session resolved; its CSRF token must exist (same store). Absent ⇒ invariant break.
       if (csrf === undefined) return ERROR_500
-      return htmlResult(invalid ? 400 : 200, renderDetail(theme, slug, wedding, csrf, invalid))
+      // Issue #11: a planner (the team read answers 200) gets the "Invite the couple" form on the wedding.
+      const canInvite = readTeam(this.#api.handle(bearerGet(`/t/${slug}/team`, token))) !== undefined
+      const invite = queryParam(req.path, 'invite')
+      const notice = invite === 'sent' || invite === 'exists' || invite === 'invalid' ? invite : undefined
+      return htmlResult(
+        invalid ? 400 : 200,
+        renderDetail(theme, slug, wedding, csrf, invalid, canInvite ? (notice === undefined ? {} : { notice }) : undefined),
+      )
     }
     return this.#renderNonData(slug, apiRes.status)
   }
@@ -583,6 +611,90 @@ export class ProductWebUi {
   }
 
   /** Map a non-200 API status to a page. 401 -> themed login (active); 403 -> forbidden; else masked 404. */
+  /** GET /t/:slug?view=team (issue #11) — the team page; a couple gets the themed Forbidden. */
+  #teamPage(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const res = this.#api.handle(bearerGet(`/t/${slug}/team`, token))
+    const team = readTeam(res)
+    if (team === undefined) return this.#renderNonData(slug, res.status)
+    const theme = this.#themes.resolveActiveTheme(slug)
+    const csrf = this.#csrf.issueCsrf(token)
+    if (theme === undefined || csrf === undefined) return theme === undefined ? GENERIC_404 : ERROR_500
+    const raw = queryParam(req.path, 'notice')
+    const notice = TEAM_NOTICE_VALUES.find((value) => value === raw)
+    return htmlResult(200, renderTeam(theme, slug, team, csrf, notice))
+  }
+
+  /**
+   * POST /t/:slug/team/{invite,resend,revoke,remove} (issue #11) — CSRF first (forged ⇒ masked 403, no change), then
+   * the cookie becomes the Bearer for the JSON team route. PRG back to the team page (or, for a couple invitation, to
+   * the wedding) with a notice. The capability (planner / owner) is the JSON layer's; a refusal shows a notice.
+   */
+  #teamAction(req: ApiRequest, slug: string, action: 'invite' | 'resend' | 'revoke' | 'remove'): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    if (action === 'invite') {
+      const role = form.get('role') ?? ''
+      const weddingId = form.get('wedding_id') ?? ''
+      const res = this.#api.handle(
+        bearerJson('POST', `/t/${slug}/invitations`, token, {
+          email: form.get('email') ?? '',
+          role,
+          ...(weddingId.length === 0 ? {} : { wedding_id: weddingId }),
+        }),
+      )
+      const outcome = res.status === 201 ? 'sent' : res.status === 409 ? 'exists' : res.status === 403 ? 'not_allowed' : 'invalid'
+      if (role === 'couple' && weddingId.length > 0 && outcome !== 'not_allowed') {
+        return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&invite=${outcome}`)
+      }
+      return redirect(303, `/t/${slug}?view=team&notice=${outcome === 'sent' ? 'invited' : outcome}`)
+    }
+    const [path, field, done] =
+      action === 'resend'
+        ? ['invitations/resend', 'invitation_id', 'resent']
+        : action === 'revoke'
+          ? ['invitations/revoke', 'invitation_id', 'revoked']
+          : ['members/remove', 'user_id', 'removed']
+    const res = this.#api.handle(bearerJson('POST', `/t/${slug}/${path}`, token, { [field]: form.get(field) ?? '' }))
+    const notice = res.status === 200 ? done : res.status === 403 ? 'not_allowed' : 'invalid'
+    return redirect(303, `/t/${slug}?view=team&notice=${notice}`)
+  }
+
+  /**
+   * GET/POST /t/:slug/invite?token=… (issue #11) — accept an invitation: choose a password; on success the new member
+   * is signed in (the session cookie is set) and lands on the console. Pre-session anti-forgery like sign-in; the
+   * token is in the URL, so no referrer and no cache.
+   */
+  #invite(req: ApiRequest, slug: string): HttpResult {
+    const theme = this.#themes.resolveActiveTheme(slug)
+    if (theme === undefined || this.#accounts === undefined) return GENERIC_404
+    const accounts = this.#accounts
+    const page = (status: number, token: string, notice?: 'weak' | 'mismatch' | 'invalid' | 'exists' | 'expired'): HttpResult => {
+      const preCsrf = accounts.newToken()
+      return htmlResult(status, renderInviteAccept(theme, slug, preCsrf, token, notice), {
+        ...this.#preCookie(slug, preCsrf),
+        'referrer-policy': 'no-referrer',
+      })
+    }
+    if (req.method === 'GET') {
+      const token = queryParam(req.path, 'token') ?? ''
+      return page(200, token, token.length === 0 ? 'invalid' : undefined)
+    }
+    if (req.method !== 'POST') return this.#delegate(req)
+    const form = parseForm(req.rawBody)
+    const token = form.get('token') ?? ''
+    if (!this.#preCsrfValid(req, form)) return page(400, token, 'expired')
+    const password = form.get('password') ?? ''
+    if (password !== (form.get('confirm') ?? '')) return page(400, token, 'mismatch')
+    const res = this.#api.handle(bearerJson('POST', `/t/${slug}/invitations/accept`, undefined, { token, password }))
+    if (res.status === 201) return this.#signedIn(slug, res.body)
+    if (res.status === 404) return GENERIC_404
+    if (res.status === 409) return page(409, token, 'exists')
+    const reason = (res.body as { error?: string } | undefined)?.error
+    return page(400, token, reason === 'weak_password' ? 'weak' : 'invalid')
+  }
+
   #renderNonData(slug: string, status: number): HttpResult {
     if (status === 401) return this.#loginPage(slug, 200)
     if (status === 403) {
@@ -818,6 +930,15 @@ function readToken(body: unknown): string | undefined {
 }
 
 /** Read the weddings array from a list (200) JSON body (tolerant — never throws on an odd shape). */
+const TEAM_NOTICE_VALUES: readonly TeamNotice[] = ['invited', 'exists', 'invalid', 'resent', 'revoked', 'removed', 'not_allowed']
+
+/** The team view from a `GET /t/:slug/team` answer, or undefined unless it was a 200 (a planner). */
+function readTeam(res: { status: number; body: unknown }): TeamView | undefined {
+  if (res.status !== 200) return undefined
+  const body = res.body as Partial<TeamView> | undefined
+  return Array.isArray(body?.members) && Array.isArray(body?.invitations) ? (body as TeamView) : undefined
+}
+
 function readWeddings(body: unknown): readonly Wedding[] {
   if (typeof body !== 'object' || body === null) return []
   const weddings = (body as { weddings?: unknown }).weddings

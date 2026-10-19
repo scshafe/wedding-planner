@@ -11,6 +11,8 @@ import {
 
 import type { AccountService } from '../accounts/account_service'
 import { publicAccountView } from '../accounts/account_store'
+import type { InvitedRole } from '../accounts/invitation_store'
+import type { MembershipService } from '../accounts/membership_service'
 import type { GuestAuthorizer } from '../auth/guest_authorizer'
 import type { OperatorCredentialStore } from '../auth/operator_credential'
 import type { Principal } from '../auth/principal'
@@ -281,6 +283,11 @@ export interface ProductApiDeps {
   /** Issue #10: the tenant list for `GET /admin/tenants`. */
   readonly tenants?: { list(): readonly Tenant[] }
   /**
+   * Issue #11: the team — invitations (send, resend, revoke, accept) and members (list, remove). Absent ⇒ the
+   * `/t/:slug/team`, `/invitations` and `/members` routes are not mounted. `composeProductSurface` always wires it.
+   */
+  readonly membership?: MembershipService
+  /**
    * Phase 19: the provider-webhook credential store — the FOURTH token namespace, authenticating the
    * server-to-server inbound webhook (`/t/:slug/messaging/inbound`). Lives ONLY in the pipeline (like
    * `operators`/`sessionStore`); a webhook is not a Principal, so the inbound route skips stages 3–4.
@@ -357,6 +364,8 @@ export class ProductApi {
   readonly #transactions: TransactionRunner
   /** Real accounts (issue #10), or undefined when not wired. Lives in the pipeline, like the session store. */
   readonly #accounts: AccountService | undefined
+  /** The team (issue #11), or undefined when not wired. */
+  readonly #membership: MembershipService | undefined
 
   constructor(deps: ProductApiDeps) {
     this.#resolver = deps.resolver
@@ -374,6 +383,7 @@ export class ProductApi {
       ...(deps.tenants === undefined ? {} : { tenants: deps.tenants }),
     }
     this.#accounts = deps.accounts
+    this.#membership = deps.membership
     this.#strategyGuidance =
       deps.championStrategy === undefined ? undefined : deepFreeze(describeStrategy(deps.championStrategy))
     this.#transactions = deps.transactions ?? NO_TRANSACTION
@@ -468,6 +478,23 @@ export class ProductApi {
           if (req.method !== 'POST') throw methodNotAllowed()
           return handlePasswordResetComplete(context, req, this.#accounts)
         }
+      }
+
+      // /t/:slug/invitations/accept — accept an invitation through its link (issue #11). Unauthenticated by design
+      // (it creates the account); the single-use token minted for THIS tenant is the credential.
+      if (this.#membership !== undefined && segments.length === 4 && segments[2] === 'invitations' && segments[3] === 'accept') {
+        if (req.method !== 'POST') throw methodNotAllowed()
+        return handleInvitationAccept(context, req, this.#membership)
+      }
+
+      // /t/:slug/team, /t/:slug/invitations[/resend|/revoke], /t/:slug/members/remove — PROTECTED (issue #11):
+      // stages 3–4 run before any method/shape distinction; the service applies planner / owner capability.
+      if (
+        this.#membership !== undefined &&
+        (segments[2] === 'team' || segments[2] === 'invitations' || segments[2] === 'members')
+      ) {
+        const principal = this.#authenticate(req, context)
+        return dispatchTeam(context, principal, req, segments, this.#membership)
       }
 
       // /t/:slug/weddings[...] — PROTECTED: stages 3–4 run BEFORE any method/shape distinction.
@@ -680,8 +707,12 @@ function errorToResponse(error: WeddingPlannerError): ApiResponse {
       return RESP_INVALID_LINK
     case 'PRODUCT.SIMULATED_LOGIN_DISABLED':
       return RESP_BAD_REQUEST
-    // ACCOUNT_EXISTS: an honest 409 to the TRUSTED operator (owner setup), like DUPLICATE_SLUG.
+    // ACCOUNT_EXISTS: an honest 409 to the TRUSTED operator (owner setup), like DUPLICATE_SLUG. The issue #11 team
+    // conflicts are honest 409s to the trusted planner / owner of the same workspace.
     case 'PRODUCT.ACCOUNT_EXISTS':
+    case 'PRODUCT.MEMBER_EXISTS':
+    case 'PRODUCT.INVITATION_EXISTS':
+    case 'PRODUCT.CANNOT_REMOVE_SELF':
       return RESP_CONFLICT
     // FORGED_CONTEXT / FORGED_PRINCIPAL / CROSS_TENANT_WRITE / anything else: an internal invariant
     // violation a real request can never construct — a 500 bug, never a normal client path, never leaked.
@@ -1405,6 +1436,61 @@ function dispatchAdmin(req: ApiRequest, segments: readonly string[], deps: Admin
     throw routeNotFound()
   }
   throw routeNotFound()
+}
+
+/**
+ * The team routes (issue #11), after authentication. The membership service applies the capability: planners
+ * invite and read the team; only the workspace owner resends, revokes and removes.
+ */
+function dispatchTeam(
+  context: TenantContext,
+  principal: Principal,
+  req: ApiRequest,
+  segments: readonly string[],
+  membership: MembershipService,
+): ApiResponse {
+  const route = segments.slice(2).join('/')
+  if (route === 'team') {
+    if (req.method !== 'GET') throw methodNotAllowed()
+    return { status: 200, body: membership.team(context, principal) }
+  }
+  if (req.method !== 'POST') {
+    if (['invitations', 'invitations/resend', 'invitations/revoke', 'members/remove'].includes(route)) throw methodNotAllowed()
+    throw routeNotFound()
+  }
+  const body = parseObjectBody(req.rawBody)
+  if (route === 'invitations') {
+    const email = requireString(body, 'email').trim()
+    if (!isEmailAddress(email)) throw new ProductError('PRODUCT.BAD_REQUEST', "Field 'email' must be an email address.", {})
+    const role = body.role
+    if (role !== 'planner' && role !== 'couple') {
+      throw new ProductError('PRODUCT.BAD_REQUEST', 'role must be "planner" or "couple".', {})
+    }
+    const wedding_id = optionalString(body, 'wedding_id')
+    const invitation = membership.invite(context, principal, {
+      email,
+      role: role as InvitedRole,
+      ...(wedding_id === undefined ? {} : { wedding_id }),
+    })
+    return { status: 201, body: { invitation } }
+  }
+  if (route === 'invitations/resend') {
+    return { status: 200, body: { resent: membership.resend(context, principal, requireString(body, 'invitation_id')) } }
+  }
+  if (route === 'invitations/revoke') {
+    return { status: 200, body: { revoked: membership.revoke(context, principal, requireString(body, 'invitation_id')) } }
+  }
+  if (route === 'members/remove') {
+    return { status: 200, body: { removed: membership.removeMember(context, principal, requireString(body, 'user_id')) } }
+  }
+  throw routeNotFound()
+}
+
+/** POST /t/:slug/invitations/accept {token, password} — create the invited account and sign it in (201). */
+function handleInvitationAccept(context: TenantContext, req: ApiRequest, membership: MembershipService): ApiResponse {
+  const body = parseObjectBody(req.rawBody)
+  const session = membership.accept(context, requireString(body, 'token'), requireString(body, 'password'))
+  return { status: 201, body: { token: session.token, principal: principalView(session.principal) } }
 }
 
 /** POST /t/:slug/password-reset {email} — always the same 202 (no account-existence oracle). */

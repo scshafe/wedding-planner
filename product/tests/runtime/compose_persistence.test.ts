@@ -195,8 +195,14 @@ describe('durable storage — data written before a restart is read back after i
     expect(
       api2.handle(req('POST', '/t/demo/password-reset/complete', { body: { token: link, password: 'a long enough password' } })).status,
     ).toBe(200)
+    const ownerSignIn = api2.handle(
+      req('POST', '/t/demo/sessions', { body: { email: 'owner@demo.test', password: 'a long enough password' } }),
+    )
+    expect(ownerSignIn.status).toBe(201)
+    // The owner invites a planner (issue #11): a pending invitation stays in the store for the census below.
+    const ownerToken = (ownerSignIn.body as { token: string }).token
     expect(
-      api2.handle(req('POST', '/t/demo/sessions', { body: { email: 'owner@demo.test', password: 'a long enough password' } })).status,
+      api2.handle(req('POST', '/t/demo/invitations', { token: ownerToken, body: { email: 'planner@demo.test', role: 'planner' } })).status,
     ).toBe(201)
     // ...and an outstanding reset link (processed after the response) plus a still-queued request are left in the
     // store for the census below.

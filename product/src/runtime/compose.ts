@@ -7,6 +7,8 @@ import { SessionStore } from '../auth/session_store'
 import { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import { AccountService } from '../accounts/account_service'
 import { AccountStore } from '../accounts/account_store'
+import { InvitationStore } from '../accounts/invitation_store'
+import { MembershipService } from '../accounts/membership_service'
 import { OneTimeTokenStore } from '../accounts/one_time_token_store'
 import { PendingResetQueue } from '../accounts/pending_reset_queue'
 import { PasswordHasher, PRODUCTION_SCRYPT_COST, type ScryptCost } from '../accounts/password_hasher'
@@ -196,10 +198,14 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const email = new SimulatedEmailAdapter(clock, ids, store)
   // Real accounts (issue #10): scrypt-hashed passwords, single-use emailed links, in-process rate limits. The
   // service verifies; the SessionStore stays the sole mint of a Principal.
+  const accountStore = new AccountStore(tenants, clock, ids, store)
+  const hasher = new PasswordHasher(config.passwordCost ?? PRODUCTION_SCRYPT_COST, ids)
+  const oneTimeTokens = new OneTimeTokenStore(tenants, clock, ids, store)
+  const publicUrl = config.publicUrl === undefined ? {} : { publicUrl: config.publicUrl }
   const accounts = new AccountService({
-    accounts: new AccountStore(tenants, clock, ids, store),
-    hasher: new PasswordHasher(config.passwordCost ?? PRODUCTION_SCRYPT_COST, ids),
-    tokens: new OneTimeTokenStore(tenants, clock, ids, store),
+    accounts: accountStore,
+    hasher,
+    tokens: oneTimeTokens,
     email,
     sessions: sessionStore,
     limiter: new RateLimiter(clock),
@@ -207,7 +213,20 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     clock,
     pendingResets: new PendingResetQueue(clock, ids, store),
     contexts: resolver,
-    ...(config.publicUrl === undefined ? {} : { publicUrl: config.publicUrl }),
+    ...publicUrl,
+  })
+  // The team (issue #11): planners invite teammates and couples through single-use emailed links; the owner
+  // manages invitations and members. The same account store, hasher, token store and session store as sign-in.
+  const membership = new MembershipService({
+    accounts: accountStore,
+    invitations: new InvitationStore(tenants, clock, ids, store),
+    tokens: oneTimeTokens,
+    email,
+    sessions: sessionStore,
+    hasher,
+    weddings,
+    tenants,
+    ...publicUrl,
   })
 
   // The guest-messaging provider boundary (Phase 18): the offline simulated adapter is a deterministic
@@ -246,6 +265,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     onboarding,
     email: { port: email, outbox: email },
     accounts,
+    membership,
     tenants,
     webhookCredentials,
     messaging: {
