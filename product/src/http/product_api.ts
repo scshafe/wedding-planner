@@ -20,6 +20,7 @@ import { buildBillingActivity } from '../billing/billing_activity'
 import { buildBillingSummary } from '../billing/billing_summary'
 import type { PlanTier } from '../billing/price_book'
 import type { OnboardingService } from '../onboarding/onboarding_service'
+import type { TransactionRunner } from '../persistence/record_store'
 import type { GuestQaResponder } from '../messaging/guest_qa_responder'
 import { projectGuestVisibleFacts } from '../messaging/guest_qa_responder'
 import type { EscalationLog } from '../messaging/escalation_log'
@@ -281,7 +282,17 @@ export interface ProductApiDeps {
    * never imports the loop). Projected ONCE to guidance in the constructor; absent ⇒ the strategy route 404s.
    */
   readonly championStrategy?: StrategyGenome
+  /**
+   * Issue #8: runs each request as ONE transaction of the persistence store, so a request that fails part-way
+   * (any throw, mapped to an error response below) leaves none of its writes behind, and a request's writes
+   * become durable together. `composeProductSurface` passes the shared store; absent ⇒ no transaction (the
+   * hand-built test fixtures, whose stores are separate in-memory defaults).
+   */
+  readonly transactions?: TransactionRunner
 }
+
+/** The no-transaction runner for fixtures that inject no store. */
+const NO_TRANSACTION: TransactionRunner = { transaction: (fn) => fn() }
 
 export class ProductApi {
   readonly #resolver: TenantContextResolver
@@ -310,6 +321,8 @@ export class ProductApi {
    * the strategy route's present/absent answer is platform-global (it reads no tenant/principal state).
    */
   readonly #strategyGuidance: StrategyGuidance | undefined
+  /** One transaction per request (issue #8). */
+  readonly #transactions: TransactionRunner
 
   constructor(deps: ProductApiDeps) {
     this.#resolver = deps.resolver
@@ -324,12 +337,19 @@ export class ProductApi {
     this.#adminDeps = { onboarding: deps.onboarding }
     this.#strategyGuidance =
       deps.championStrategy === undefined ? undefined : deepFreeze(describeStrategy(deps.championStrategy))
+    this.#transactions = deps.transactions ?? NO_TRANSACTION
   }
 
-  /** Run a request through the pipeline. Never throws — every failure maps to a code-free response. */
+  /**
+   * Run a request through the pipeline. Never throws — every failure maps to a code-free response. The whole
+   * route runs inside one store transaction: a throw rolls back every write the request made before the error
+   * is mapped (so a handler that must persist something on a failure path returns its response, never throws).
+   */
   handle(req: ApiRequest): ApiResponse {
     try {
-      return this.#route(req)
+      // Liveness never waits on the store: /healthz reads nothing, so it answers outside any transaction.
+      if (isHealthz(req)) return this.#route(req)
+      return this.#transactions.transaction(() => this.#route(req))
     } catch (error) {
       // Catch the whole WeddingPlannerError family (ProductError + the shared ContractValidationFailedError
       // a create/update raises on bad client data) and map by code; unknown codes fall to a constant 500.
@@ -363,10 +383,16 @@ export class ProductApi {
       // Stage 2 — the SOLE per-request context mint (404 on unknown/unusable, no absent-vs-suspended oracle).
       const context = this.#resolver.resolveBySlug(slug)
 
-      // /t/:slug/sessions — the login mint (unauthenticated by design; it ISSUES the session).
+      // /t/:slug/sessions — POST is the login mint (unauthenticated by design; it ISSUES the session). DELETE is
+      // sign-out (issue #8: sessions persist, so ending one is server-side): stages 3–4 run first, so only a live
+      // session bound to this tenant can revoke itself.
       if (segments.length === 3 && segments[2] === 'sessions') {
-        if (req.method !== 'POST') throw methodNotAllowed()
-        return this.#handleLogin(context, req)
+        if (req.method === 'POST') return this.#handleLogin(context, req)
+        if (req.method === 'DELETE') {
+          this.#authenticate(req, context)
+          return { status: 200, body: { signed_out: this.#sessionStore.revoke(bearerToken(req.headers.authorization)) } }
+        }
+        throw methodNotAllowed()
       }
 
       // /t/:slug/weddings[...] — PROTECTED: stages 3–4 run BEFORE any method/shape distinction.
@@ -485,6 +511,11 @@ export class ProductApi {
       throw new ProductError('PRODUCT.BAD_REQUEST', 'role must be "planner" or "couple".', {})
     }
     const wedding_id = optionalString(body, 'wedding_id')
+    // A SHAPE check only (an id-like token, bounded), never an existence check (no oracle): an unbounded opaque
+    // value would otherwise be persisted in every session row this unauthenticated route mints.
+    if (wedding_id !== undefined && !OPAQUE_ID.test(wedding_id)) {
+      throw new ProductError('PRODUCT.BAD_REQUEST', 'wedding_id is not a valid id.', {})
+    }
     // SessionStore enforces the couple-needs-wedding_id rule and never verifies its existence (no oracle).
     const session = this.#sessionStore.login(context, { role, wedding_id })
     return {
@@ -1256,6 +1287,15 @@ function handleProvision(req: ApiRequest, deps: AdminHandlerDeps): ApiResponse {
 }
 
 // ---------------------------------- request/response helpers ----------------------------------
+
+/** The shape of a server-minted id (`wedding_…`), bounded: what an unauthenticated route may persist. */
+const OPAQUE_ID = /^[A-Za-z0-9_-]{1,128}$/
+
+/** Whether the request is the liveness probe (`GET /healthz`, or any method on it, which 405s). */
+function isHealthz(req: ApiRequest): boolean {
+  const segments = splitPath(req.path)
+  return segments.length === 1 && segments[0] === 'healthz'
+}
 
 /** Extract the token from an `Authorization: Bearer <token>` header (case-insensitive scheme). */
 function bearerToken(header: string | undefined): string | undefined {

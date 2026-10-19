@@ -1,5 +1,7 @@
 import { getSchemaRegistry, type Channel, type GuestEscalation, type IdGenerator } from '@wedding-planner/shared'
 
+import { COLLECTIONS } from '../persistence/collections'
+import type { RecordStore } from '../persistence/record_store'
 import { type TenantContext } from '../tenant/tenant_context'
 import { TenantScopedRepository } from '../tenant/tenant_scoped_repository'
 import type { TenantLivenessCheck } from '../tenant/tenant_store'
@@ -61,8 +63,14 @@ export class EscalationLog {
   constructor(
     liveness: TenantLivenessCheck,
     private readonly ids: IdGenerator,
+    store?: RecordStore,
   ) {
-    this.#repo = new TenantScopedRepository<GuestEscalation>(liveness, (escalation) => escalation.provider_message_ref)
+    this.#repo = new TenantScopedRepository<GuestEscalation>(
+      liveness,
+      (escalation) => escalation.provider_message_ref,
+      COLLECTIONS.guestEscalation,
+      store,
+    )
   }
 
   /**

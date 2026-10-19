@@ -1,5 +1,7 @@
 import { getSchemaRegistry, type Clock, type EscalationResolution, type IdGenerator } from '@wedding-planner/shared'
 
+import { COLLECTIONS } from '../persistence/collections'
+import type { RecordStore } from '../persistence/record_store'
 import { type TenantContext } from '../tenant/tenant_context'
 import { TenantScopedRepository } from '../tenant/tenant_scoped_repository'
 import type { TenantLivenessCheck } from '../tenant/tenant_store'
@@ -93,8 +95,14 @@ export class EscalationResolutionLog {
     liveness: TenantLivenessCheck,
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
+    store?: RecordStore,
   ) {
-    this.#repo = new TenantScopedRepository<EscalationResolution>(liveness, (row) => slotKey(row.escalation_id, row.seq))
+    this.#repo = new TenantScopedRepository<EscalationResolution>(
+      liveness,
+      (row) => slotKey(row.escalation_id, row.seq),
+      COLLECTIONS.escalationResolution,
+      store,
+    )
   }
 
   /** All transition rows for one escalation within the context's tenant (the fold/allocation input). */

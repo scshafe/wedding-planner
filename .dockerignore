@@ -34,6 +34,14 @@ dist
 # Documentation prose — benign, but nothing at runtime reads it (keeps the image tree clean).
 **/README.md
 
+# Local databases (issue #8): guest data and session rows never enter an image.
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+wp-data
+deploy/stack/state
+
 # Local-only continuation state, logs, and any environment/secret files.
 *.local.md
 **/*.local.md

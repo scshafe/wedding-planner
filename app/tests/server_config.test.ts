@@ -105,6 +105,42 @@ describe('resolveServerConfig — env parsing', () => {
   })
 })
 
+describe('resolveServerConfig — the storage policy (issue #8, fail-closed)', () => {
+  const realTokens: Env = { WP_OPERATOR_TOKEN: STRONG, WP_PROVIDER_WEBHOOK_TOKEN: STRONG_WEBHOOK }
+
+  it('uses WP_DATABASE_PATH when set (demo or not)', () => {
+    expect(resolveServerConfig({ ...realTokens, WP_DATABASE_PATH: '/data/wp.sqlite' }, constGen('g')).databasePath).toBe(
+      '/data/wp.sqlite',
+    )
+    expect(
+      resolveServerConfig({ ...realTokens, WP_SEED_DEMO: 'false', WP_DATABASE_PATH: ' /data/wp.sqlite ' }, constGen('g'))
+        .databasePath,
+    ).toBe('/data/wp.sqlite')
+  })
+
+  it('falls back to the in-memory store only in demo mode', () => {
+    expect(resolveServerConfig(realTokens, constGen('g')).databasePath).toBeUndefined()
+    expect(resolveServerConfig({ ...realTokens, WP_DATABASE_PATH: '   ' }, constGen('g')).databasePath).toBeUndefined()
+  })
+
+  it('FAILS CLOSED without WP_DATABASE_PATH when WP_REQUIRE_DATABASE is set, even in demo mode', () => {
+    expect(() => resolveServerConfig({ ...realTokens, WP_REQUIRE_DATABASE: 'true' }, constGen('g'))).toThrow(
+      /WP_REQUIRE_DATABASE/,
+    )
+    expect(
+      resolveServerConfig({ ...realTokens, WP_REQUIRE_DATABASE: 'true', WP_DATABASE_PATH: '/data/wp.sqlite' }, constGen('g'))
+        .databasePath,
+    ).toBe('/data/wp.sqlite')
+    expect(resolveServerConfig({ ...realTokens, WP_REQUIRE_DATABASE: 'false' }, constGen('g')).databasePath).toBeUndefined()
+  })
+
+  it('FAILS CLOSED when WP_DATABASE_PATH is unset AND seedDemo is false', () => {
+    expect(() => resolveServerConfig({ ...realTokens, WP_SEED_DEMO: 'false' }, constGen('g'))).toThrow(
+      /WP_DATABASE_PATH is required/,
+    )
+  })
+})
+
 describe('buildBootLog — the disclosure allow-list', () => {
   const demo: DemoSeed = {
     slug: 'demo',
@@ -137,10 +173,31 @@ describe('buildBootLog — the disclosure allow-list', () => {
 
   it('omits the demo line when there is no demo seed', () => {
     const config = resolveServerConfig(
-      { WP_OPERATOR_TOKEN: STRONG, WP_PROVIDER_WEBHOOK_TOKEN: STRONG_WEBHOOK, WP_SEED_DEMO: 'false' },
+      {
+        WP_OPERATOR_TOKEN: STRONG,
+        WP_PROVIDER_WEBHOOK_TOKEN: STRONG_WEBHOOK,
+        WP_SEED_DEMO: 'false',
+        WP_DATABASE_PATH: '/data/wp.sqlite',
+      },
       constGen('g'),
     )
-    expect(buildBootLog(config, undefined)).not.toContain('demo tenant')
+    const line = buildBootLog(config, undefined)
+    expect(line).not.toContain('demo tenant')
+    expect(line).not.toContain('demo seed skipped')
+  })
+
+  it('names the storage: the sqlite path, or a warning that the in-memory store resets on restart', () => {
+    const durable = resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG, WP_DATABASE_PATH: '/data/wp.sqlite' }, constGen('g'))
+    expect(buildBootLog(durable, demo)).toContain('storage: sqlite at /data/wp.sqlite')
+    const memory = resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG }, constGen('g'))
+    expect(buildBootLog(memory, demo)).toContain('storage: in-memory (offline demo; every restart resets to the demo seed)')
+  })
+
+  it('notes a skipped demo seed (demo mode over a store that already holds data)', () => {
+    const config = resolveServerConfig({ WP_OPERATOR_TOKEN: STRONG, WP_DATABASE_PATH: '/data/wp.sqlite' }, constGen('g'))
+    const line = buildBootLog(config, undefined)
+    expect(line).toContain('demo seed skipped: the store already holds data')
+    expect(line).not.toContain('demo tenant')
   })
 
   it('logs a bare strategy provenance token — never the champion genome internals', () => {

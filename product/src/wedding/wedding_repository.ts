@@ -1,5 +1,7 @@
 import { type Clock, getSchemaRegistry, type IdGenerator, type Wedding } from '@wedding-planner/shared'
 
+import { COLLECTIONS } from '../persistence/collections'
+import type { RecordStore } from '../persistence/record_store'
 import type { TenantContext } from '../tenant/tenant_context'
 import { TenantScopedRepository } from '../tenant/tenant_scoped_repository'
 import type { TenantLivenessCheck } from '../tenant/tenant_store'
@@ -49,8 +51,9 @@ export class WeddingRepository {
     liveness: TenantLivenessCheck,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
+    store?: RecordStore,
   ) {
-    this.repository = new TenantScopedRepository<Wedding>(liveness, (wedding) => wedding.wedding_id)
+    this.repository = new TenantScopedRepository<Wedding>(liveness, (wedding) => wedding.wedding_id, COLLECTIONS.wedding, store)
   }
 
   /** Create a wedding owned by the context's tenant. */

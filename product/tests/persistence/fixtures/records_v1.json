@@ -1,0 +1,324 @@
+{
+  "description": "Records exactly as written by the build at schema version 1 (issue #8). FROZEN: never regenerate or edit this file; a later schema version adds its own records_vN.json. tests/persistence/record_drift.test.ts migrates these rows with today's build and validates each against today's schemas.",
+  "schema_version": 1,
+  "rows": [
+    {
+      "collection": "tenant",
+      "partition": "_global",
+      "key": "tenant_v1_1",
+      "body": {
+        "tenant_id": "tenant_v1_1",
+        "slug": "demo",
+        "display_name": "Demo Weddings Co.",
+        "theme": {
+          "brand_name": "Demo Weddings Co.",
+          "primary_color_hex": "#3b5bdb",
+          "accent_color_hex": "#f06595",
+          "logo_ref": "demo_logo"
+        },
+        "plan_tier": "studio",
+        "lifecycle_status": "active",
+        "created_at": "2026-10-19T00:00:00.000Z"
+      }
+    },
+    {
+      "collection": "tenant_slug",
+      "partition": "_global",
+      "key": "demo",
+      "body": {
+        "tenant_id": "tenant_v1_1"
+      }
+    },
+    {
+      "collection": "billing_event",
+      "partition": "tenant_v1_1",
+      "key": "billing_v1_1",
+      "body": {
+        "event_id": "billing_v1_1",
+        "tenant_id": "tenant_v1_1",
+        "kind": "provisioned",
+        "occurred_at": "2026-10-19T00:00:00.000Z"
+      }
+    },
+    {
+      "collection": "billing_event",
+      "partition": "tenant_v1_1",
+      "key": "billing_v1_2",
+      "body": {
+        "event_id": "billing_v1_2",
+        "tenant_id": "tenant_v1_1",
+        "kind": "charge",
+        "amount_cents": 9900,
+        "occurred_at": "2026-10-19T00:00:00.000Z"
+      }
+    },
+    {
+      "collection": "billing_event",
+      "partition": "tenant_v1_1",
+      "key": "billing_v1_3",
+      "body": {
+        "event_id": "billing_v1_3",
+        "tenant_id": "tenant_v1_1",
+        "kind": "payment",
+        "amount_cents": 9900,
+        "occurred_at": "2026-10-19T00:00:00.000Z"
+      }
+    },
+    {
+      "collection": "wedding",
+      "partition": "tenant_v1_1",
+      "key": "wedding_v1_1",
+      "body": {
+        "wedding_id": "wedding_v1_1",
+        "tenant_id": "tenant_v1_1",
+        "couple_display_name": "Alex & Sam",
+        "event_date": "2027-09-18",
+        "status": "planning",
+        "created_at": "2026-10-19T00:00:00.000Z"
+      }
+    },
+    {
+      "collection": "guest_binding",
+      "partition": "tenant_v1_1",
+      "key": "sms:+15550100",
+      "body": {
+        "tenant_id": "tenant_v1_1",
+        "recipient_ref": "sms:+15550100",
+        "wedding_id": "wedding_v1_1",
+        "guest_id": "guest_demo_1"
+      }
+    },
+    {
+      "collection": "session",
+      "partition": "_global",
+      "key": "c4d349fe2fbb05238131dc0c9b6775e1d1cad592b4fbe5b4d3dc0861ca69930e",
+      "body": {
+        "auth": "simulated",
+        "token_hash": "c4d349fe2fbb05238131dc0c9b6775e1d1cad592b4fbe5b4d3dc0861ca69930e",
+        "tenant_id": "tenant_v1_1",
+        "role": "planner",
+        "principal_id": "principal_v1_1",
+        "csrf_token": "csrf_v1_1",
+        "issued_at": "2026-10-19T00:00:00.000Z",
+        "expires_at": "2026-10-26T00:00:00.000Z"
+      }
+    },
+    {
+      "collection": "session",
+      "partition": "_global",
+      "key": "47e9544170c889788ddd3f45eb59b05bd1c4e9dde6fdf6fba0c599962ce6b733",
+      "body": {
+        "auth": "simulated",
+        "token_hash": "47e9544170c889788ddd3f45eb59b05bd1c4e9dde6fdf6fba0c599962ce6b733",
+        "tenant_id": "tenant_v1_1",
+        "role": "couple",
+        "wedding_id": "wedding_v1_1",
+        "principal_id": "principal_v1_2",
+        "csrf_token": "csrf_v1_2",
+        "issued_at": "2026-10-19T00:00:00.000Z",
+        "expires_at": "2026-10-26T00:00:00.000Z"
+      }
+    },
+    {
+      "collection": "wedding",
+      "partition": "tenant_v1_1",
+      "key": "wedding_v1_2",
+      "body": {
+        "wedding_id": "wedding_v1_2",
+        "tenant_id": "tenant_v1_1",
+        "couple_display_name": "Jo & Lee",
+        "event_date": "2028-06-10",
+        "status": "planning",
+        "created_at": "2026-10-19T00:00:00.000Z",
+        "venue_name": "The Barn",
+        "dress_code": "Garden formal"
+      }
+    },
+    {
+      "collection": "guest_binding",
+      "partition": "tenant_v1_1",
+      "key": "sms:+15550111",
+      "body": {
+        "tenant_id": "tenant_v1_1",
+        "recipient_ref": "sms:+15550111",
+        "wedding_id": "wedding_v1_2",
+        "guest_id": "guest_jo_1"
+      }
+    },
+    {
+      "collection": "billing_event",
+      "partition": "tenant_v1_1",
+      "key": "billing_v1_4",
+      "body": {
+        "event_id": "billing_v1_4",
+        "tenant_id": "tenant_v1_1",
+        "kind": "usage_charge",
+        "amount_cents": 5,
+        "occurred_at": "2026-10-19T00:00:00.000Z"
+      }
+    },
+    {
+      "collection": "message_send",
+      "partition": "tenant_v1_1",
+      "key": "inbound_v1_1",
+      "body": {
+        "receipt": {
+          "provider_message_ref": "msgprov_v1_1",
+          "channel": "sms",
+          "accepted_at": "2026-10-19T00:00:00.000Z"
+        },
+        "usage": {
+          "message_id": "msg_v1_1",
+          "channel": "sms",
+          "recipient_ref": "sms:+15550100",
+          "provider_message_ref": "msgprov_v1_1",
+          "provider_cost_cents": 2,
+          "billed_cents": 5,
+          "idempotency_key": "inbound_v1_1",
+          "sent_at": "2026-10-19T00:00:00.000Z"
+        },
+        "deduped": false
+      }
+    },
+    {
+      "collection": "inbound_receipt",
+      "partition": "tenant_v1_1",
+      "key": "pmr_a",
+      "body": {
+        "tenant_id": "tenant_v1_1",
+        "provider_message_ref": "pmr_a",
+        "reply_id": "inbound_v1_1"
+      }
+    },
+    {
+      "collection": "guest_escalation",
+      "partition": "tenant_v1_1",
+      "key": "pmr_e",
+      "body": {
+        "escalation_id": "escalation_v1_1",
+        "tenant_id": "tenant_v1_1",
+        "wedding_id": "wedding_v1_1",
+        "from_ref": "sms:+15550100",
+        "text": "where do I park?",
+        "received_at": "2026-10-19T00:00:00.000Z",
+        "provider_message_ref": "pmr_e",
+        "channel": "sms"
+      }
+    },
+    {
+      "collection": "billing_event",
+      "partition": "tenant_v1_1",
+      "key": "billing_v1_5",
+      "body": {
+        "event_id": "billing_v1_5",
+        "tenant_id": "tenant_v1_1",
+        "kind": "usage_charge",
+        "amount_cents": 5,
+        "occurred_at": "2026-10-19T00:00:00.000Z"
+      }
+    },
+    {
+      "collection": "message_send",
+      "partition": "tenant_v1_1",
+      "key": "reply:escalation_v1_1:0",
+      "body": {
+        "receipt": {
+          "provider_message_ref": "msgprov_v1_2",
+          "channel": "sms",
+          "accepted_at": "2026-10-19T00:00:00.000Z"
+        },
+        "usage": {
+          "message_id": "msg_v1_2",
+          "channel": "sms",
+          "recipient_ref": "sms:+15550100",
+          "provider_message_ref": "msgprov_v1_2",
+          "provider_cost_cents": 2,
+          "billed_cents": 5,
+          "idempotency_key": "reply:escalation_v1_1:0",
+          "sent_at": "2026-10-19T00:00:00.000Z"
+        },
+        "deduped": false
+      }
+    },
+    {
+      "collection": "escalation_reply",
+      "partition": "tenant_v1_1",
+      "key": "escalation_v1_1:0",
+      "body": {
+        "reply_id": "reply_v1_1",
+        "tenant_id": "tenant_v1_1",
+        "escalation_id": "escalation_v1_1",
+        "wedding_id": "wedding_v1_1",
+        "seq": 0,
+        "sender": "planner",
+        "body": "Lot B.",
+        "sent_at": "2026-10-19T00:00:00.000Z"
+      }
+    },
+    {
+      "collection": "escalation_resolution",
+      "partition": "tenant_v1_1",
+      "key": "escalation_v1_1:0",
+      "body": {
+        "resolution_id": "resolution_v1_1",
+        "tenant_id": "tenant_v1_1",
+        "escalation_id": "escalation_v1_1",
+        "wedding_id": "wedding_v1_1",
+        "seq": 0,
+        "status": "resolved",
+        "resolved_by": "planner",
+        "resolved_at": "2026-10-19T00:00:00.000Z"
+      }
+    },
+    {
+      "collection": "billing_event",
+      "partition": "tenant_v1_1",
+      "key": "billing_v1_6",
+      "body": {
+        "event_id": "billing_v1_6",
+        "tenant_id": "tenant_v1_1",
+        "kind": "payment",
+        "amount_cents": 10,
+        "occurred_at": "2026-10-19T00:00:00.000Z"
+      }
+    },
+    {
+      "collection": "tenant",
+      "partition": "_global",
+      "key": "tenant_v1_2",
+      "body": {
+        "tenant_id": "tenant_v1_2",
+        "slug": "acme",
+        "display_name": "Acme",
+        "theme": {
+          "brand_name": "Acme",
+          "primary_color_hex": "#123456",
+          "accent_color_hex": "#654321",
+          "logo_ref": "acme_logo"
+        },
+        "plan_tier": "solo",
+        "lifecycle_status": "onboarding",
+        "created_at": "2026-10-19T00:00:00.000Z"
+      }
+    },
+    {
+      "collection": "tenant_slug",
+      "partition": "_global",
+      "key": "acme",
+      "body": {
+        "tenant_id": "tenant_v1_2"
+      }
+    },
+    {
+      "collection": "billing_event",
+      "partition": "tenant_v1_2",
+      "key": "billing_v1_7",
+      "body": {
+        "event_id": "billing_v1_7",
+        "tenant_id": "tenant_v1_2",
+        "kind": "provisioned",
+        "occurred_at": "2026-10-19T00:00:00.000Z"
+      }
+    }
+  ]
+}

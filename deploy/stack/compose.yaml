@@ -13,11 +13,15 @@
 # instruction: this tailnet-only, simulated-comms deployment is the operator's
 # call, not an agent's own judgment.
 #
-# ZERO persistence by design: all state is in memory; every restart or deploy
-# resets to the demo seed (tenant 'demo' at /t/demo). The container never
-# writes its filesystem, which is why the hardening below is free. Login is a
-# simulated role picker: anyone who reaches the node is a planner on the demo
-# tenant; the tailnet is the access control (door none).
+# DURABLE since issue #8 (ADR 0039): the app keeps its state in one SQLite
+# file, /data/wedding-planner.sqlite, on the ./state/app bind, so a restart or
+# a deploy keeps every tenant, wedding, guest, escalation, billing event and
+# session. The demo tenant ('demo' at /t/demo) is seeded once, into the empty
+# database on the first boot. The container still never writes its image
+# filesystem (read_only); the bind is its only writable path. ./state/app is in
+# stack.toml [backup] paths. Login on the demo tenant is a simulated role
+# picker: anyone who reaches the node is a planner there; the tailnet is the
+# access control (door none).
 name: wedding-planner
 
 services:
@@ -51,12 +55,15 @@ services:
     image: ${WEDDING_PLANNER_IMAGE}
     container_name: wedding-planner
     init: true
-    user: "1000:1000"  # the image's `node` user; the app binds no state
+    user: "1000:1000"  # the image's `node` user; owns ./state/app (the database)
     restart: unless-stopped
     network_mode: service:ts-wedding-planner
     depends_on: [ts-wedding-planner]
     read_only: true
     tmpfs: [/tmp]
+    volumes:
+      # The database (issue #8). Read-write: the only path the app writes.
+      - ./state/app:/data
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: 512m
@@ -68,7 +75,14 @@ services:
       # values, placed on the host with `stack env-set` ([env] owner).
       WP_OPERATOR_TOKEN: ${WP_OPERATOR_TOKEN:?set WP_OPERATOR_TOKEN in .env}
       WP_PROVIDER_WEBHOOK_TOKEN: ${WP_PROVIDER_WEBHOOK_TOKEN:?set WP_PROVIDER_WEBHOOK_TOKEN in .env}
-      # WP_SEED_DEMO defaults to true: the demo tenant re-provisions each boot.
+      # The durable store (issue #8): migrated at boot; a missing or newer
+      # schema fails the boot, and the deploy rolls back.
+      WP_DATABASE_PATH: /data/wedding-planner.sqlite
+      # Refuse to boot without WP_DATABASE_PATH, demo mode or not: production
+      # must never fall back to the in-memory store.
+      WP_REQUIRE_DATABASE: "true"
+      # WP_SEED_DEMO defaults to true: the demo tenant is seeded into an empty
+      # database only (first boot); later boots keep the data.
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8080/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 10s

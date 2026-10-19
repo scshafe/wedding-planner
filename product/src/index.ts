@@ -187,3 +187,11 @@ export {
   type ComposedSurface,
   type DemoSeed,
 } from './runtime/compose'
+
+// Persistence (issue #8, ADR 0039): the RecordStore port every store sits behind and its in-memory adapter. The
+// durable SQLite adapter is an EDGE primitive like the wall clock: exported from no barrel (so importing the
+// product never loads `node:sqlite`), imported by relative path in app/server.ts and its tests. The collection
+// census is not exported either: nothing outside the product's stores addresses raw records.
+export { type Collection, type CollectionScope, type RecordStore, type TransactionRunner } from './persistence/record_store'
+export { InMemoryRecordStore } from './persistence/in_memory_record_store'
+export { SESSION_TTL_SECONDS, type SessionAuth, type SessionExpiryOptions, type StoredSession } from './auth/session_store'

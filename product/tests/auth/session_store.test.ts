@@ -1,13 +1,18 @@
-import { ManualClock, SequentialIdGenerator, type Tenant } from '@wedding-planner/shared'
+import { ManualClock, SequentialIdGenerator, sha256Hex, type Tenant } from '@wedding-planner/shared'
 import { describe, expect, it } from 'vitest'
 
 import {
   assertMintedPrincipal,
+  InMemoryRecordStore,
   type Principal,
+  SESSION_TTL_SECONDS,
   SessionStore,
   TenantContextResolver,
   TenantStore,
 } from '@wedding-planner/product'
+
+import { COLLECTIONS } from '../../src/persistence/collections'
+import { GLOBAL_PARTITION } from '../../src/persistence/record_store'
 
 /**
  * Step-1 unit coverage for the auth core: the SessionStore is the sole mint of a Principal, the token
@@ -82,7 +87,11 @@ describe('session_store', () => {
   it('resolve exchanges a token for its principal; unknown/absent token -> undefined (fail closed)', () => {
     const w = makeWorld()
     const { token, principal } = w.sessions.login(w.ctx, { role: 'planner' })
-    expect(w.sessions.resolve(token)).toBe(principal)
+    // Sessions are persisted records (issue #8): resolve RE-MINTS an equal principal (still store-minted, so it
+    // carries the brand), rather than handing back the login's object.
+    const resolved = w.sessions.resolve(token)
+    expect(resolved).toEqual(principal)
+    expect(() => assertMintedPrincipal(resolved as Principal)).not.toThrow()
     expect(w.sessions.resolve('not_a_real_token')).toBeUndefined()
     expect(w.sessions.resolve(undefined)).toBeUndefined()
   })
@@ -117,5 +126,63 @@ describe('session_store', () => {
     const dump = JSON.stringify(w.sessions)
     expect(dump).not.toContain('wedding_secret')
     expect(Object.getOwnPropertyNames(w.sessions)).not.toContain('byToken')
+  })
+})
+
+describe('session_store — persisted sessions expire, can be revoked, and carry their auth kind (issue #8)', () => {
+  function expiringWorld() {
+    const w = makeWorld()
+    const clock = new ManualClock('2027-03-01T00:00:00.000Z')
+    const backing = new InMemoryRecordStore()
+    const sessions = new SessionStore(new SequentialIdGenerator('seedX'), backing, { clock })
+    return { ...w, sessions, clock, backing }
+  }
+
+  it('a session lapses after SESSION_TTL_SECONDS: resolve, issueCsrf and verifyCsrf then all fail closed', () => {
+    const w = expiringWorld()
+    const { token, csrf_token } = w.sessions.login(w.ctx, { role: 'planner' })
+    w.clock.advance(SESSION_TTL_SECONDS * 1000 - 1)
+    expect(w.sessions.resolve(token)).toBeDefined()
+    w.clock.advance(1)
+    expect(w.sessions.resolve(token)).toBeUndefined()
+    expect(w.sessions.issueCsrf(token)).toBeUndefined()
+    expect(w.sessions.verifyCsrf(token, csrf_token)).toBe(false)
+    // The lapsed row was deleted on sight.
+    expect(w.backing.list(COLLECTIONS.session, GLOBAL_PARTITION)).toEqual([])
+  })
+
+  it('revoke ends a session server-side (idempotent)', () => {
+    const w = expiringWorld()
+    const { token } = w.sessions.login(w.ctx, { role: 'planner' })
+    expect(w.sessions.revoke(token)).toBe(true)
+    expect(w.sessions.resolve(token)).toBeUndefined()
+    expect(w.sessions.revoke(token)).toBe(false)
+    expect(w.sessions.revoke(undefined)).toBe(false)
+  })
+
+  it('sweepExpired deletes every lapsed session and keeps the live ones', () => {
+    const w = expiringWorld()
+    const old = w.sessions.login(w.ctx, { role: 'planner' })
+    w.clock.advance(SESSION_TTL_SECONDS * 1000)
+    const fresh = w.sessions.login(w.ctx, { role: 'planner' })
+    expect(w.sessions.sweepExpired()).toBe(1)
+    expect(w.sessions.resolve(old.token)).toBeUndefined()
+    expect(w.sessions.resolve(fresh.token)).toBeDefined()
+  })
+
+  it('stores the auth kind and the token hash, never the token; an unknown auth kind is refused', () => {
+    const w = expiringWorld()
+    const { token } = w.sessions.login(w.ctx, { role: 'couple', wedding_id: 'wedding_1' })
+    const [stored] = w.backing.list(COLLECTIONS.session, GLOBAL_PARTITION)
+    expect(stored).toMatchObject({
+      auth: 'simulated',
+      token_hash: sha256Hex(token),
+      issued_at: '2027-03-01T00:00:00.000Z',
+      expires_at: '2027-03-08T00:00:00.000Z',
+    })
+    expect(JSON.stringify(stored)).not.toContain(token)
+    // A record of a kind this build does not issue (e.g. written by a later build) does not authenticate.
+    w.backing.put(COLLECTIONS.session, GLOBAL_PARTITION, sha256Hex(token), { ...stored, auth: 'password' } as never)
+    expect(w.sessions.resolve(token)).toBeUndefined()
   })
 })

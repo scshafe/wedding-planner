@@ -21,15 +21,22 @@ contracts (the registry loads all 16 at boot). It runs as the unprivileged `node
 ## Run (locally, offline)
 
 ```bash
-# Demo default — seeds an active 'demo' tenant; an ephemeral operator token is generated and logged once:
+# Demo default — seeds an active 'demo' tenant; an ephemeral operator token is generated and logged once.
+# State is in memory: stopping the container loses it.
 docker run --rm -p 8080:8080 wedding-planner-product:local
+
+# Durable: keep the data in a SQLite file on a mounted directory (writable by uid 1000). The demo tenant is
+# seeded into the empty database on the first boot only; later boots keep everything.
+mkdir -p ./wp-data && docker run --rm -p 8080:8080 -v "$PWD/wp-data:/data" \
+  -e WP_DATABASE_PATH=/data/wedding-planner.sqlite wedding-planner-product:local
 
 # Inject a stable operator credential (>= 16 chars) instead of the generated one:
 docker run --rm -p 8080:8080 -e WP_OPERATOR_TOKEN=your-operator-token-xxxx wedding-planner-product:local
 
-# A non-demo build (no seeded tenant) REQUIRES an injected token, else it fails closed at boot:
-docker run --rm -p 8080:8080 -e WP_SEED_DEMO=false -e WP_OPERATOR_TOKEN=your-operator-token-xxxx \
-  wedding-planner-product:local
+# A non-demo build (no seeded tenant) REQUIRES injected tokens and a database path, else it fails closed at boot:
+docker run --rm -p 8080:8080 -v "$PWD/wp-data:/data" -e WP_SEED_DEMO=false \
+  -e WP_OPERATOR_TOKEN=your-operator-token-xxxx -e WP_PROVIDER_WEBHOOK_TOKEN=your-webhook-token-xxxx \
+  -e WP_DATABASE_PATH=/data/wedding-planner.sqlite wedding-planner-product:local
 ```
 
 Then visit:
@@ -50,6 +57,16 @@ The `/admin` provisioning surface is operator-gated — present the operator tok
 | `WP_SEED_DEMO`      | `true`      | Seed + activate a demo tenant on boot (`false`/`0`/`no`/`off` to disable). |
 | `WP_DEMO_SLUG`      | `demo`      | The demo tenant's routing slug. |
 | `WP_OPERATOR_TOKEN` | *(unset)*   | The platform-operator `/admin` credential. **Injected, never baked.** Must be ≥ 16 chars. Unset is allowed only under the demo default (a fresh token is generated + logged each boot); a non-demo build with no token **fails closed**. |
+| `WP_PROVIDER_WEBHOOK_TOKEN` | *(unset)* | The inbound-messaging webhook credential, under the same policy as the operator token. |
+| `WP_DATABASE_PATH`  | *(unset)*   | The SQLite database file (issue #8). Created and migrated at boot (an existing database gets a `.pre-vN.sqlite` snapshot beside it first); a database migrated by a newer build with a change this build cannot read is refused. Unset is allowed only under the demo default (in-memory, reset on restart); a non-demo build without it **fails closed**. |
+| `WP_REQUIRE_DATABASE` | `false`   | When true, boot fails closed without `WP_DATABASE_PATH` even in demo mode (the deployed stack sets it). |
+
+## Data and backups
+
+With `WP_DATABASE_PATH` set, the whole state is the one SQLite file. It runs in rollback-journal mode, so
+between writes the file alone is a complete database: copy it (with the app stopped, or between requests) to
+back it up, and put it back with the app stopped to restore. In the deployed stack the file lives in
+`state/app/`, which is in `deploy/stack/stack.toml` `[backup] paths`.
 
 ## What stays human-reserved
 

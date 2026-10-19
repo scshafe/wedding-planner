@@ -17,6 +17,13 @@ import type { DemoSeed } from '@wedding-planner/product'
  *   - unset + NOT seedDemo (a "real" build): FAIL CLOSED — never silently auto-mint a platform credential into
  *     a production log. The human must inject the token.
  *
+ * The storage policy (issue #8, ADR 0039), fail-closed in the same spirit:
+ *   - `WP_DATABASE_PATH` set: the durable SQLite store at that path (the stack points it into its `./state` bind).
+ *   - unset + seedDemo: an in-memory store — the offline demo, reset by every restart, and the boot log says so.
+ *   - unset + NOT seedDemo: FAIL CLOSED — a real build must never quietly run on a store that a restart wipes.
+ *   - unset + `WP_REQUIRE_DATABASE` true: FAIL CLOSED even in demo mode — the deployed stack sets it, so losing
+ *     `WP_DATABASE_PATH` from its compose file can never silently put production back in memory.
+ *
  * related: server.ts (the impure main that injects process.env + a crypto generator), compose.ts.
  */
 
@@ -39,6 +46,8 @@ export interface ServerConfig {
   readonly providerWebhookToken: string
   /** Provenance for the webhook token (only a generated demo token may be printed). */
   readonly webhookTokenSource: TokenSource
+  /** Issue #8: the SQLite database file, or undefined for the in-memory demo store. */
+  readonly databasePath: string | undefined
 }
 
 /** A readonly view of the process environment (just the subset the entrypoint reads). */
@@ -68,6 +77,15 @@ export function resolveServerConfig(env: Env, generateToken: () => string): Serv
     seedDemo,
     generateToken,
   })
+  const databasePath = nonEmpty(env.WP_DATABASE_PATH)
+  if (databasePath === undefined && !seedDemo) {
+    throw new Error(
+      'WP_DATABASE_PATH is required when WP_SEED_DEMO is false (a non-demo build must not run on a store that a restart wipes). Set WP_DATABASE_PATH and retry.',
+    )
+  }
+  if (databasePath === undefined && parseBool(env.WP_REQUIRE_DATABASE, false)) {
+    throw new Error('WP_DATABASE_PATH is required because WP_REQUIRE_DATABASE is set. Set WP_DATABASE_PATH and retry.')
+  }
 
   return {
     port,
@@ -78,6 +96,7 @@ export function resolveServerConfig(env: Env, generateToken: () => string): Serv
     tokenSource: operator.source,
     providerWebhookToken: webhook.token,
     webhookTokenSource: webhook.source,
+    databasePath,
   }
 }
 
@@ -111,12 +130,20 @@ function resolveCredentialToken(input: {
 /**
  * Build the single structured boot-log line. Allow-list ONLY: host, port, demo slug + URL, the operator token
  * provenance — printing the token value ONLY when this process generated it — and a bare `strategy: published`
- * provenance token (Phase 17). Never echoes an env-provided token, never logs an internal tenant_id /
- * operator_id / billing balance, and NEVER logs the champion genome internals (id, hash, or knob values).
+ * provenance token (Phase 17), and the storage in use (issue #8: the database path, or a warning that the
+ * in-memory store resets on restart; a skipped demo seed is noted). Never echoes an env-provided token, never logs
+ * an internal tenant_id / operator_id / billing balance, and NEVER logs the champion genome internals (id, hash,
+ * or knob values).
  */
 export function buildBootLog(config: ServerConfig, demo: DemoSeed | undefined): string {
   const parts = [`wedding-planner product surface listening on http://${config.host}:${config.port}`]
+  parts.push(
+    config.databasePath === undefined
+      ? 'storage: in-memory (offline demo; every restart resets to the demo seed)'
+      : `storage: sqlite at ${config.databasePath}`,
+  )
   if (demo !== undefined) parts.push(`demo tenant '${demo.slug}' at /t/${demo.slug}`)
+  else if (config.seedDemo) parts.push('demo seed skipped: the store already holds data')
   if (config.tokenSource === 'generated') {
     parts.push(`operator token (generated, offline-demo, regenerated each boot): ${config.operatorToken}`)
   } else {

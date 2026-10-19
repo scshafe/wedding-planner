@@ -1,5 +1,7 @@
 import { type IdGenerator } from '@wedding-planner/shared'
 
+import { COLLECTIONS } from '../persistence/collections'
+import type { RecordStore } from '../persistence/record_store'
 import { type TenantContext } from '../tenant/tenant_context'
 import { TenantScopedRepository } from '../tenant/tenant_scoped_repository'
 import type { TenantLivenessCheck } from '../tenant/tenant_store'
@@ -33,7 +35,7 @@ import type { TenantLivenessCheck } from '../tenant/tenant_store'
  */
 
 /** A recorded inbound receipt: a ref the platform has successfully replied to (+ the platform reply id, audit). */
-interface InboundReceipt {
+export interface InboundReceipt {
   readonly tenant_id: string
   readonly provider_message_ref: string
   /** The platform-minted id used as the reply send's idempotency key (audit/reconciliation; never the provider ref). */
@@ -47,8 +49,14 @@ export class InboundReceiptLog {
   constructor(
     liveness: TenantLivenessCheck,
     private readonly ids: IdGenerator,
+    store?: RecordStore,
   ) {
-    this.#repo = new TenantScopedRepository<InboundReceipt>(liveness, (receipt) => receipt.provider_message_ref)
+    this.#repo = new TenantScopedRepository<InboundReceipt>(
+      liveness,
+      (receipt) => receipt.provider_message_ref,
+      COLLECTIONS.inboundReceipt,
+      store,
+    )
   }
 
   /** True iff this tenant has ALREADY SUCCESSFULLY REPLIED to `provider_message_ref` (a re-delivery → no-op). */

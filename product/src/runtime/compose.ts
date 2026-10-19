@@ -16,6 +16,8 @@ import { InboundReceiptLog } from '../messaging/inbound_receipt_log'
 import { MessagingService } from '../messaging/messaging_service'
 import { SimulatedMessagingAdapter } from '../messaging/simulated_messaging_adapter'
 import { OnboardingService } from '../onboarding/onboarding_service'
+import { InMemoryRecordStore } from '../persistence/in_memory_record_store'
+import type { RecordStore } from '../persistence/record_store'
 import { TenantContextResolver } from '../tenant/tenant_context'
 import { TenantStore } from '../tenant/tenant_store'
 import { ProductWebUi } from '../web/product_web_ui'
@@ -39,6 +41,12 @@ import { WeddingRepository } from '../wedding/wedding_repository'
  * themed HTML front door whose ONLY data path is `api.handle()`. Nothing here widens a boundary: the three
  * token namespaces, the disclosure mask, and tenant isolation are all inherited unchanged from the pieces.
  *
+ * Persistence (issue #8, ADR 0039): every store is built over ONE injected {@link RecordStore} — the entrypoint
+ * opens the durable SQLite store when `WP_DATABASE_PATH` is set; tests and the plain demo get an in-memory store
+ * — and `ProductApi` runs each request as one transaction of that store. A store constructed here without the
+ * shared `store` would silently stay in memory; the compose restart test writes through every store and reads it
+ * back from a recomposed surface over the same database, so that slip fails a test.
+ *
  * The demo seed (when `seedDemo`) is the launch-ready touch: it provisions and activates one tenant THROUGH
  * the real `OnboardingService` lifecycle driver — provision → activate — so the demo tenant traverses the
  * legal-transition guard and records real billing events, making it indistinguishable at the edge from any
@@ -46,7 +54,8 @@ import { WeddingRepository } from '../wedding/wedding_repository'
  * suspended / onboarding stay the byte-identical 404). It then seeds one wedding via
  * `WeddingRepository.create` against a resolver-minted context obtained AFTER activation. It deliberately
  * mints NO session — the first planner logs in via the public `/t/:slug/login` edge once the image is up, so
- * no session token is baked into boot state.
+ * no session token is baked into boot state. The seed runs ONLY into an empty store (no tenant yet): a restart
+ * over existing data keeps that data and seeds nothing, and `demo` is then undefined.
  *
  * related: system_clock.ts / random_id_generator.ts (the edge primitives the entrypoint injects),
  * onboarding_service.ts (the lifecycle driver the demo seed uses), product_web_ui.ts (the returned front door).
@@ -77,9 +86,14 @@ export interface ComposeProductSurfaceConfig {
    * champion throws here, aborting boot). Absent ⇒ the `/t/:slug/strategy` route 404s.
    */
   readonly championStrategy?: StrategyGenome
+  /**
+   * Issue #8: the persistence store every product store is built over (and the per-request transaction
+   * runner). The entrypoint injects the durable SQLite store; absent ⇒ a fresh in-memory store (tests, demo).
+   */
+  readonly store?: RecordStore
 }
 
-/** A handle to the seeded demo tenant — present only when `seedDemo` was true. */
+/** A handle to the demo tenant seeded by THIS composition — present only when the seed ran (empty store). */
 export interface DemoSeed {
   readonly slug: string
   readonly tenantId: string
@@ -95,7 +109,7 @@ export interface ComposedSurface {
   readonly themes: ThemeResolver
   /** Echoed back so the entrypoint can log provenance (NEVER an env-provided token — caller's concern). */
   readonly operatorToken: string
-  /** The demo tenant handle, or undefined when `seedDemo` was false (no fabricated handle). */
+  /** The demo tenant handle, or undefined when the seed did not run (`seedDemo` false, or the store had data). */
   readonly demo?: DemoSeed
   /**
    * Phase 18: the metered, margin-priced guest-messaging service, wired over the offline simulated provider
@@ -131,16 +145,18 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const { clock, ids, operatorToken } = config
   const seedDemo = config.seedDemo ?? true
   const demoSlug = config.demoSlug ?? 'demo'
+  const store = config.store ?? new InMemoryRecordStore()
 
   // The shared backbone: one tenant store the resolver, theme resolver, onboarding, and repo all read.
-  const tenants = new TenantStore(clock, ids)
+  const tenants = new TenantStore(clock, ids, store)
   const resolver = new TenantContextResolver(tenants)
-  const sessionStore = new SessionStore(ids)
+  // Sessions persist, so they expire (7 days) and lapsed ones are swept at boot (below).
+  const sessionStore = new SessionStore(ids, store, { clock })
   const operators = new OperatorCredentialStore(ids, [operatorToken])
   const webhookCredentials = new ProviderWebhookCredentialStore(ids, [config.providerWebhookToken])
-  const billing = new BillingLedger(clock, ids)
+  const billing = new BillingLedger(clock, ids, store)
   const onboarding = new OnboardingService(tenants, billing)
-  const weddings = new WeddingRepository(tenants, clock, ids)
+  const weddings = new WeddingRepository(tenants, clock, ids, store)
   const authorizer = new WeddingAuthorizer()
 
   // The guest-messaging provider boundary (Phase 18): the offline simulated adapter is a deterministic
@@ -148,26 +164,26 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   // breaching the determinism rail. The service meters accepted sends and bills usage_charge into the SAME
   // ledger. No HTTP route yet (the guest-channel edge is the next rung); exposed on the surface for tests.
   const messagingAdapter = new SimulatedMessagingAdapter(clock, ids)
-  const messaging = new MessagingService(messagingAdapter, tenants, billing, ids)
+  const messaging = new MessagingService(messagingAdapter, tenants, billing, ids, store)
 
   // The guest inbound channel (Phase 19): a guest texts in over the provider webhook and the deterministic
   // responder answers from the bound wedding, metered through the service. The registry + receipt log inherit
   // tenant isolation (they read the same TenantStore liveness); the responder is pure. No loop import.
-  const guestRegistry = new GuestRegistry(tenants)
+  const guestRegistry = new GuestRegistry(tenants, store)
   const guestAuthorizer = new GuestAuthorizer()
-  const inboundReceipts = new InboundReceiptLog(tenants, ids)
+  const inboundReceipts = new InboundReceiptLog(tenants, ids, store)
   const guestResponder = new DeterministicGuestQaResponder()
   // The escalation inbox (Phase 26): an `escalated` question is recorded here and read by the couple (their
   // wedding) / planner (whole tenant). ONE instance — the inbound capture writes it, the read surface reads it.
-  const escalations = new EscalationLog(tenants, ids)
+  const escalations = new EscalationLog(tenants, ids, store)
   // The escalation-resolution log (Phase 27): the append-only handled-record (resolved/dismissed) keyed by
   // escalation_id, scoped exactly like the escalations. ONE instance — the resolve mutation writes it, the read
   // surface returns it alongside the escalations. Stamps resolved_at from the same injected clock.
-  const resolutions = new EscalationResolutionLog(tenants, ids, clock)
+  const resolutions = new EscalationResolutionLog(tenants, ids, clock, store)
   // The reply THREAD (Phase 34, multi-turn): each console reply appends one operator message (keyed by
   // (escalation_id, seq)) and sends a metered guest reply WITHOUT resolving. ONE instance — the reply mutation
   // appends, the read surface returns it as the third scoped array. Stamps reply_id/sent_at from injected ids/clock.
-  const replies = new EscalationReplyLog(tenants, ids, clock)
+  const replies = new EscalationReplyLog(tenants, ids, clock, store)
 
   const api = new ProductApi({
     resolver,
@@ -205,6 +221,8 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     // management-capability authorizer for the planner-only gate. Always wired (a compose e2e pins reachability).
     billing: { ledger: billing, tenants, authorizer: guestAuthorizer },
     ...(config.championStrategy === undefined ? {} : { championStrategy: config.championStrategy }),
+    // One transaction per request over the shared store (issue #8).
+    transactions: store,
   })
   const themes = new ThemeResolver(tenants)
   // The web UI gets the SessionStore typed as the narrow CsrfGuard (issue/verify only — not login/resolve),
@@ -212,7 +230,9 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const ui = new ProductWebUi({ api, themes, csrf: sessionStore })
 
   let demo: DemoSeed | undefined
-  if (seedDemo) {
+  // Seed only into an empty store: a restart over existing data keeps it (issue #8). One transaction, so a
+  // failed seed leaves no half-provisioned tenant behind.
+  if (seedDemo && tenants.isEmpty()) demo = store.transaction(() => {
     // Provision → activate THROUGH the real lifecycle driver (not a direct store.create), so the demo
     // tenant is a faithful active tenant: it passes the legal-transition guard and records billing events.
     const tenant = onboarding.provision({
@@ -236,13 +256,15 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
       wedding_id: wedding.wedding_id,
       guest_id: 'guest_demo_1',
     })
-    demo = {
+    return {
       slug: demoSlug,
       tenantId: tenant.tenant_id,
       weddingId: wedding.wedding_id,
       guestRecipientRef,
     }
-  }
+  })
+
+  store.transaction(() => sessionStore.sweepExpired())
 
   return { ui, api, themes, operatorToken, demo, messaging, escalations, resolutions }
 }

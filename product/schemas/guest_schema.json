@@ -8,8 +8,8 @@
   "required": ["tenant_id", "recipient_ref", "wedding_id", "guest_id"],
   "properties": {
     "tenant_id": { "type": "string", "minLength": 1, "description": "The owning tenant. In the tenant-scoped repository this field is ONLY ever compared to the context's tenant_id (to veto a cross-tenant write); it never selects the partition (the context does). A payload tenant_id different from the context is rejected (PRODUCT.CROSS_TENANT_WRITE)." },
-    "recipient_ref": { "type": "string", "minLength": 1, "description": "The opaque sender handle — the lookup KEY within the tenant partition (the inbound from_ref). Vendor-agnostic: NO carrier semantics are parsed from it (no SID/E.164/segments), matching the messaging port's opaque-ref discipline." },
-    "wedding_id": { "type": "string", "minLength": 1, "description": "The single wedding this sender is bound to — the segmentation scope for every reply. Verified to exist within the tenant at registration time (a trusted planner owns the workspace; this is not an existence oracle)." },
-    "guest_id": { "type": "string", "minLength": 1, "description": "The guest's stable identifier within the wedding (for Q&A correlation); never a routing key." }
+    "recipient_ref": { "type": "string", "minLength": 1, "maxLength": 256, "description": "The opaque sender handle — the lookup KEY within the tenant partition (the inbound from_ref). Vendor-agnostic: NO carrier semantics are parsed from it (no SID/E.164/segments), matching the messaging port's opaque-ref discipline." },
+    "wedding_id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "The single wedding this sender is bound to — the segmentation scope for every reply. Verified to exist within the tenant at registration time (a trusted planner owns the workspace; this is not an existence oracle)." },
+    "guest_id": { "type": "string", "minLength": 1, "maxLength": 256, "description": "The guest's stable identifier within the wedding (for Q&A correlation); never a routing key." }
   }
 }
