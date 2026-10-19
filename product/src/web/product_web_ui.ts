@@ -9,6 +9,7 @@ import { splitPath } from '../http/path'
 import type { ProductApi } from '../http/product_api'
 import type { StrategyGuidance } from '../strategy/strategy_guidance'
 import { WEDDING_LOGISTICS_FIELDS } from '../wedding/wedding_repository'
+import { isFeedbackPage } from '../feedback/feedback_service'
 import { ProductError } from '../product_error'
 import { readCookie } from './cookies'
 import { normalizeSlugForRoute } from './html'
@@ -633,8 +634,8 @@ export class ProductWebUi {
     const theme = this.#themes.resolveActiveTheme(slug)
     const csrf = this.#csrf.issueCsrf(token)
     if (theme === undefined || csrf === undefined) return theme === undefined ? GENERIC_404 : ERROR_500
-    const page = (queryParam(req.path, 'page') ?? '').slice(0, 120)
-    return htmlResult(status, renderFeedback(theme, slug, csrf, page, notice))
+    const raw = queryParam(req.path, 'page') ?? ''
+    return htmlResult(status, renderFeedback(theme, slug, csrf, isFeedbackPage(raw) ? raw : undefined, notice))
   }
 
   /** POST /t/:slug/feedback/send (issue #12) — CSRF first, then the JSON submit; a thank-you page or the form again. */

@@ -1,7 +1,17 @@
 import { ManualClock, SequentialIdGenerator } from '@wedding-planner/shared'
 import { describe, expect, it } from 'vitest'
 
-import { type ApiRequest, composeProductSurface, FEEDBACK_LIMITS, type HttpResult } from '@wedding-planner/product'
+import {
+  type ApiRequest,
+  composeProductSurface,
+  FEEDBACK_LIMITS,
+  FeedbackService,
+  type HttpResult,
+  RateLimiter,
+  SessionStore,
+  TenantContextResolver,
+  TenantStore,
+} from '@wedding-planner/product'
 
 /**
  * Issue #12 — "Send feedback" from inside the product: a footer link on signed-in pages, a CSRF-protected,
@@ -50,7 +60,7 @@ describe('POST /t/:slug/feedback — signed-in planners and couples', () => {
   it('stores what was typed with the tenant, role and page — and nothing else', () => {
     const w = setup()
     const couple = w.login({ role: 'couple', wedding_id: w.weddingId })
-    const res = w.json('POST', '/t/demo/feedback', couple, { trying: ' add a guest ', happened: 'the button did nothing', page: 'Guests' })
+    const res = w.json('POST', '/t/demo/feedback', couple, { trying: ' add a guest ', happened: 'the button did nothing', page: 'guests' })
     expect(res.status).toBe(201)
     const list = (w.json('GET', '/admin/feedback', OP).body as { feedback: Record<string, unknown>[] }).feedback
     expect(list).toEqual([
@@ -61,7 +71,7 @@ describe('POST /t/:slug/feedback — signed-in planners and couples', () => {
         role: 'couple',
         trying: 'add a guest',
         happened: 'the button did nothing',
-        page: 'Guests',
+        page: 'guests',
         created_at: '2027-06-01T00:00:00.000Z',
       },
     ])
@@ -76,7 +86,8 @@ describe('POST /t/:slug/feedback — signed-in planners and couples', () => {
     expect(w.json('POST', '/t/demo/feedback', undefined, { trying: 'x', happened: 'y' })).toEqual({ status: 401, body: { error: 'unauthorized' } })
     expect(w.json('POST', '/t/demo/feedback', planner, { trying: '   ', happened: 'y' }).status).toBe(400)
     expect(w.json('POST', '/t/demo/feedback', planner, { trying: 'x', happened: 'y'.repeat(FEEDBACK_LIMITS.happened + 1) }).status).toBe(400)
-    expect(w.json('POST', '/t/demo/feedback', planner, { trying: 'x', happened: 'y', page: 'p'.repeat(FEEDBACK_LIMITS.page + 1) }).status).toBe(400)
+    // The page is a key from a closed list, never free text (nor a page title).
+    expect(w.json('POST', '/t/demo/feedback', planner, { trying: 'x', happened: 'y', page: 'Jo & Lee' }).status).toBe(400)
     expect(w.json('GET', '/t/demo/feedback', planner).status).toBe(405)
     expect((w.json('GET', '/admin/feedback', OP).body as { feedback: unknown[] }).feedback).toEqual([])
   })
@@ -102,22 +113,41 @@ describe('POST /t/:slug/feedback — signed-in planners and couples', () => {
 })
 
 describe('the feedback form in the browser', () => {
-  it('signed-in pages carry the footer link with the page as context; the sign-in page does not', () => {
+  it('signed-in pages carry the footer link with a fixed page key; the sign-in page does not', () => {
     const w = setup()
     const cookie = `wp_session=${w.login({ role: 'planner' })}`
-    expect(w.ui.handle(get('/t/demo?view=guests', cookie)).body).toContain('href="/t/demo/feedback?page=Guests"')
+    expect(w.ui.handle(get('/t/demo?view=guests', cookie)).body).toContain('href="/t/demo/feedback?page=guests"')
+    // A wedding page's title is the couple's names: the link names the page kind, never the title.
+    const detail = w.ui.handle(get(`/t/demo?wedding=${w.weddingId}`, cookie)).body
+    expect(detail).toContain('href="/t/demo/feedback?page=wedding"')
+    expect(detail).not.toMatch(/feedback\?page=[^"]*Alex/)
     expect(w.ui.handle(get('/t/demo/login')).body).not.toContain('Send feedback')
+  })
+
+  it('keeps feedback per tenant: one workspace sending a lot never pushes out another\'s', () => {
+    const clock = new ManualClock('2027-06-01T00:00:00.000Z')
+    const tenants = new TenantStore(clock, new SequentialIdGenerator('t'))
+    const theme = { brand_name: 'B', primary_color_hex: '#111111', accent_color_hex: '#222222', logo_ref: 'l' }
+    for (const slug of ['alpha', 'beta']) tenants.create({ slug, display_name: slug, theme, plan_tier: 'solo', lifecycle_status: 'active' })
+    const resolver = new TenantContextResolver(tenants)
+    const sessions = new SessionStore(new SequentialIdGenerator('s'))
+    const feedback = new FeedbackService(clock, new SequentialIdGenerator('f'), new RateLimiter(clock), undefined, 2)
+    const alpha = resolver.resolveBySlug('alpha')
+    const beta = resolver.resolveBySlug('beta')
+    feedback.submit(alpha, sessions.login(alpha, { role: 'planner' }).principal, { trying: 'alpha keeps this', happened: 'h' })
+    for (const n of [1, 2, 3, 4]) feedback.submit(beta, sessions.login(beta, { role: 'planner' }).principal, { trying: `beta ${n}`, happened: 'h' })
+    expect(feedback.recent(10).map((f) => f.trying)).toEqual(['beta 4', 'beta 3', 'alpha keeps this'])
   })
 
   it('sends through a CSRF-checked form and thanks the sender; a forged token sends nothing', () => {
     const w = setup()
     const cookie = `wp_session=${w.login({ role: 'planner' })}`
-    const page = w.ui.handle(get('/t/demo/feedback?page=Guests', cookie))
+    const page = w.ui.handle(get('/t/demo/feedback?page=guests', cookie))
     expect(page.status).toBe(200)
-    expect(page.body).toContain('value="Guests"')
+    expect(page.body).toContain('<option value="guests" selected>Guests</option>')
     const forged = w.ui.handle(form('/t/demo/feedback/send', { _csrf: 'forged', trying: 'x', happened: 'y' }, cookie))
     expect(forged.status).toBe(403)
-    const sent = w.ui.handle(form('/t/demo/feedback/send', { _csrf: csrfOf(page), trying: 'x', happened: 'y', page: 'Guests' }, cookie))
+    const sent = w.ui.handle(form('/t/demo/feedback/send', { _csrf: csrfOf(page), trying: 'x', happened: 'y', page: 'guests' }, cookie))
     expect(sent.status).toBe(200)
     expect(sent.body).toContain('Your feedback was sent.')
     expect((w.json('GET', '/admin/feedback', OP).body as { feedback: unknown[] }).feedback).toHaveLength(1)

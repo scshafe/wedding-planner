@@ -1,7 +1,7 @@
 import type { Tenant } from '@wedding-planner/shared'
 
 import type { OutboxMessage } from '../email/simulated_email_adapter'
-import type { FeedbackSubmission } from '../feedback/feedback_service'
+import { FEEDBACK_PAGES, type FeedbackSubmission } from '../feedback/feedback_service'
 import { html, render, type SafeHtml } from './html'
 
 /**
@@ -176,7 +176,8 @@ export function renderFeedbackList(submissions: readonly FeedbackSubmission[], c
       ? html`<div class="card"><p class="note">No feedback yet.</p></div>`
       : submissions.map(
           (f) => html`<div class="card">
-  <div class="meta">${f.tenant_slug} · ${f.role} · ${f.page ?? 'no page'} · ${f.created_at}</div>
+  <div class="meta">${f.tenant_slug} · ${f.role} · ${f.created_at}</div>
+  <div class="meta">Page: ${f.page === undefined ? 'not given' : FEEDBACK_PAGES[f.page]}</div>
   <p><strong>Trying to:</strong></p>
   <pre>${f.trying}</pre>
   <p><strong>What happened:</strong></p>
@@ -187,7 +188,7 @@ export function renderFeedbackList(submissions: readonly FeedbackSubmission[], c
     'Feedback',
     html`<h1>Feedback</h1>
 <p class="note">What planners and couples sent from inside the product, newest first (the most recent ${String(submissions.length)}).
-Each entry holds only what the person typed, the page they came from, their workspace and their role.</p>
+Each entry holds only what the person typed, which page they chose, their workspace and their role.</p>
 ${list}`,
     csrf,
   )

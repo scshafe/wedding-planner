@@ -13,21 +13,46 @@ import type { TenantContext } from '../tenant/tenant_context'
  *
  * A signed-in planner or couple tells us what they were trying to do and what happened, optionally naming the page
  * they came from. A submission records exactly that, plus the tenant (id and slug), the submitter's ROLE and the time
- * — never who they are, and never anything copied from the workspace (no guest data, no wedding details): only what
- * the person typed. Text is trimmed and length-limited; submissions are rate-limited per principal and per tenant.
+ * — no user id, and nothing copied from the workspace (no guest data, no wedding details): only what the person
+ * typed. The page is a KEY from the closed {@link FEEDBACK_PAGES} list, never a page title or free text (a wedding
+ * page's title is the couple's names). Text is trimmed and length-limited; submissions are rate-limited per
+ * principal and per tenant.
  *
  * Feedback is a PLATFORM log the operator reads at `/admin/feedback` (global partition, tenant as a field), bounded
- * at {@link FEEDBACK_RETENTION}. How it leaves production to reach the agents is an owner decision (the repository
+ * PER TENANT at {@link FEEDBACK_RETENTION} — so one workspace (say, scripted sessions on the demo tenant) can never
+ * push another workspace's feedback out. How it leaves production to reach the agents is an owner decision (the repository
  * and its issues are public; the agents cannot reach production): until then the operator page is the only reader.
  *
  * related: rate_limiter.ts, product_api.ts (POST /t/:slug/feedback, GET /admin/feedback), operator_console.ts.
  */
 
 /** Length limits (characters, after trimming). */
-export const FEEDBACK_LIMITS = Object.freeze({ trying: 1000, happened: 4000, page: 120 })
+export const FEEDBACK_LIMITS = Object.freeze({ trying: 1000, happened: 4000 })
 
-/** How many submissions are kept (the oldest beyond this are deleted). */
-export const FEEDBACK_RETENTION = 5000
+/** How many submissions are kept per tenant (that tenant's oldest beyond this are deleted). */
+export const FEEDBACK_RETENTION = 500
+
+/** The pages a submission may name: fixed keys and their labels (the footer link passes a key). */
+export const FEEDBACK_PAGES = Object.freeze({
+  home: 'Home',
+  weddings: 'Weddings',
+  wedding: 'A wedding',
+  guests: 'Guests',
+  questions: 'Guest questions',
+  conversation: 'A guest conversation',
+  billing: 'Billing',
+  team: 'Team',
+  strategy: 'Planning strategy',
+  other: 'Somewhere else',
+})
+
+/** A page key. */
+export type FeedbackPage = keyof typeof FEEDBACK_PAGES
+
+/** Whether a value is a page key. */
+export function isFeedbackPage(value: string): value is FeedbackPage {
+  return Object.prototype.hasOwnProperty.call(FEEDBACK_PAGES, value)
+}
 
 /** Submission rate limits. */
 export const FEEDBACK_RATE_LIMITS = Object.freeze({
@@ -42,7 +67,7 @@ export interface FeedbackSubmission {
   readonly role: Principal['role']
   readonly trying: string
   readonly happened: string
-  readonly page?: string
+  readonly page?: FeedbackPage
   readonly created_at: string
 }
 
@@ -69,13 +94,13 @@ export class FeedbackService {
   submit(context: TenantContext, principal: Principal, input: SubmitFeedbackInput): FeedbackSubmission {
     const trying = input.trying.trim()
     const happened = input.happened.trim()
-    const page = input.page?.trim()
+    const page = input.page === undefined || input.page.length === 0 ? undefined : input.page
     if (
       trying.length === 0 ||
       trying.length > FEEDBACK_LIMITS.trying ||
       happened.length === 0 ||
       happened.length > FEEDBACK_LIMITS.happened ||
-      (page !== undefined && page.length > FEEDBACK_LIMITS.page)
+      (page !== undefined && !isFeedbackPage(page))
     ) {
       throw new ProductError('PRODUCT.BAD_REQUEST', 'Feedback must say what you were doing and what happened, within the length limits.', {})
     }
@@ -92,12 +117,12 @@ export class FeedbackService {
       role: principal.role,
       trying,
       happened,
-      ...(page === undefined || page.length === 0 ? {} : { page }),
+      ...(page === undefined ? {} : { page }),
       created_at: this.clock.now(),
     }
     this.#store.put(COLLECTIONS.feedback, GLOBAL_PARTITION, submission.feedback_id, submission)
-    const all = this.#store.list(COLLECTIONS.feedback, GLOBAL_PARTITION)
-    for (const old of all.slice(0, Math.max(0, all.length - this.retention))) {
+    const ofTenant = this.#store.list(COLLECTIONS.feedback, GLOBAL_PARTITION).filter((f) => f.tenant_id === context.tenant_id)
+    for (const old of ofTenant.slice(0, Math.max(0, ofTenant.length - this.retention))) {
       this.#store.delete(COLLECTIONS.feedback, GLOBAL_PARTITION, old.feedback_id)
     }
     return submission

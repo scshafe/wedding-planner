@@ -2,6 +2,7 @@ import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Ten
 
 import type { TeamView } from '../accounts/membership_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
+import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
 import type { StrategyGuidance } from '../strategy/strategy_guidance'
 import { html, render, type SafeHtml, safeColor } from './html'
@@ -45,10 +46,11 @@ const STYLE = html`<style>
   </style>`
 
 /**
- * Wrap themed content in the full document, injecting the validated brand colors via custom properties. `signedIn`
- * pages (issue #12) carry a footer with the "Send feedback" link, which passes the page's title as context.
+ * Wrap themed content in the full document, injecting the validated brand colors via custom properties. Signed-in
+ * pages (issue #12) carry a footer with the "Send feedback" link, which names the page by a FIXED key from a closed
+ * list (never its title: a wedding page's title is the couple's names, which must not be copied into feedback).
  */
-function themedShell(theme: Tenant['theme'], slug: string, title: string, content: SafeHtml, signedIn = false): string {
+function themedShell(theme: Tenant['theme'], slug: string, title: string, content: SafeHtml, feedbackPage?: FeedbackPage): string {
   const brand = safeColor(theme.primary_color_hex)
   const accent = safeColor(theme.accent_color_hex)
   const initial = theme.brand_name.slice(0, 1)
@@ -75,8 +77,8 @@ ${STYLE}
   ${content}
 </main>
 ${
-  signedIn
-    ? html`<footer style="max-width:56rem;margin:0 auto;padding:0 1.5rem 1.5rem" class="note"><a href="/t/${slug}/feedback?page=${encodeURIComponent(title)}">Send feedback</a> — tell us what is wrong or missing.</footer>`
+  feedbackPage !== undefined
+    ? html`<footer style="max-width:56rem;margin:0 auto;padding:0 1.5rem 1.5rem" class="note"><a href="/t/${slug}/feedback?page=${feedbackPage}">Send feedback</a> — tell us what is wrong or missing.</footer>`
     : html``
 }
 </body>
@@ -84,8 +86,8 @@ ${
 }
 
 /** The shell of a page only a signed-in planner or couple reaches: the themed shell plus the feedback footer. */
-function signedInShell(theme: Tenant['theme'], slug: string, title: string, content: SafeHtml): string {
-  return themedShell(theme, slug, title, content, true)
+function signedInShell(theme: Tenant['theme'], slug: string, title: string, content: SafeHtml, page: FeedbackPage): string {
+  return themedShell(theme, slug, title, content, page)
 }
 
 /** The generic landing page — tenant-independent, no theme (the front door at `/`). */
@@ -351,6 +353,7 @@ export function renderConsole(
       <p><button type="submit">Create wedding</button></p>
     </form>
   </div>`,
+    'weddings',
   )
 }
 
@@ -409,6 +412,7 @@ export function renderGuests(
   <div class="card"><h3>Register a guest</h3>${warning}${addForm}</div>
   <h3>Registered guests</h3>
   ${list}`,
+    'guests',
   )
 }
 
@@ -525,6 +529,7 @@ export function renderHome(
   </div>`
   }
   <p><a href="/t/${slug}/strategy">View the planning strategy →</a></p>`,
+    'home',
   )
 }
 
@@ -595,6 +600,7 @@ export function renderTeam(theme: Tenant['theme'], slug: string, team: TeamView,
   ${members}
   <h3>Pending invitations</h3>
   ${invitations}`,
+    'team',
   )
 }
 
@@ -786,6 +792,7 @@ export function renderConversation(
     <p class="note">The full history of this guest question — every message and status change, in order. <a href="/t/${slug}?wedding=${escalation.wedding_id}">Set the missing details →</a></p>
   </div>
   ${cards}`,
+    'conversation',
   )
 }
 
@@ -807,6 +814,7 @@ export function renderConversationNotFound(theme: Tenant['theme'], slug: string)
     <h2>Conversation</h2>
     <p class="note">We couldn't find that conversation.</p>
   </div>`,
+    'conversation',
   )
 }
 
@@ -911,6 +919,7 @@ export function renderEscalations(
   </div>
   ${openBody}
   ${handledBody}`,
+    'questions',
   )
 }
 
@@ -989,6 +998,7 @@ export function renderDetail(
     </form>
   </div>
   ${inviteCard}`,
+    'wedding',
   )
 }
 
@@ -1016,6 +1026,7 @@ export function renderStrategy(theme: Tenant['theme'], slug: string, guidance: S
   </div>
   ${knobs}
   <p class="note">${guidance.disclaimer}</p>`,
+    'strategy',
   )
 }
 
@@ -1090,6 +1101,7 @@ export function renderBilling(
     <p class="note">Every charge and payment on your account, most recent first.</p>
     ${activityBody}
   </div>`,
+    'billing',
   )
 }
 
@@ -1113,9 +1125,14 @@ export function renderFeedback(
   theme: Tenant['theme'],
   slug: string,
   csrfToken: string,
-  page: string,
+  page: FeedbackPage | undefined,
   notice?: 'invalid' | 'rate_limited',
 ): string {
+  const options = (Object.keys(FEEDBACK_PAGES) as FeedbackPage[]).map((key) =>
+    key === page
+      ? html`<option value="${key}" selected>${FEEDBACK_PAGES[key]}</option>`
+      : html`<option value="${key}">${FEEDBACK_PAGES[key]}</option>`,
+  )
   const warning =
     notice === 'invalid'
       ? html`<p class="note" style="color:#b00">Please fill in both boxes (up to 1,000 and 4,000 characters).</p>`
@@ -1137,11 +1154,12 @@ export function renderFeedback(
       <textarea id="trying" name="trying" rows="3" maxlength="1000" required style="width:100%"></textarea>
       <label for="happened">What happened?</label>
       <textarea id="happened" name="happened" rows="5" maxlength="4000" required style="width:100%"></textarea>
-      <label for="page">Page <span class="note">(optional)</span></label>
-      <input id="page" name="page" type="text" maxlength="120" value="${page}">
+      <label for="page">Which page were you on?</label>
+      <select id="page" name="page"><option value="">(not sure)</option>${options}</select>
       <p><button type="submit">Send</button></p>
     </form>
   </div>`,
+    'other',
   )
 }
 
@@ -1152,6 +1170,7 @@ export function renderFeedbackThanks(theme: Tenant['theme'], slug: string): stri
     slug,
     'Thank you',
     html`<div class="card"><h2>Thank you</h2><p>Your feedback was sent.</p><p><a href="/t/${slug}">← Back to your workspace</a></p></div>`,
+    'other',
   )
 }
 
@@ -1162,6 +1181,7 @@ export function renderForbidden(theme: Tenant['theme'], slug: string): string {
     slug,
     'Not allowed',
     html`<div class="card"><h2>Not allowed</h2><p class="note">Your role can't perform that action here.</p></div>`,
+    'other',
   )
 }
 

@@ -20,24 +20,30 @@ consumer.
 
 - **The link:**
   - Every page only a signed-in planner or couple reaches (`signedInShell`) carries a footer link
-    `/t/<slug>/feedback?page=<page title>`.
-  - The page title is the context, not a URL with ids in it.
+    `/t/<slug>/feedback?page=<key>`. The key comes from the closed list `FEEDBACK_PAGES` (home, weddings, wedding,
+    guests, questions, conversation, billing, team, strategy, other).
+  - It is never the page title. A wedding page's title is the couple's names, and the security review caught
+    those being copied into stored feedback.
   - Sign-in, password and invitation pages have no such link.
 - **The form** (`/t/<slug>/feedback`) asks "what were you trying to do?" and "what happened?", plus an optional page
-  field prefilled from the link.
+  select from the same closed list, preselected from the link. The server refuses any other page value.
   - It checks the per-session CSRF token. The weddings read gates the page (both roles may read it), so an
     unauthenticated visit gets the sign-in page.
   - It posts to `/t/<slug>/feedback/send`, which calls the JSON `POST /t/<slug>/feedback`.
 - **What is stored** (`FeedbackService`):
   - what the person typed, trimmed (at most 1,000 / 4,000 / 120 characters);
   - the tenant id and slug, the submitter's role and the time.
-  - Not who they are (no principal or user id) and nothing copied from the workspace: no guest data, no wedding
-    details. The issue asks for "tenant, role and page", and that is all that is kept.
+  - No principal or user id, and nothing copied from the workspace: no guest data, no wedding details. The issue
+    asks for "tenant, role and page", and that is all that is kept.
+  - Tenant and role together can still point to one person, in a workspace with a single planner or couple. That
+    matters for the owner's export decision, along with prompt injection: feedback text is untrusted.
 - **Rate limits:** 10 per person per hour and 100 per workspace per hour, on the shared in-process limiter. A
   rejected submission (empty, too long) does not count.
 - **Where it lives:**
   - Feedback is a platform log in the global partition, with the tenant as a field, like the outbox.
-  - It is bounded at the newest 5,000.
+  - It is bounded per tenant at the newest 500. With the demo tenant's role picker open to anyone on the tailnet
+    (each login is a fresh principal), a global bound would let scripted demo submissions push out every real
+    workspace's feedback.
   - The operator reads it at `GET /admin/feedback`: JSON with the credential, or the console page in a browser.
     Text is escaped and shown in `<pre>`.
 
