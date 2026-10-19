@@ -84,10 +84,11 @@ describe.each(ADAPTERS)('RecordStore contract (%s)', (_adapter, makeStore) => {
   it('reads are fresh copies: mutating a returned record never changes the store', () => {
     const store = makeStore()
     store.put(NOTES, 'p', 'a', { id: 'a', text: 'original', tags: ['t'] })
-    const read = store.get(NOTES, 'p', 'a') as { text: string; tags: string[] }
+    // Cast away readonly to try what a careless caller might do.
+    const read = store.get(NOTES, 'p', 'a') as unknown as { text: string; tags: string[] }
     read.text = 'mutated'
     read.tags.push('extra')
-    const listed = store.list(NOTES, 'p') as { text: string }[]
+    const listed = store.list(NOTES, 'p') as unknown as { text: string }[]
     ;(listed[0] as { text: string }).text = 'mutated too'
     expect(store.get(NOTES, 'p', 'a')).toEqual({ id: 'a', text: 'original', tags: ['t'] })
   })
