@@ -32,11 +32,17 @@ way to tell which build was running except through the deploy tooling.
 
 - When a request ends in a 500, `ProductApi.handle` (and the web layer's catch) records it in `ErrorLog`.
 - An entry holds the `DOMAIN.FAILURE_MODE` code (a `WeddingPlannerError`'s code, or `UNHANDLED.<ErrorName>`), the
-  error's class name, the top five stack frames (file:line locations), the method, the route pattern, the tenant
-  slug and the time.
+  error's class name (identifier-shaped, else `Unknown`), the top five stack frames, the method, the route pattern,
+  the tenant slug and the time.
 - It **never** holds the message. Messages embed data: a JSON parse error quotes its input, and a storage error
-  can quote a stored record. A test drives a fault whose message contains an email and a phone number, and checks
-  that neither is recorded.
+  can quote a stored record.
+- V8 writes the message, every line of it, at the head of `error.stack`. So frames are taken only after those
+  header lines, and only lines shaped like a code location (`at fn (/path:line:col)`) are kept. The security
+  review showed that a multi-line message with a line beginning "at " would otherwise pass for a frame.
+- Tests drive faults whose messages contain an email, a phone ref and a reset token, on several lines, and check
+  that none is recorded.
+- A `PERSISTENCE.STORAGE_FAILED` is not recorded durably. The store is what failed, and writing to it again would
+  only block on busy timeouts or fail. Such requests still show as 500s on their route in the request log.
 - Recording happens in the catch, after the request's transaction has rolled back (ADR 0039), so the entry
   survives the failed request. It never throws: if the store is what failed, the entry is lost rather than the
   process.
@@ -56,8 +62,11 @@ way to tell which build was running except through the deploy tooling.
 
 ## Consequences
 
-- The host's container logs now hold one line per request, readable with `docker logs wedding-planner` on the host.
-  They carry routes and statuses, not people.
+- The host's container logs now hold one line per request (the container healthcheck included, every 10 s),
+  readable with `docker logs wedding-planner` on the host. They carry routes and statuses, not people.
+- The stack validator does not allow a `logging:` key in compose, so rotating those logs is the host Docker
+  daemon's job. That is an owner check.
+- `/healthz` tells any tailnet client the exact deployed commit of this public repository. That is by design.
 - `/admin/errors` gives the owner the code and code location of each server fault. Diagnosing one may still need
   reproducing it, because the inputs are deliberately not kept.
 - Not done: log shipping, metrics and alerting (production operations, M5), and request ids correlating a log line

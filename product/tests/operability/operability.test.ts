@@ -9,11 +9,13 @@ import {
   createProductWebUiServer,
   ErrorLog,
   errorCode,
+  errorName,
   formatRequestLog,
   InMemoryRecordStore,
   logMethod,
   type RecordStore,
   routePattern,
+  stackFrames,
 } from '@wedding-planner/product'
 
 import { COLLECTIONS } from '../../src/persistence/collections'
@@ -131,6 +133,31 @@ describe('server errors — captured by code, never by message', () => {
     expect(errorCode(new WeddingPlannerError('PERSISTENCE.STORAGE_FAILED', 'x'))).toBe('PERSISTENCE.STORAGE_FAILED')
     expect(errorCode(new TypeError('boom'))).toBe('UNHANDLED.TypeError')
     expect(errorCode('a string')).toBe('UNHANDLED.string')
+  })
+
+  it('frames never carry a line of the message, even a message line that starts with "at "', () => {
+    const error = new SyntaxError('Unexpected token in "x\n    at jo@couple.test sms:+15550100 reset?token=abc123"\nat /etc/passwd:1:1')
+    const frames = stackFrames(error)
+    expect(frames.length).toBeGreaterThan(0)
+    for (const frame of frames) {
+      expect(frame).toMatch(/^at .*:\d+:\d+\)?$/)
+      expect(frame).not.toContain('jo@couple.test')
+      expect(frame).not.toContain('/etc/passwd')
+    }
+    // The name is filtered like the code.
+    const named = new Error('x')
+    named.name = 'jo@couple.test'
+    expect(errorName(named)).toBe('Unknown')
+    const log = new ErrorLog(new ManualClock('2027-06-01T00:00:00.000Z'), new SequentialIdGenerator('n'))
+    log.record(named, { method: 'GET', path: '/healthz' })
+    log.record(error, { method: 'GET', path: '/healthz' })
+    expect(JSON.stringify(log.recent(5))).not.toMatch(/jo@couple\.test|passwd|abc123/)
+  })
+
+  it('a storage failure is not written back to the failing store', () => {
+    const log = new ErrorLog(new ManualClock('2027-06-01T00:00:00.000Z'), new SequentialIdGenerator('s'))
+    log.record(new WeddingPlannerError('PERSISTENCE.STORAGE_FAILED', 'disk full'), { method: 'POST', path: '/t/demo/weddings' })
+    expect(log.recent(5)).toEqual([])
   })
 
   it('a 500 is recorded with code, location and route — and nothing from the message or request', () => {
