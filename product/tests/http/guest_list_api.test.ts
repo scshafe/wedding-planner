@@ -85,6 +85,20 @@ describe('/t/:slug/weddings/:id/{guest-list,households,guests}', () => {
     expect(w.call('PUT', `/t/demo/weddings/${w.theirs}/households/${theirsHousehold}`, w.planner, { name: 'Renamed', address: '2 Elm' }).status).toBe(200)
   })
 
+  it('POST …/guest-list/import previews, then imports; a foreign wedding is the 404 and a bad body a 400', () => {
+    const w = setup()
+    const csv = 'household,first_name\nRivera,Ana\nRivera,Luis\n'
+    const preview = w.call('POST', `/t/demo/weddings/${w.ours}/guest-list/import`, w.couple, { csv })
+    expect(preview).toEqual({ status: 200, body: { applied: false, problems: [], creates: 2, updates: 0, households_created: 1 } })
+    expect(w.call('POST', `/t/demo/weddings/${w.ours}/guest-list/import`, w.couple, { csv, commit: 'yes' }).body).toMatchObject({ applied: false })
+    expect(w.call('POST', `/t/demo/weddings/${w.ours}/guest-list/import`, w.couple, { csv, commit: true }).body).toMatchObject({ applied: true })
+    expect((w.call('GET', `/t/demo/weddings/${w.ours}/guest-list`, w.couple).body as { counts: { guests: number } }).counts.guests).toBe(2)
+    expect(w.call('POST', `/t/demo/weddings/${w.theirs}/guest-list/import`, w.couple, { csv, commit: true })).toEqual(NOT_FOUND)
+    expect(w.call('POST', `/t/demo/weddings/${w.ours}/guest-list/import`, w.couple, { csv: 7 }).status).toBe(400)
+    expect(w.call('POST', `/t/demo/weddings/${w.ours}/guest-list/import`, w.couple, { csv: 'household,first_name\n"open' }).body).toMatchObject({ applied: false, problems: [{ row: 1 }] })
+    expect(w.call('GET', `/t/demo/weddings/${w.ours}/guest-list/import`, w.couple).status).toBe(405)
+  })
+
   it('validates bodies (side, tags, booleans, names, email) with 400s', () => {
     const w = setup()
     const hid = (w.call('POST', `/t/demo/weddings/${w.ours}/households`, w.planner, { name: 'One' }).body as { household: { household_id: string } }).household.household_id

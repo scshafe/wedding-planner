@@ -280,6 +280,7 @@ export {
 // The guest list (issue #27, ADR 0046): households and guests per wedding.
 export {
   GUEST_LIST_LIMITS,
+  type GuestImportResult,
   type GuestInput,
   type GuestListCounts,
   GuestListService,
@@ -287,6 +288,19 @@ export {
   type GuestSide,
   type HouseholdInput,
 } from './guests/guest_list_service'
+
+export {
+  GUEST_CSV_COLUMNS,
+  GUEST_CSV_LIMITS,
+  type ImportPlan,
+  type ImportProblem,
+  neutralize,
+  parseCsv,
+  planGuestImport,
+  type PlannedGuest,
+  toGuestCsv,
+  unneutralize,
+} from './guests/guest_csv'
 
 // Operability (issue #13, ADR 0044): the per-request log line and the server-error log.
 export { ERROR_RETENTION, ErrorLog, errorCode, errorName, type ServerError, stackFrames } from './operability/error_log'

@@ -75,5 +75,5 @@ was removed). Taking an allowance away while the plus-one exists is refused (409
 
 - RSVPs can key on households (the RSVP link goes to a household) and guests (one answer per guest per event).
 - The tag bound lives in the service rather than the schema (`maxItems` makes the type generator emit a tuple).
-- Not done: CSV import and export (#28); merging duplicates; a guest in two weddings of the same workspace (they
+- Not done: merging duplicates; a guest in two weddings of the same workspace (they
   are two records, by design).

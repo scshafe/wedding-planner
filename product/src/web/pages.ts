@@ -11,7 +11,7 @@ import type {
 
 import type { TeamView } from '../accounts/membership_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
-import type { GuestListView } from '../guests/guest_list_service'
+import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
 import type { StrategyGuidance } from '../strategy/strategy_guidance'
@@ -1186,13 +1186,14 @@ export function renderFeedbackThanks(theme: Tenant['theme'], slug: string): stri
 }
 
 /** Notices on the guest list after an action (issue #27). */
-export type GuestListNotice = 'saved' | 'removed' | 'invalid' | 'conflict'
+export type GuestListNotice = 'saved' | 'removed' | 'invalid' | 'conflict' | 'imported'
 
 const GUEST_LIST_NOTICES: Readonly<Record<GuestListNotice, string>> = Object.freeze({
   saved: 'Saved.',
   removed: 'Removed.',
   invalid: 'That could not be saved. Check the fields (names are required; an email must look like one).',
   conflict: 'That is not possible right now (that guest has a plus-one listed, or the list is full).',
+  imported: 'The CSV was imported.',
 })
 
 const SIDE_LABELS: Readonly<Record<WeddingGuest['side'], string>> = Object.freeze({
@@ -1310,6 +1311,7 @@ export function renderGuestList(
     html`<p><a href="/t/${slug}?wedding=${w}">← ${wedding.couple_display_name}</a></p>
   <h2>Guest list</h2>
   ${banner}
+  <p><a href="/t/${slug}/guest-list/export?wedding=${w}">Download as CSV</a> · <a href="/t/${slug}?wedding=${w}&amp;tab=guests&amp;import=1">Import from CSV</a></p>
   <div class="card">
     <p><strong>${`${c.guests} guest(s)`}</strong> in ${`${c.households} household(s)`} · ${`${c.plus_ones} plus-one(s)`}</p>
     <p class="note">${`Partner one: ${c.by_side.partner_one} · Partner two: ${c.by_side.partner_two} · Both: ${c.by_side.both}`}</p>
@@ -1325,6 +1327,57 @@ export function renderGuestList(
     </form>
   </div>
   ${households}`,
+    'wedding',
+  )
+}
+
+/**
+ * Import a guest list from pasted CSV (issue #28): a preview lists every problem by row and what would change; only a
+ * clean preview offers the import, which re-sends the same text. Nothing is written until then, and then all of it.
+ */
+export function renderGuestImport(
+  theme: Tenant['theme'],
+  slug: string,
+  wedding: Wedding,
+  csrfToken: string,
+  csv: string,
+  result?: GuestImportResult,
+): string {
+  const w = wedding.wedding_id
+  const preview =
+    result === undefined
+      ? html``
+      : result.problems.length > 0
+        ? html`<div class="card"><h3>Nothing was imported</h3><p class="note">Fix these rows and preview again:</p>
+      <ul>${result.problems.map((p) => html`<li>${p.row === 1 ? 'File' : `Row ${p.row}`}: ${p.message}</li>`)}</ul></div>`
+        : html`<div class="card"><h3>Ready to import</h3>
+      <p>${`${result.creates} new guest(s), ${result.updates} updated, ${result.households_created} new household(s).`}</p>
+      <form method="post" action="/t/${slug}/guest-list/import">${csrfField(csrfToken)}
+        <input type="hidden" name="wedding_id" value="${w}">
+        <input type="hidden" name="commit" value="1">
+        <textarea name="csv" hidden>${csv}</textarea>
+        <button type="submit">Import</button>
+      </form></div>`
+  return signedInShell(
+    theme,
+    slug,
+    'Import guests',
+    html`<p><a href="/t/${slug}?wedding=${w}&amp;tab=guests">← Guest list</a></p>
+  <h2>Import guests from CSV</h2>
+  <div class="card">
+    <p class="note">Paste a spreadsheet saved as CSV. The first line names the columns: household and first_name are required;
+    address, last_name, side (partner_one, partner_two or both), tags (separated by commas), plus_one_allowed (yes or no),
+    plus_one_of (the host's full name, same household), dietary, email and phone are optional. A row that matches a guest
+    already on the list (same household, first and last name) updates them: a column left out keeps what the list has,
+    and a blank note, email, phone or tags cell clears it. A downloaded CSV can be edited and imported back.</p>
+    <form method="post" action="/t/${slug}/guest-list/import">${csrfField(csrfToken)}
+      <input type="hidden" name="wedding_id" value="${w}">
+      <label for="csv">CSV</label>
+      <textarea id="csv" name="csv" rows="12" style="width:100%" maxlength="300000" required>${csv}</textarea>
+      <p><button type="submit">Preview</button></p>
+    </form>
+  </div>
+  ${preview}`,
     'wedding',
   )
 }
