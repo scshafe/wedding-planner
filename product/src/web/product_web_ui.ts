@@ -1112,7 +1112,7 @@ export class ProductWebUi {
     if (csrf === undefined) return ERROR_500
     const raw = queryParam(req.path, 'notice')
     const notice = (['saved', 'removed', 'invalid', 'forbidden', 'conflict'] as const).find((n) => n === raw)
-    return htmlResult(200, renderBudget(theme, slug, wedding, budgetRes.body as BudgetView, csrf, notice))
+    return htmlResult(200, renderBudget(theme, slug, wedding, budgetRes.body as BudgetView, csrf, notice, queryParam(req.path, 'category')))
   }
 
   /** POST /t/:slug/budget/<action> (issue #34) — CSRF first, then the JSON route of the form's wedding; a notice back. */
@@ -1146,7 +1146,9 @@ export class ProductWebUi {
     if (res.status === 404 || res.status === 401) return this.#renderNonData(slug, res.status)
     const notice: BudgetNotice =
       res.status === 200 || res.status === 201 ? (action === 'budget-remove' ? 'removed' : 'saved') : res.status === 403 ? 'forbidden' : res.status === 409 ? 'conflict' : 'invalid'
-    return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=budget&notice=${notice}`)
+    // A failed edit goes back to that line's form (issue #54); anything else to the list.
+    const again = action === 'budget-update' && notice !== 'saved' ? `&category=${category}` : ''
+    return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=budget${again}&notice=${notice}`)
   }
 
   /** GET /t/:slug?wedding=ID&tab=vendors (issue #33) — the wedding, then its vendors; any non-200 takes the masking. */
@@ -1164,7 +1166,7 @@ export class ProductWebUi {
     if (csrf === undefined) return ERROR_500
     const raw = queryParam(req.path, 'notice')
     const notice = (['saved', 'removed', 'invalid', 'forbidden', 'conflict'] as const).find((n) => n === raw)
-    return htmlResult(200, renderVendors(theme, slug, wedding, vendorsRes.body as VendorsView, csrf, notice))
+    return htmlResult(200, renderVendors(theme, slug, wedding, vendorsRes.body as VendorsView, csrf, notice, queryParam(req.path, 'vendor')))
   }
 
   /**
@@ -1237,7 +1239,9 @@ export class ProductWebUi {
           : res.status === 409
             ? 'conflict'
             : 'invalid'
-    return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=vendors&notice=${notice}`)
+    // A payment marked, or a failed edit, goes back to that vendor's view (issue #54); anything else to the list.
+    const again = action === 'installment-paid' || (action === 'vendor-update' && notice !== 'saved') ? `&vendor=${vendor}` : ''
+    return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=vendors${again}&notice=${notice}`)
   }
 
   /** GET /t/:slug?view=due (issue #32) — ONE pipeline read, themed by status (a couple's 403 is the themed Forbidden). */

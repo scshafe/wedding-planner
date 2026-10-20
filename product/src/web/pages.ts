@@ -1904,10 +1904,11 @@ function amountText(cents: number): string {
 }
 
 /**
- * A wedding's vendors (issue #33): what is due next, then each vendor with its payment schedule. The planner gets
- * the forms; the couple sees the shared vendors only, read-only.
+ * A wedding's vendors (issue #33): what is due next, then each vendor with its payment schedule. The couple sees the
+ * shared vendors only, read-only. The planner edits one vendor at a time (`&vendor=<id>`, issue #54): its form, its
+ * "mark paid" buttons and the remove button are on that view only, so the page does not grow with vendors × rows.
  */
-export function renderVendors(theme: Tenant['theme'], slug: string, wedding: Wedding, view: VendorsView, csrfToken: string, notice?: VendorsNotice): string {
+export function renderVendors(theme: Tenant['theme'], slug: string, wedding: Wedding, view: VendorsView, csrfToken: string, notice?: VendorsNotice, editVendorId?: string): string {
   const w = wedding.wedding_id
   const banner = notice === undefined ? html`` : html`<p class="note">${VENDORS_NOTICES[notice]}</p>`
   const hidden = (fields: Record<string, string>) => html`${csrfField(csrfToken)}${Object.entries(fields).map(([k, v]) => html`<input type="hidden" name="${k}" value="${v}">`)}`
@@ -1943,11 +1944,14 @@ export function renderVendors(theme: Tenant['theme'], slug: string, wedding: Wed
       <label for="${prefix}_notes">Notes <span class="note">(the planner's only)</span></label>
       <textarea id="${prefix}_notes" name="notes" maxlength="2000" rows="2">${v?.notes ?? ''}</textarea>`
   }
-  const card = (v: WeddingVendor) => {
+  const editing = editVendorId === undefined || !view.can_manage ? undefined : view.vendors.find((v) => v.vendor_id === editVendorId)
+  const card = (v: WeddingVendor, edit: boolean) => {
     const total = v.installments.reduce((n, i) => n + i.amount_cents, 0)
     const paid = v.installments.filter((i) => i.paid).reduce((n, i) => n + i.amount_cents, 0)
     return html`<div class="card">
-    <h3>${v.business_name} <span class="note">${`${categoryName(v)} · ${CONTRACT_LABELS[v.contract_status]}${view.can_manage ? (v.shared_with_couple ? ' · shared with the couple' : ' · not shared') : ''}`}</span></h3>
+    <h3>${v.business_name} <span class="note">${`${categoryName(v)} · ${CONTRACT_LABELS[v.contract_status]}${view.can_manage ? (v.shared_with_couple ? ' · shared with the couple' : ' · not shared') : ''}`}</span>${
+      view.can_manage && !edit ? html` <a href="/t/${slug}?wedding=${w}&amp;tab=vendors&amp;vendor=${v.vendor_id}">Edit</a>` : html``
+    }</h3>
     ${[v.contact_name, v.email, v.phone].some((x) => x !== undefined) ? html`<p class="note">${[v.contact_name, v.email, v.phone].filter((x) => x !== undefined).join(' · ')}</p>` : html``}
     ${
       v.installments.length === 0
@@ -1955,7 +1959,7 @@ export function renderVendors(theme: Tenant['theme'], slug: string, wedding: Wed
         : html`<ul>${v.installments.map(
             (i) => html`<li>${`${i.label}${i.deposit ? ' (deposit)' : ''}: ${dollars(i.amount_cents)}, due ${i.due_date} — ${i.paid ? 'paid' : 'not paid'}`}
         ${
-          view.can_manage
+          edit
             ? html`<form class="inline" method="post" action="/t/${slug}/vendors/installment-paid">${hidden({ wedding_id: w, vendor_id: v.vendor_id, installment_id: i.installment_id, paid: i.paid ? 'false' : 'true' })}<button type="submit">${i.paid ? 'Mark not paid' : 'Mark paid'}</button></form>`
             : html``
         }</li>`,
@@ -1964,11 +1968,11 @@ export function renderVendors(theme: Tenant['theme'], slug: string, wedding: Wed
     }
     ${v.notes === undefined ? html`` : html`<p class="note">${v.notes}</p>`}
     ${
-      view.can_manage
-        ? html`<details><summary>Edit or remove</summary>
+      edit
+        ? html`<h3>Edit</h3>
       <form method="post" action="/t/${slug}/vendors/vendor-update">${hidden({ wedding_id: w, vendor_id: v.vendor_id })}${vendorFields(`v_${v.vendor_id}`, v)}<p><button type="submit">Save vendor</button></p></form>
       <form method="post" action="/t/${slug}/vendors/vendor-remove">${hidden({ wedding_id: w, vendor_id: v.vendor_id })}<button type="submit">Remove the vendor</button></form>
-    </details>`
+      <p><a href="/t/${slug}?wedding=${w}&amp;tab=vendors">Done</a></p>`
         : html``
     }
   </div>`
@@ -1990,9 +1994,15 @@ export function renderVendors(theme: Tenant['theme'], slug: string, wedding: Wed
     }
     <p class="note">Money is tracked here, never paid through the app.</p>
   </div>
-  ${view.vendors.length === 0 ? html`<p class="note">${view.can_manage ? 'No vendors yet.' : 'The planner has not shared any vendors yet.'}</p>` : view.vendors.map(card)}
   ${
-    view.can_manage
+    editing !== undefined
+      ? card(editing, true)
+      : view.vendors.length === 0
+        ? html`<p class="note">${view.can_manage ? 'No vendors yet.' : 'The planner has not shared any vendors yet.'}</p>`
+        : view.vendors.map((v) => card(v, false))
+  }
+  ${
+    view.can_manage && editing === undefined
       ? html`<div class="card"><h3>Add a vendor</h3>
     <form method="post" action="/t/${slug}/vendors/vendor-add">${hidden({ wedding_id: w })}${vendorFields('new')}<p><button type="submit">Add vendor</button></p></form></div>`
       : html``
@@ -2013,9 +2023,10 @@ const BUDGET_NOTICES: Readonly<Record<BudgetNotice, string>> = Object.freeze({
 
 /**
  * A wedding's budget (issue #34): the totals, the next payments, and each line — a line linked to a vendor follows
- * that vendor's payment schedule. The planner gets the forms; the couple sees the shared lines and their totals.
+ * that vendor's payment schedule. The couple sees the shared lines and their totals. The planner edits one line at a
+ * time (`&category=<id>`, issue #54): the form repeats the vendor list, so a form per line would grow with lines × vendors.
  */
-export function renderBudget(theme: Tenant['theme'], slug: string, wedding: Wedding, view: BudgetView, csrfToken: string, notice?: BudgetNotice): string {
+export function renderBudget(theme: Tenant['theme'], slug: string, wedding: Wedding, view: BudgetView, csrfToken: string, notice?: BudgetNotice, editCategoryId?: string): string {
   const w = wedding.wedding_id
   const banner = notice === undefined ? html`` : html`<p class="note">${BUDGET_NOTICES[notice]}</p>`
   const hidden = (fields: Record<string, string>) => html`${csrfField(csrfToken)}${Object.entries(fields).map(([k, v]) => html`<input type="hidden" name="${k}" value="${v}">`)}`
@@ -2038,14 +2049,8 @@ export function renderBudget(theme: Tenant['theme'], slug: string, wedding: Wedd
   }
   const row = (l: BudgetLine) => html`<li><strong>${l.category.name}</strong>
       <span class="note">${`estimate ${dollars(l.category.estimated_cents)} · actual ${dollars(l.actual_cents)} · paid ${dollars(l.paid_cents)} · still due ${dollars(l.due_cents)}`}${l.vendor_name === undefined ? '' : ` · follows ${l.vendor_name}`}${l.vendor_missing ? ' · its vendor was removed' : ''}${view.can_manage && !l.category.shared_with_couple ? ' · not shared' : ''}</span>
-      ${
-        view.can_manage
-          ? html`<details><summary>Edit or remove</summary>
-        <form method="post" action="/t/${slug}/budget/budget-update">${hidden({ wedding_id: w, category_id: l.category.category_id })}${fields(`b_${l.category.category_id}`, l)}<p><button type="submit">Save line</button></p></form>
-        <form method="post" action="/t/${slug}/budget/budget-remove">${hidden({ wedding_id: w, category_id: l.category.category_id })}<button type="submit">Remove the line</button></form>
-      </details>`
-          : html``
-      }</li>`
+      ${view.can_manage ? html` <a href="/t/${slug}?wedding=${w}&amp;tab=budget&amp;category=${l.category.category_id}">Edit</a>` : html``}</li>`
+  const editing = editCategoryId === undefined || !view.can_manage ? undefined : view.lines.find((l) => l.category.category_id === editCategoryId)
   return signedInShell(
     theme,
     slug,
@@ -2070,7 +2075,12 @@ export function renderBudget(theme: Tenant['theme'], slug: string, wedding: Wedd
   </div>
   ${view.lines.length === 0 ? html`<p class="note">${view.can_manage ? 'No budget lines yet.' : 'The planner has not shared any budget lines yet.'}</p>` : html`<div class="card"><ul>${view.lines.map(row)}</ul></div>`}
   ${
-    view.can_manage
+    editing !== undefined
+      ? html`<div class="card"><h3>${`Edit: ${editing.category.name}`}</h3>
+    <form method="post" action="/t/${slug}/budget/budget-update">${hidden({ wedding_id: w, category_id: editing.category.category_id })}${fields(`b_${editing.category.category_id}`, editing)}<p><button type="submit">Save line</button></p></form>
+    <form method="post" action="/t/${slug}/budget/budget-remove">${hidden({ wedding_id: w, category_id: editing.category.category_id })}<button type="submit">Remove the line</button></form>
+    <p><a href="/t/${slug}?wedding=${w}&amp;tab=budget">Done</a></p></div>`
+      : view.can_manage
       ? html`<div class="card"><h3>Add a line</h3>
     <form method="post" action="/t/${slug}/budget/budget-add">${hidden({ wedding_id: w })}${fields('new')}<p><button type="submit">Add line</button></p></form></div>`
       : html``

@@ -1,7 +1,7 @@
 import { ManualClock, SequentialIdGenerator } from '@wedding-planner/shared'
 import { describe, expect, it } from 'vitest'
 
-import { type ApiRequest, type ApiResponse, composeProductSurface, type HttpResult } from '@wedding-planner/product'
+import { type ApiRequest, type ApiResponse, BUDGET_LIMITS, composeProductSurface, type HttpResult, VENDOR_LIMITS } from '@wedding-planner/product'
 
 /** Issue #34 through the surface: the JSON routes (planner manages, couple reads shared), the page and its forms. */
 
@@ -37,6 +37,25 @@ function form(path: string, fields: Record<string, string>, cookie?: string): Ap
 
 const csrfOf = (page: HttpResult): string => /name="_csrf" value="([^"]+)"/.exec(page.body)?.[1] as string
 const NOT_FOUND = { status: 404, body: { error: 'not_found' } }
+
+describe('the budget page at the limits (issue #54)', () => {
+  it('grows with lines plus vendors, not lines times vendors', () => {
+    const w = setup()
+    for (let v = 0; v < VENDOR_LIMITS.vendors; v++) {
+      w.api('POST', `/t/demo/weddings/${w.ours}/vendors`, w.bearer, { category: 'other', category_other: 'x', business_name: `Vendor ${'&'.repeat(60)} ${v}`, contract_status: 'none' })
+    }
+    for (let c = 0; c < BUDGET_LIMITS.categories; c++) w.api('POST', `/t/demo/weddings/${w.ours}/budget`, w.bearer, { name: `Line ${c}`, estimated_cents: 1000 })
+    const planner = w.login({ role: 'planner' })
+    const page = w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=budget`, planner))
+    expect(page.status).toBe(200)
+    expect(page.body.length).toBeLessThan(100_000)
+    const categoryId = /&amp;category=([A-Za-z0-9_]+)/.exec(page.body)?.[1] as string
+    const view = w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=budget&category=${categoryId}`, planner))
+    expect(view.body).toContain('budget-update')
+    expect(view.body).not.toContain('Add a line')
+    expect(view.body.length).toBeLessThan(100_000)
+  })
+})
 
 describe('the budget', () => {
   it('JSON: the planner manages lines; the couple reads shared ones (403 to manage); another wedding is the masked 404', () => {
