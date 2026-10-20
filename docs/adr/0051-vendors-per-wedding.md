@@ -16,16 +16,19 @@
   `shared_with_couple`, and the planner's notes.
 - **The payment schedule:** a list of installments, at most 24. Each has a label, `amount_cents`, a due date, whether
   it is the deposit (at most one per vendor), and paid or not (with `paid_at`).
-- **Money is tracked, never moved:** amounts are integers from 0 to one billion cents, never floats, and there is no
-  payment provider.
-- **Typed amounts:** in the web form, an amount is read with `centsFromText`: digits with up to two decimals and
-  optional thousands commas. Anything else is refused, never rounded.
+- **Money is tracked, never moved:** amounts are integer cents from 0 to one billion dollars (100,000,000,000 cents),
+  never floats, and there is no payment provider.
+- **Typed amounts:** in the web form, an amount is read with `centsFromText`: digits with up to two decimals, and
+  commas only as thousands separators (checked before they are removed). Anything else is refused, never rounded:
+  "12,34" (a decimal comma) is refused, not read as 1234. A row with a label but no amount is refused, not saved
+  as $0.
 
 ### Stable installments
 
 An edit sends the whole schedule. An installment that names its id keeps it, along with whether it was paid and
 when. An installment without an id is new, and one left out is removed. An id that is not on this vendor is
-refused. Marking an installment paid records `paid_at` once; marking it paid again keeps that time.
+refused. Marking an installment paid records `paid_at` once; marking it paid again keeps that time. The web edit
+form does not carry "paid" at all: only the Mark paid button changes it, so a stale tab cannot undo a payment.
 
 ### Who sees what
 

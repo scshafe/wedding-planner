@@ -88,6 +88,13 @@ describe('vendors', () => {
     expect(w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=vendors`, planner)).body).toContain('paid $1250.50')
     const invalid = w.ui.handle(form('/t/demo/vendors/vendor-add', { _csrf: csrf, wedding_id: w.ours, category: 'cake', business_name: 'Cake', contract_status: 'none', i0_id: '', i0_label: 'All', i0_amount: '12.345', i0_due: '2028-03-01' }, planner))
     expect(invalid.headers.location).toContain('notice=invalid')
+    // A label with no amount, or a decimal comma, is refused rather than saved as $0 or 100 times too much.
+    for (const amount of ['', '12,34']) {
+      const res = w.ui.handle(form('/t/demo/vendors/vendor-add', { _csrf: csrf, wedding_id: w.ours, category: 'cake', business_name: 'Cake', contract_status: 'none', i0_id: '', i0_label: 'All', i0_amount: amount, i0_due: '2028-03-01' }, planner))
+      expect(res.headers.location).toContain('notice=invalid')
+    }
+    // The edit form carries no "paid": saving it keeps the payment marked above.
+    expect(w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=vendors`, planner)).body).not.toContain('_paid"')
   })
 
   it('the couple sees the shared vendors read-only (no forms); another wedding is the generic not-found', () => {

@@ -906,12 +906,13 @@ export class ProductWebUi {
         const label = value(`i${n}_label`)
         const amount = value(`i${n}_amount`)
         if (label.length === 0) continue // a blank row, or a cleared one (removed)
+        // A row with a label needs an amount (a missing or mistyped one is refused, never saved as $0). Whether it is
+        // paid is not in this form — only the Mark paid button changes it, so a stale tab cannot undo a payment.
         installments.push({
           label,
-          amount_cents: amount.length === 0 ? 0 : (centsFromText(amount) ?? -1),
+          amount_cents: centsFromText(amount) ?? -1,
           due_date: value(`i${n}_due`),
           deposit: value(`i${n}_deposit`) === 'true',
-          paid: value(`i${n}_paid`) === 'true',
           ...(value(`i${n}_id`).length === 0 ? {} : { installment_id: value(`i${n}_id`) }),
         })
       }
@@ -941,10 +942,13 @@ export class ProductWebUi {
               : undefined
     if (res === undefined) return GENERIC_404
     if (res.status === 404 || res.status === 401) return this.#renderNonData(slug, res.status)
+    const removedNothing = action === 'vendor-remove' && (res.body as { removed?: boolean }).removed !== true
     const notice: VendorsNotice =
       res.status === 200 || res.status === 201
         ? action === 'vendor-remove'
-          ? 'removed'
+          ? removedNothing
+            ? 'invalid'
+            : 'removed'
           : 'saved'
         : res.status === 403
           ? 'forbidden'

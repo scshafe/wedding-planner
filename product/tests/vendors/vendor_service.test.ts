@@ -145,6 +145,7 @@ describe('VendorService', () => {
     expect(centsFromText('1250')).toBe(125_000)
     expect(centsFromText(' 1,250.5 ')).toBe(125_050)
     expect(centsFromText('0.07')).toBe(7)
-    for (const bad of ['', '12.345', '-5', '1e3', 'abc', '1234567890']) expect(centsFromText(bad)).toBeUndefined()
+    expect(centsFromText('1,234,567.89')).toBe(123_456_789)
+    for (const bad of ['', '12.345', '-5', '1e3', 'abc', '1234567890', '12,34', '1,5', ',1', '1,,000', '12,3456', '1,000,00']) expect(centsFromText(bad)).toBeUndefined()
   })
 })

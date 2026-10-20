@@ -49,7 +49,7 @@ export const VENDOR_CATEGORIES = Object.freeze([
   'other',
 ] as const satisfies readonly WeddingVendor['category'][])
 
-/** The largest amount one installment may carry: one billion (in cents), far past any wedding. */
+/** The largest amount one installment may carry: one billion dollars (in cents), far past any wedding. */
 export const MAX_AMOUNT_CENTS = 100_000_000_000
 
 export type VendorCategory = WeddingVendor['category']
@@ -206,7 +206,7 @@ export class VendorService {
     const now = this.clock.now()
     const installments = raw.map((entry): Installment => {
       if (!Number.isSafeInteger(entry.amount_cents) || entry.amount_cents < 0 || entry.amount_cents > MAX_AMOUNT_CENTS) {
-        throw new ProductError('PRODUCT.BAD_REQUEST', 'An amount is a whole number of cents, from 0 to one billion.', {})
+        throw new ProductError('PRODUCT.BAD_REQUEST', 'An amount is a whole number of cents, up to one billion dollars.', {})
       }
       if (!isDate(entry.due_date)) throw new ProductError('PRODUCT.BAD_REQUEST', 'An installment is due on a real date (YYYY-MM-DD).', {})
       const id = entry.installment_id !== undefined && entry.installment_id.length > 0 ? entry.installment_id : undefined
@@ -275,9 +275,15 @@ function withoutNotes(vendor: WeddingVendor): WeddingVendor {
   return shared
 }
 
-/** Whole cents from what a person types as money ("1234.5", "1,234.56"); undefined when it is not an amount. */
+/**
+ * Whole cents from what a person types as money ("1234.5", "1,234.56"); undefined when it is not an amount. Commas are
+ * accepted only as thousands separators, checked before they are removed: "12,34" (a decimal comma) is refused,
+ * never read as 1234.
+ */
 export function centsFromText(text: string): number | undefined {
-  const plain = text.trim().replace(/,/g, '')
+  const typed = text.trim()
+  if (!/^(\d{1,3}(,\d{3})+|\d{1,9})(\.\d{1,2})?$/.test(typed)) return undefined
+  const plain = typed.replace(/,/g, '')
   if (!/^\d{1,9}(\.\d{1,2})?$/.test(plain)) return undefined
   const [whole, fraction = ''] = plain.split('.') as [string, string?]
   return Number(whole) * 100 + Number(fraction.padEnd(2, '0'))

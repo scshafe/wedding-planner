@@ -1926,14 +1926,14 @@ export function renderVendors(theme: Tenant['theme'], slug: string, wedding: Wed
         c === (v?.contract_status ?? 'none') ? html`<option value="${c}" selected>${CONTRACT_LABELS[c]}</option>` : html`<option value="${c}">${CONTRACT_LABELS[c]}</option>`,
       )}</select>
       <label><input type="checkbox" name="shared_with_couple" value="true"${v?.shared_with_couple === true ? html` checked` : html``}> Shared with the couple</label>
-      <fieldset><legend>Payment schedule <span class="note">(amounts like 1250.00; clear a row's label to remove it)</span></legend>
+      <fieldset><legend>Payment schedule <span class="note">(amounts like 1250.00; clear a row's label to remove it; mark payments paid from the list)</span></legend>
       ${rows.map(
         (i, n) => html`<p><input type="hidden" name="i${n}_id" value="${i?.installment_id ?? ''}">
         <input name="i${n}_label" maxlength="60" value="${i?.label ?? ''}" aria-label="What for">
         <input name="i${n}_amount" inputmode="decimal" value="${i === undefined ? '' : amountText(i.amount_cents)}" aria-label="Amount">
         <input name="i${n}_due" type="date" value="${i?.due_date ?? ''}" aria-label="Due">
         <label><input type="checkbox" name="i${n}_deposit" value="true"${i?.deposit === true ? html` checked` : html``}> Deposit</label>
-        <label><input type="checkbox" name="i${n}_paid" value="true"${i?.paid === true ? html` checked` : html``}> Paid</label></p>`,
+        ${i?.paid === true ? html`<span class="note">paid</span>` : html``}</p>`,
       )}</fieldset>
       <label for="${prefix}_notes">Notes <span class="note">(the planner's only)</span></label>
       <textarea id="${prefix}_notes" name="notes" maxlength="2000" rows="2">${v?.notes ?? ''}</textarea>`
