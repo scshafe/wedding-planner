@@ -5,6 +5,7 @@ import type { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import { isEmailAddress } from '../email/email_port'
 import { type ImportProblem, planGuestImport } from './guest_csv'
 import { GuestDirectory } from './guest_directory'
+import { assertHouseholdGrant, type HouseholdRsvpGrant } from '../rsvp/rsvp_link_service'
 import { COLLECTIONS } from '../persistence/collections'
 import { groupedKey, type RecordStore } from '../persistence/record_store'
 import { ProductError } from '../product_error'
@@ -80,7 +81,21 @@ export interface GuestImportResult {
  */
 export interface GuestListHooks {
   /** These guests of the wedding were removed: forget everything keyed by them. */
-  guestsRemoved(context: TenantContext, wedding_id: string, guest_ids: readonly string[]): void
+  guestsRemoved?(context: TenantContext, wedding_id: string, guest_ids: readonly string[]): void
+  /** These households of the wedding were removed (their guests were reported first): forget what is keyed by them. */
+  householdsRemoved?(context: TenantContext, wedding_id: string, household_ids: readonly string[]): void
+}
+
+/** Several listeners behind the guest list's one hook (the composition root fans out to every store keyed by guests). */
+export function fanOutGuestListHooks(...listeners: readonly GuestListHooks[]): GuestListHooks {
+  return {
+    guestsRemoved: (context, wedding_id, guest_ids) => {
+      for (const listener of listeners) listener.guestsRemoved?.(context, wedding_id, guest_ids)
+    },
+    householdsRemoved: (context, wedding_id, household_ids) => {
+      for (const listener of listeners) listener.householdsRemoved?.(context, wedding_id, household_ids)
+    },
+  }
 }
 
 
@@ -207,7 +222,8 @@ export class GuestListService {
         removed.push(guest.guest_id)
       }
     }
-    if (removed.length > 0) this.hooks?.guestsRemoved(context, wedding_id, removed)
+    if (removed.length > 0) this.hooks?.guestsRemoved?.(context, wedding_id, removed)
+    this.hooks?.householdsRemoved?.(context, wedding_id, [household_id])
     return this.#households.delete(context, groupedKey(wedding_id, household_id))
   }
 
@@ -292,6 +308,42 @@ export class GuestListService {
     return this.#guests.put(context, updated)
   }
 
+  /**
+   * A household sets one of its own guests' dietary note from its RSVP page (issue #30); blank clears it. The grant is
+   * the authority (no principal); a guest outside the household is PRODUCT.BAD_REQUEST. Nothing else changes. The
+   * caller checks that RSVPs are open first: the household route calls `WeddingEventService.answerAsHousehold`
+   * (which refuses while closed) before any dietary note, in the same transaction.
+   */
+  setDietaryAsHousehold(grant: HouseholdRsvpGrant, guest_id: string, dietary: string): WeddingGuest {
+    assertHouseholdGrant(grant)
+    const { context, wedding_id, household_id } = grant
+    const existing = this.#directory.guest(context, wedding_id, guest_id)
+    if (existing === undefined || existing.household_id !== household_id) {
+      throw new ProductError('PRODUCT.BAD_REQUEST', 'That guest is not in this household.', {})
+    }
+    refuseControlCharacters(dietary)
+    if (dietary.trim().length > 300) throw new ProductError('PRODUCT.BAD_REQUEST', 'A dietary note is at most 300 characters.', {})
+    const updated: WeddingGuest = {
+      guest_id: existing.guest_id,
+      tenant_id: existing.tenant_id,
+      wedding_id: existing.wedding_id,
+      household_id: existing.household_id,
+      first_name: existing.first_name,
+      last_name: existing.last_name,
+      side: existing.side,
+      tags: existing.tags,
+      plus_one_allowed: existing.plus_one_allowed,
+      ...(existing.plus_one_of === undefined ? {} : { plus_one_of: existing.plus_one_of }),
+      ...optional('dietary', dietary),
+      ...optional('email', existing.email),
+      ...optional('phone', existing.phone),
+      created_at: existing.created_at,
+      updated_at: this.clock.now(),
+    }
+    getSchemaRegistry().assertValid<WeddingGuest>('wedding_guest', updated)
+    return this.#guests.put(context, updated)
+  }
+
   /** Remove a guest and their plus-one. Returns whether the guest existed. */
   removeGuest(context: TenantContext, principal: Principal, wedding_id: string, guest_id: string): boolean {
     this.#reach(context, principal, wedding_id)
@@ -304,7 +356,7 @@ export class GuestListService {
       }
     }
     const existed = this.#guests.delete(context, groupedKey(wedding_id, guest_id))
-    this.hooks?.guestsRemoved(context, wedding_id, removed)
+    this.hooks?.guestsRemoved?.(context, wedding_id, removed)
     return existed
   }
 
@@ -401,10 +453,13 @@ export class GuestListService {
   }
 }
 
-/** Names, notes and numbers never hold a line break or another control character (PRODUCT.BAD_REQUEST). */
+/**
+ * Names, notes and numbers never hold a line break, a control character (C0, DEL, C1), a line or paragraph
+ * separator, or a bidirectional override that could make text display as something else (PRODUCT.BAD_REQUEST).
+ */
 function refuseControlCharacters(...values: readonly (string | undefined)[]): void {
   for (const value of values) {
-    if (value !== undefined && [...value].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) {
+    if (value !== undefined && [...value].some((c) => isDisallowedCharacter(c.charCodeAt(0)))) {
       throw new ProductError('PRODUCT.BAD_REQUEST', 'A name, note or number may not hold a line break or control character.', {})
     }
   }
@@ -416,3 +471,15 @@ function optional<K extends string>(key: K, value: string | undefined): { [P in 
   const trimmed = value?.trim()
   return (trimmed === undefined || trimmed.length === 0 ? {} : { [key]: trimmed }) as { [P in K]?: string }
 }
+
+function isDisallowedCharacter(code: number): boolean {
+  return (
+    code < 0x20 ||
+    (code >= 0x7f && code <= 0x9f) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    (code >= 0x202a && code <= 0x202e) ||
+    (code >= 0x2066 && code <= 0x2069)
+  )
+}
+

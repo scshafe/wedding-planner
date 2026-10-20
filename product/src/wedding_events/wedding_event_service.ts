@@ -1,4 +1,12 @@
-import { type Clock, getSchemaRegistry, type IdGenerator, type WeddingEvent, type WeddingGuest, type WeddingRsvp } from '@wedding-planner/shared'
+import {
+  type Clock,
+  getSchemaRegistry,
+  type IdGenerator,
+  type WeddingEvent,
+  type WeddingGuest,
+  type WeddingRsvp,
+  type WeddingRsvpSettings,
+} from '@wedding-planner/shared'
 
 import type { Principal } from '../auth/principal'
 import type { WeddingAuthorizer } from '../auth/wedding_authorizer'
@@ -7,6 +15,7 @@ import type { GuestListHooks } from '../guests/guest_list_service'
 import { COLLECTIONS } from '../persistence/collections'
 import { groupedKey, type RecordStore } from '../persistence/record_store'
 import { ProductError } from '../product_error'
+import { assertHouseholdGrant, type HouseholdRsvpGrant } from '../rsvp/rsvp_link_service'
 import type { TenantContext } from '../tenant/tenant_context'
 import { TenantScopedRepository } from '../tenant/tenant_scoped_repository'
 import type { TenantLivenessCheck } from '../tenant/tenant_store'
@@ -81,6 +90,38 @@ export interface WeddingEventCounts {
 export interface WeddingEventsView {
   /** By start time, then name; each with its counts. */
   readonly events: readonly { readonly event: WeddingEvent; readonly counts: WeddingEventCounts }[]
+  /** Whether households may no longer answer on their RSVP page (issue #30). */
+  readonly rsvps_closed: boolean
+}
+
+/** The bounds of one household submission (raw lists, checked before any per-item work). */
+export const HOUSEHOLD_ANSWER_LIMITS = Object.freeze({ answers: 240, dietary: 240 })
+
+/** One answer a household gives on its RSVP page: attending or declined, with a meal when attending. */
+export interface HouseholdAnswer {
+  readonly guest_id: string
+  readonly event_id: string
+  readonly status: 'attending' | 'declined'
+  readonly meal_option_id?: string
+}
+
+/**
+ * What the household RSVP page shows (issue #30): the household's own guests, and only the events at least one of
+ * them is invited to — names, times, places and meals, nothing else about the wedding.
+ */
+export interface HouseholdRsvpView {
+  readonly household_name: string
+  readonly guests: readonly { readonly guest_id: string; readonly first_name: string; readonly last_name: string; readonly dietary?: string }[]
+  readonly events: readonly {
+    readonly event_id: string
+    readonly name: string
+    readonly starts_at: string
+    readonly location?: string
+    readonly meal_options: WeddingEvent['meal_options']
+    /** One per invited guest of the household. */
+    readonly answers: readonly { readonly guest_id: string; readonly status: RsvpStatus; readonly meal_option_id?: string }[]
+  }[]
+  readonly closed: boolean
 }
 
 /** One guest's effective answer for one event (the default when nothing was recorded). */
@@ -96,6 +137,7 @@ export interface GuestEventRsvp {
 export class WeddingEventService implements GuestListHooks {
   readonly #events: TenantScopedRepository<WeddingEvent>
   readonly #rsvps: TenantScopedRepository<WeddingRsvp>
+  readonly #settings: TenantScopedRepository<WeddingRsvpSettings>
 
   constructor(
     liveness: TenantLivenessCheck,
@@ -109,6 +151,7 @@ export class WeddingEventService implements GuestListHooks {
   ) {
     this.#events = new TenantScopedRepository<WeddingEvent>(liveness, (e) => groupedKey(e.wedding_id, e.event_id), COLLECTIONS.weddingEvent, store)
     this.#rsvps = new TenantScopedRepository<WeddingRsvp>(liveness, (r) => groupedKey(r.wedding_id, rsvpId(r.event_id, r.guest_id)), COLLECTIONS.weddingRsvp, store)
+    this.#settings = new TenantScopedRepository<WeddingRsvpSettings>(liveness, (r) => r.wedding_id, COLLECTIONS.weddingRsvpSettings, store)
   }
 
   /** The wedding's boundary alone (the HTTP edge calls it before parsing a body). */
@@ -122,7 +165,96 @@ export class WeddingEventService implements GuestListHooks {
     const guests = this.guests.guestsOf(context, wedding_id)
     const rsvps = new Map(this.#rsvps.listGroup(context, wedding_id).map((r) => [rsvpId(r.event_id, r.guest_id), r]))
     const answers = new Answers(guests, rsvps)
-    return { events: this.#eventsOf(context, wedding_id).map((event) => ({ event, counts: answers.countsFor(event) })) }
+    return {
+      events: this.#eventsOf(context, wedding_id).map((event) => ({ event, counts: answers.countsFor(event) })),
+      rsvps_closed: this.#closed(context, wedding_id),
+    }
+  }
+
+  /** Close or reopen the household RSVP pages of a wedding: the planner's call (a couple gets PRODUCT.FORBIDDEN). */
+  setRsvpsClosed(context: TenantContext, principal: Principal, wedding_id: string, closed: boolean): WeddingRsvpSettings {
+    this.assertReach(context, principal, wedding_id)
+    if (principal.role !== 'planner') throw new ProductError('PRODUCT.FORBIDDEN', 'Only the planner closes or reopens RSVPs.', {})
+    const settings: WeddingRsvpSettings = { tenant_id: context.tenant_id, wedding_id, closed, updated_at: this.clock.now() }
+    getSchemaRegistry().assertValid<WeddingRsvpSettings>('wedding_rsvp_settings', settings)
+    return this.#settings.put(context, settings)
+  }
+
+  /** The household's RSVP page, from a resolved link (issue #30). */
+  householdView(grant: HouseholdRsvpGrant): HouseholdRsvpView {
+    assertHouseholdGrant(grant)
+    const { context, wedding_id, household_id } = grant
+    const household = this.guests.household(context, wedding_id, household_id)
+    if (household === undefined) throw new ProductError('PRODUCT.NOT_FOUND', 'No such household on this wedding.', {})
+    const all = this.guests.guestsOf(context, wedding_id)
+    const members = all.filter((g) => g.household_id === household_id)
+    const answers = this.#answersOf(context, wedding_id, all, members)
+    return {
+      household_name: household.name,
+      guests: members.map((g) => ({ guest_id: g.guest_id, first_name: g.first_name, last_name: g.last_name, ...(g.dietary === undefined ? {} : { dietary: g.dietary }) })),
+      events: this.#eventsOf(context, wedding_id).flatMap((event) => {
+        const invited = members.filter((g) => answers.invited(event, g))
+        if (invited.length === 0) return []
+        return [
+          {
+            event_id: event.event_id,
+            name: event.name,
+            starts_at: event.starts_at,
+            ...(event.location === undefined ? {} : { location: event.location }),
+            meal_options: event.meal_options,
+            answers: invited.map((g) => {
+              const rsvp = answers.rsvp(event, g)
+              return { guest_id: g.guest_id, status: rsvp?.status ?? 'pending', ...(rsvp?.meal_option_id === undefined ? {} : { meal_option_id: rsvp.meal_option_id }) }
+            }),
+          },
+        ]
+      }),
+      closed: this.#closed(context, wedding_id),
+    }
+  }
+
+  /**
+   * The household answers for its own guests (issue #30), all or nothing. Refused while RSVPs are closed
+   * (PRODUCT.RSVPS_CLOSED), for a guest outside the household or an event the guest is not invited to
+   * (PRODUCT.BAD_REQUEST). The invitation is never the household's to change: it comes from the record or the default.
+   */
+  answerAsHousehold(grant: HouseholdRsvpGrant, input: readonly HouseholdAnswer[]): void {
+    assertHouseholdGrant(grant)
+    if (input.length > HOUSEHOLD_ANSWER_LIMITS.answers) throw new ProductError('PRODUCT.BAD_REQUEST', 'Too many answers.', {})
+    const { context, wedding_id, household_id } = grant
+    if (this.#closed(context, wedding_id)) throw new ProductError('PRODUCT.RSVPS_CLOSED', 'RSVPs are closed for this wedding.', {})
+    const all = this.guests.guestsOf(context, wedding_id)
+    const members = new Map(all.filter((g) => g.household_id === household_id).map((g) => [g.guest_id, g]))
+    const events = new Map(this.#eventsOf(context, wedding_id).map((e) => [e.event_id, e]))
+    const answers = this.#answersOf(context, wedding_id, all, [...members.values()])
+    for (const answer of input) {
+      const guest = members.get(answer.guest_id)
+      const event = events.get(answer.event_id)
+      if (guest === undefined || event === undefined || !answers.invited(event, guest)) {
+        throw new ProductError('PRODUCT.BAD_REQUEST', 'That answer is not for a guest of this household at an event they are invited to.', {})
+      }
+      // An answer that changes nothing writes nothing (the recorded answer and who gave it stay as they are).
+      const stored = answers.rsvp(event, guest)
+      const meal = answer.status === 'attending' ? answer.meal_option_id : undefined
+      if (stored !== undefined && stored.status === answer.status && stored.meal_option_id === meal) continue
+      this.#write(context, event, guest.guest_id, true, answer.status, answer.meal_option_id, 'household')
+    }
+  }
+
+  /** Whether a wedding's RSVPs are closed (no record: open). */
+  #closed(context: TenantContext, wedding_id: string): boolean {
+    const settings = this.#settings.read(context, wedding_id)
+    return settings?.wedding_id === wedding_id && settings.closed
+  }
+
+  /** The stored answers of `members` (and their hosts), indexed for the invitation rules. */
+  #answersOf(context: TenantContext, wedding_id: string, all: readonly WeddingGuest[], members: readonly WeddingGuest[]): Answers {
+    const wanted = new Set(members.flatMap((g) => (g.plus_one_of === undefined ? [g.guest_id] : [g.guest_id, g.plus_one_of])))
+    const rsvps = new Map<string, WeddingRsvp>()
+    for (const r of this.#rsvps.listGroup(context, wedding_id)) {
+      if (wanted.has(r.guest_id)) rsvps.set(rsvpId(r.event_id, r.guest_id), r)
+    }
+    return new Answers(all, rsvps)
   }
 
   addEvent(context: TenantContext, principal: Principal, wedding_id: string, input: WeddingEventInput): WeddingEvent {
@@ -203,7 +335,16 @@ export class WeddingEventService implements GuestListHooks {
     this.assertReach(context, principal, wedding_id)
     const event = this.#event(context, wedding_id, event_id)
     this.#guest(context, wedding_id, guest_id)
-    return this.#write(context, event, guest_id, input.invited, input.status, input.meal_option_id, principal.role)
+    const written = this.#write(context, event, guest_id, input.invited, input.status, input.meal_option_id, principal.role)
+    // A plus-one follows their host's invitation. A plus-one answered by the household holds `invited` only because
+    // the household answered while invited through the host, so it follows a host's new invitation too; a plus-one
+    // whose invitation the planner or the couple set themselves keeps it.
+    const plusOne = this.guests.guestsOf(context, wedding_id).find((g) => g.plus_one_of === guest_id)
+    const theirs = plusOne === undefined ? undefined : this.#rsvp(context, wedding_id, event_id, plusOne.guest_id)
+    if (theirs !== undefined && theirs.answered_by === 'household' && theirs.invited !== input.invited) {
+      this.#write(context, event, theirs.guest_id, input.invited, input.invited ? theirs.status : 'pending', theirs.meal_option_id, 'household')
+    }
+    return written
   }
 
   /** The guest list's hook: these guests were removed, so forget their answers (same request, same transaction). */
@@ -337,7 +478,11 @@ class Answers {
     this.#byId = new Map(guests.map((g) => [g.guest_id, g]))
   }
 
-  #invited(event: WeddingEvent, guest: WeddingGuest): boolean {
+  rsvp(event: WeddingEvent, guest: WeddingGuest): WeddingRsvp | undefined {
+    return this.rsvps.get(rsvpId(event.event_id, guest.guest_id))
+  }
+
+  invited(event: WeddingEvent, guest: WeddingGuest): boolean {
     const own = this.rsvps.get(rsvpId(event.event_id, guest.guest_id))
     if (own !== undefined) return own.invited
     const host = guest.plus_one_of === undefined ? undefined : this.#byId.get(guest.plus_one_of)
@@ -351,7 +496,7 @@ class Answers {
     let declined = 0
     let meal_unchosen = 0
     for (const guest of this.guests) {
-      if (!this.#invited(event, guest)) continue
+      if (!this.invited(event, guest)) continue
       invited += 1
       const rsvp = this.rsvps.get(rsvpId(event.event_id, guest.guest_id))
       if (rsvp?.status === 'declined') declined += 1

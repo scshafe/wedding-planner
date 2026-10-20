@@ -103,4 +103,6 @@ export type {
   WeddingEvent,
   WeddingGuest,
   WeddingRsvp,
+  WeddingRsvpSettings,
+  RsvpLink,
 } from './contracts/contract_types'

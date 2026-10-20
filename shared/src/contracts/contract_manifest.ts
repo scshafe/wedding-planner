@@ -44,6 +44,8 @@ export type ContractKey =
   | 'wedding_guest'
   | 'wedding_event'
   | 'wedding_rsvp'
+  | 'rsvp_link'
+  | 'wedding_rsvp_settings'
 
 export interface ContractDefinition {
   /** Stable friendly key, e.g. 'grade_report'. */
@@ -213,6 +215,18 @@ export const CONTRACT_DEFINITIONS: readonly ContractDefinition[] = [
     key: 'wedding_rsvp',
     schemaId: `${SCHEMA_ID_PREFIX}/wedding_rsvp.json`,
     repoRelativePath: 'product/schemas/wedding_rsvp_schema.json',
+    domain: 'product',
+  },
+  {
+    key: 'rsvp_link',
+    schemaId: `${SCHEMA_ID_PREFIX}/rsvp_link.json`,
+    repoRelativePath: 'product/schemas/rsvp_link_schema.json',
+    domain: 'product',
+  },
+  {
+    key: 'wedding_rsvp_settings',
+    schemaId: `${SCHEMA_ID_PREFIX}/wedding_rsvp_settings.json`,
+    repoRelativePath: 'product/schemas/wedding_rsvp_settings_schema.json',
     domain: 'product',
   },
 ] as const

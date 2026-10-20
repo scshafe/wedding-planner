@@ -13,7 +13,11 @@ import type { AccountService } from '../accounts/account_service'
 import { publicAccountView } from '../accounts/account_store'
 import type { InvitedRole } from '../accounts/invitation_store'
 import type { MembershipService } from '../accounts/membership_service'
+import type { RateLimiter } from '../accounts/rate_limiter'
+import type { RsvpLinkService } from '../rsvp/rsvp_link_service'
 import {
+  HOUSEHOLD_ANSWER_LIMITS,
+  type HouseholdAnswer,
   type MealOptionInput,
   type RsvpInput,
   WEDDING_EVENT_LIMITS,
@@ -163,6 +167,16 @@ export interface WeddingHandlerDeps {
   readonly guestList?: GuestListService
   /** Issue #29: the wedding's events and RSVPs. Absent ⇒ the sub-routes are not mounted. */
   readonly events?: WeddingEventService
+  /** Issue #30: households' RSVP links (made by the planner or the couple). Absent ⇒ not mounted. */
+  readonly rsvpLinks?: RsvpLinkService
+}
+
+/** Issue #30: what the public household RSVP route needs — the link resolver, the answers, the dietary note, a limiter. */
+export interface HouseholdRsvpDeps {
+  readonly links: RsvpLinkService
+  readonly events: WeddingEventService
+  readonly guestList: GuestListService
+  readonly limiter: RateLimiter
 }
 
 /** The narrow bag handed to the operator-gated /admin handlers — DELIBERATELY excludes the operator store. */
@@ -316,6 +330,8 @@ export interface ProductApiDeps {
   readonly guestList?: GuestListService
   /** Issue #29: each wedding's events and RSVPs, under /t/:slug/weddings/:id/events and …/guests/:id/rsvps. */
   readonly events?: WeddingEventService
+  /** Issue #30: RSVP links under …/households/:id/rsvp-link and …/rsvp-links; the public /t/:slug/household-rsvp/:token. */
+  readonly householdRsvp?: HouseholdRsvpDeps
   /**
    * Issue #13: where a request that ends in a 500 is recorded (code + location, never data), and what the operator
    * reads at /admin/errors. Absent ⇒ nothing is recorded (fixtures).
@@ -402,6 +418,7 @@ export class ProductApi {
   readonly #accounts: AccountService | undefined
   /** The team (issue #11), or undefined when not wired. */
   readonly #membership: MembershipService | undefined
+  readonly #householdRsvp: HouseholdRsvpDeps | undefined
   /** In-app feedback (issue #12), or undefined when not wired. */
   readonly #feedback: FeedbackService | undefined
   /** The server-error log (issue #13), or undefined when not wired. */
@@ -422,7 +439,9 @@ export class ProductApi {
       authorizer: deps.authorizer,
       ...(deps.guestList === undefined ? {} : { guestList: deps.guestList }),
       ...(deps.events === undefined ? {} : { events: deps.events }),
+      ...(deps.householdRsvp === undefined ? {} : { rsvpLinks: deps.householdRsvp.links }),
     }
+    this.#householdRsvp = deps.householdRsvp
     this.#guests = deps.guests
     this.#adminDeps = {
       onboarding: deps.onboarding,
@@ -540,6 +559,12 @@ export class ProductApi {
       if (this.#membership !== undefined && segments.length === 4 && segments[2] === 'invitations' && segments[3] === 'accept') {
         if (req.method !== 'POST') throw methodNotAllowed()
         return handleInvitationAccept(context, req, this.#membership)
+      }
+
+      // /t/:slug/household-rsvp/:token — a household's RSVP page data (issue #30). Unauthenticated by design: the link's
+      // token is the credential, resolved to a household grant; a token that does not resolve is the masked 404.
+      if (this.#householdRsvp !== undefined && segments.length === 4 && segments[2] === 'household-rsvp') {
+        return handleHouseholdRsvp(context, req, segments[3] ?? '', this.#householdRsvp)
       }
 
       // /t/:slug/team, /t/:slug/invitations[/resend|/revoke], /t/:slug/members/remove — PROTECTED (issue #11):
@@ -781,7 +806,8 @@ function errorToResponse(error: WeddingPlannerError): ApiResponse {
       return RESP_BAD_REQUEST
     // ACCOUNT_EXISTS: an honest 409 to the TRUSTED operator (owner setup), like DUPLICATE_SLUG. The issue #11 team
     // conflicts are honest 409s to the trusted planner / owner of the same workspace, and the issue #27 list conflicts
-    // (a second plus-one, the list's size bound) to the trusted planner / couple of the wedding.
+    // (a second plus-one, the list's size bound) to the trusted planner / couple of the wedding. RSVPS_CLOSED is the
+    // household page's honest 409 to the holder of a resolved link (issue #30): the page already shows it closed.
     case 'PRODUCT.ACCOUNT_EXISTS':
     case 'PRODUCT.MEMBER_EXISTS':
     case 'PRODUCT.INVITATION_EXISTS':
@@ -789,6 +815,7 @@ function errorToResponse(error: WeddingPlannerError): ApiResponse {
     case 'PRODUCT.CANNOT_REMOVE_OWNER':
     case 'PRODUCT.PLUS_ONE_EXISTS':
     case 'PRODUCT.LIMIT_REACHED':
+    case 'PRODUCT.RSVPS_CLOSED':
       return RESP_CONFLICT
     // FORGED_CONTEXT / FORGED_PRINCIPAL / CROSS_TENANT_WRITE / anything else: an internal invariant
     // violation a real request can never construct — a 500 bug, never a normal client path, never leaked.
@@ -825,6 +852,16 @@ function dispatchWeddings(
     throw methodNotAllowed()
   }
   const weddingId = segments[3]
+  // /t/:slug/weddings/:weddingId/{rsvp-links | rsvp-settings | households/:id/rsvp-link} (issue #30).
+  if (
+    deps.rsvpLinks !== undefined &&
+    deps.events !== undefined &&
+    weddingId !== undefined &&
+    ((segments.length === 5 && (segments[4] === 'rsvp-links' || segments[4] === 'rsvp-settings')) ||
+      (segments.length === 7 && segments[4] === 'households' && segments[6] === 'rsvp-link'))
+  ) {
+    return dispatchRsvpLinks(context, principal, req, weddingId, segments.slice(4), deps.rsvpLinks, deps.events)
+  }
   // /t/:slug/weddings/:weddingId/events[/:id[/rsvps/:guestId]] and …/guests/:guestId/rsvps (issue #29).
   if (deps.events !== undefined && weddingId !== undefined && (segments[4] === 'events' || (segments[4] === 'guests' && segments[6] === 'rsvps'))) {
     return dispatchEvents(context, principal, req, weddingId, segments.slice(4), deps.events)
@@ -921,6 +958,85 @@ function dispatchEvents(
     return { status: 200, body: { rsvps: events.guestRsvps(context, principal, weddingId, id) } }
   }
   throw routeNotFound()
+}
+
+/**
+ * The RSVP links and settings of one wedding (issue #30): the boundary first, then the route. Making a link answers
+ * 201 with the link, the only time it is ever shown; closing RSVPs is the planner's (a couple gets 403).
+ */
+function dispatchRsvpLinks(
+  context: TenantContext,
+  principal: Principal,
+  req: ApiRequest,
+  weddingId: string,
+  rest: readonly string[],
+  links: RsvpLinkService,
+  events: WeddingEventService,
+): ApiResponse {
+  events.assertReach(context, principal, weddingId)
+  const [resource, householdId] = rest
+  if (resource === 'rsvp-links') {
+    if (req.method !== 'GET') throw methodNotAllowed()
+    return { status: 200, body: { links: links.links(context, principal, weddingId) } }
+  }
+  if (resource === 'rsvp-settings') {
+    if (req.method !== 'PUT') throw methodNotAllowed()
+    const closed = parseObjectBody(req.rawBody).closed
+    if (typeof closed !== 'boolean') throw new ProductError('PRODUCT.BAD_REQUEST', 'closed must be true or false.', {})
+    return { status: 200, body: { settings: events.setRsvpsClosed(context, principal, weddingId, closed) } }
+  }
+  if (req.method !== 'POST') throw methodNotAllowed()
+  return { status: 201, body: links.issue(context, principal, weddingId, householdId ?? '') }
+}
+
+/** At most this many household submissions per link and window: answering is a handful of posts, never thousands. */
+const HOUSEHOLD_RSVP_RATE_LIMIT = Object.freeze({ limit: 20, windowSeconds: 600 })
+/** Reads of one link's page per window (each save reads it twice too). */
+const HOUSEHOLD_RSVP_READ_LIMIT = Object.freeze({ limit: 300, windowSeconds: 600 })
+
+/**
+ * GET|POST /t/:slug/household-rsvp/:token (issue #30). The token resolves to a household grant in THIS tenant, or the
+ * route is the masked 404 (unknown, replaced, another tenant's). GET returns what the page shows; POST takes
+ * `{answers: [{guest_id, event_id, status, meal_option_id?}], dietary?: [{guest_id, note}]}`, rate-limited per link and
+ * applied all or nothing (the request's transaction), then returns the page again.
+ */
+function handleHouseholdRsvp(context: TenantContext, req: ApiRequest, token: string, deps: HouseholdRsvpDeps): ApiResponse {
+  const grant = deps.links.resolve(context, token)
+  if (grant === undefined) throw routeNotFound()
+  if (req.method === 'GET') {
+    // Only a link holder gets here; a loose limit keeps one link from becoming a load generator.
+    if (!deps.limiter.attempt(`household-rsvp-read:${context.tenant_id}:${token}`, HOUSEHOLD_RSVP_READ_LIMIT)) {
+      throw new ProductError('PRODUCT.RATE_LIMITED', 'Too many requests from this link; try again later.', {})
+    }
+    return { status: 200, body: deps.events.householdView(grant) }
+  }
+  if (req.method !== 'POST') throw methodNotAllowed()
+  if (!deps.limiter.attempt(`household-rsvp:${context.tenant_id}:${token}`, HOUSEHOLD_RSVP_RATE_LIMIT)) {
+    throw new ProductError('PRODUCT.RATE_LIMITED', 'Too many answers from this link; try again later.', {})
+  }
+  const body = parseObjectBody(req.rawBody)
+  const answers = boundedList(body.answers, HOUSEHOLD_ANSWER_LIMITS.answers, 'answers').map((a): HouseholdAnswer => {
+    const status = a.status
+    if (status !== 'attending' && status !== 'declined') throw new ProductError('PRODUCT.BAD_REQUEST', 'status must be attending or declined.', {})
+    const meal = optionalString(a, 'meal_option_id')
+    return { guest_id: requireString(a, 'guest_id'), event_id: requireString(a, 'event_id'), status, ...(meal === undefined ? {} : { meal_option_id: meal }) }
+  })
+  const dietary = boundedList(body.dietary ?? [], HOUSEHOLD_ANSWER_LIMITS.dietary, 'dietary').map((d) => {
+    const note = d.note
+    if (typeof note !== 'string') throw new ProductError('PRODUCT.BAD_REQUEST', "Field 'note' must be a string.", {})
+    return { guest_id: requireString(d, 'guest_id'), note }
+  })
+  deps.events.answerAsHousehold(grant, answers) // refuses while closed, before any write — dietary notes included
+  for (const d of dietary) deps.guestList.setDietaryAsHousehold(grant, d.guest_id, d.note)
+  return { status: 200, body: deps.events.householdView(grant) }
+}
+
+/** A list of objects of at most `max` entries (checked before any per-item work). */
+function boundedList(value: unknown, max: number, field: string): Record<string, unknown>[] {
+  if (!Array.isArray(value) || value.length > max || value.some((v) => typeof v !== 'object' || v === null || Array.isArray(v))) {
+    throw new ProductError('PRODUCT.BAD_REQUEST', `Field '${field}' must be a list of at most ${max} objects.`, {})
+  }
+  return value as Record<string, unknown>[]
 }
 
 /**

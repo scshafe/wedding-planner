@@ -123,6 +123,9 @@ describe('durable storage — data written before a restart is read back after i
     expect(eventRes.status).toBe(201)
     const eventId = (eventRes.body as { event: { event_id: string } }).event.event_id
     expect(api1.handle(req('PUT', `/t/demo/weddings/${newWeddingId}/events/${eventId}/rsvps/${guestId}`, { token, body: { status: 'attending' } })).status).toBe(200)
+    // A household's RSVP link and the wedding's RSVP settings (issue #30).
+    expect(api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/households/${householdId}/rsvp-link`, { token })).status).toBe(201)
+    expect(api1.handle(req('PUT', `/t/demo/weddings/${newWeddingId}/rsvp-settings`, { token, body: { closed: false } })).status).toBe(200)
     const provisioned = api1.handle(
       req('POST', '/admin/tenants', {
         token: OP,

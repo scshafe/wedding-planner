@@ -1,7 +1,7 @@
 import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Wedding } from '@wedding-planner/shared'
 
 import type { TeamView } from '../accounts/membership_service'
-import type { WeddingEventsView, GuestEventRsvp } from '../wedding_events/wedding_event_service'
+import type { GuestEventRsvp, HouseholdAnswer, HouseholdRsvpView, WeddingEventsView } from '../wedding_events/wedding_event_service'
 import { toGuestCsv } from '../guests/guest_csv'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
@@ -37,6 +37,9 @@ import {
   renderGuestEdit,
   renderGuestImport,
   renderGuestList,
+  renderHouseholdRsvp,
+  type HouseholdRsvpNotice,
+  renderRsvpLinkMade,
   type GuestListNotice,
   renderGuests,
   renderInviteAccept,
@@ -99,6 +102,10 @@ const SESSION_COOKIE = 'wp_session'
  * both, equal. A cross-site page can neither read the value nor make the browser send the cookie.
  */
 const PRE_SESSION_COOKIE = 'wp_pre'
+/** The most answer rows a household RSVP form is read for (the JSON layer bounds the list again). */
+const HOUSEHOLD_FORM_ROWS = 240
+/** The most fields a household RSVP form may carry: 6 per answer row, 3 per dietary row, and a few more. */
+const HOUSEHOLD_FORM_MAX_FIELDS = 6 * HOUSEHOLD_FORM_ROWS + 3 * HOUSEHOLD_FORM_ROWS + 10
 
 /** A server-minted token charset guard — never emit a cookie value that could break the header. */
 const SAFE_TOKEN = /^[A-Za-z0-9_-]+$/
@@ -231,6 +238,11 @@ export class ProductWebUi {
       if (segments.length === 4 && segments[2] === 'guest-list' && req.method === 'POST') {
         if (slug === undefined) return GENERIC_404
         return this.#guestListAction(req, slug, segments[3] ?? '')
+      }
+      // /t/:slug/rsvp/<token> (issue #30) — a household's PUBLIC RSVP page: the link's token is the credential (no
+      // session); pre-session anti-forgery on the POST. A token that does not resolve is the generic not-found.
+      if (segments.length === 4 && segments[2] === 'rsvp' && this.#accounts !== undefined) {
+        return slug === undefined ? GENERIC_404 : this.#householdRsvp(req, slug, segments[3] ?? '')
       }
       // /t/:slug/events/<action> (issue #29) — the events and RSVP FORM posts (CSRF-protected).
       if (segments.length === 4 && segments[2] === 'events' && req.method === 'POST') {
@@ -733,7 +745,13 @@ export class ProductWebUi {
     }
     const raw = queryParam(req.path, 'notice')
     const notice = (['saved', 'removed', 'invalid', 'conflict', 'imported'] as const).find((n) => n === raw)
-    return htmlResult(status, renderGuestList(theme, slug, wedding, list, csrf, notice))
+    // Issue #30: which households have an RSVP link (an affordance: absent when not wired).
+    const linksRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}/rsvp-links`, token))
+    const links =
+      linksRes.status === 200
+        ? new Map((linksRes.body as { links: { household_id: string; created_at: string }[] }).links.map((l) => [l.household_id, l.created_at]))
+        : undefined
+    return htmlResult(status, renderGuestList(theme, slug, wedding, list, csrf, notice, links))
   }
 
   /**
@@ -782,6 +800,11 @@ export class ProductWebUi {
         meal_options: meal_options.filter((m) => m.label.trim().length > 0 || m.option_id !== undefined),
       }
     }
+    if (action === 'rsvp-close') {
+      const res = call('PUT', `${base}/rsvp-settings`, { closed: form.get('closed') === 'true' })
+      if (res.status !== 200) return this.#renderNonData(slug, res.status === 400 ? 404 : res.status)
+      return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=events&notice=saved`)
+    }
     if (action === 'rsvp-set') {
       const guest = encodeURIComponent(value('guest_id'))
       const res = call('PUT', `${base}/events/${event}/rsvps/${guest}`, {
@@ -806,6 +829,80 @@ export class ProductWebUi {
     const notice =
       res.status === 200 || res.status === 201 ? (action === 'event-remove' ? 'removed' : 'saved') : res.status === 409 ? 'conflict' : 'invalid'
     return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=events&notice=${notice}`)
+  }
+
+  /** The page that shows a just-made RSVP link once (issue #30); any refusal takes the usual masking. */
+  #rsvpLinkMade(slug: string, token: string | undefined, weddingId: string, householdId: string, res: { status: number; body: unknown }): HttpResult {
+    if (res.status !== 201) return this.#renderNonData(slug, res.status === 400 ? 404 : res.status)
+    const id = encodeURIComponent(weddingId)
+    const wedding = readWedding(this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}`, token)).body)
+    const list = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}/guest-list`, token)).body as GuestListView
+    const household = list.households?.find((h) => h.household_id === householdId)
+    const theme = this.#themes.resolveActiveTheme(slug)
+    if (wedding === undefined || household === undefined || theme === undefined) return GENERIC_404
+    return htmlResult(201, renderRsvpLinkMade(theme, slug, wedding, household.name, (res.body as { url: string }).url))
+  }
+
+  /**
+   * GET|POST /t/:slug/rsvp/<token> (issue #30) — the household's RSVP page, through the pipeline's public
+   * `/household-rsvp/<token>` route (one transaction per submission). Unknown, replaced or foreign tokens are the
+   * generic not-found; a POST checks the pre-session anti-forgery value first. `no-referrer`: the link is the secret.
+   */
+  #householdRsvp(req: ApiRequest, slug: string, rsvpToken: string): HttpResult {
+    const theme = this.#themes.resolveActiveTheme(slug)
+    const accounts = this.#accounts
+    if (theme === undefined || accounts === undefined) return GENERIC_404
+    const path = `/t/${slug}/household-rsvp/${rsvpToken}`
+    const page = (status: number, view: HouseholdRsvpView, notice?: HouseholdRsvpNotice): HttpResult => {
+      const preCsrf = accounts.newToken()
+      return htmlResult(status, renderHouseholdRsvp(theme, slug, rsvpToken, view, preCsrf, notice), {
+        ...this.#preCookie(slug, preCsrf),
+        'referrer-policy': 'no-referrer',
+      })
+    }
+    const read = () => this.#api.handle(bearerGet(path, undefined))
+    if (req.method === 'GET') {
+      const res = read()
+      if (res.status !== 200) return GENERIC_404
+      return page(200, res.body as HouseholdRsvpView, queryParam(req.path, 'saved') === '1' ? 'saved' : undefined)
+    }
+    if (req.method !== 'POST') return GENERIC_404
+    // The token first: a link that does not resolve is the not-found before any form work (the anti-forgery value is
+    // a double-submit anyone can supply, so it is no gate against a junk body).
+    const current = read()
+    if (current.status !== 200) return GENERIC_404
+    // One pass indexes the form (first value wins), refusing an oversized one; every lookup below is then O(1).
+    const fields = new Map<string, string>()
+    let count = 0
+    for (const [key, value] of parseForm(req.rawBody)) {
+      if (++count > HOUSEHOLD_FORM_MAX_FIELDS) return page(400, current.body as HouseholdRsvpView, 'invalid')
+      if (!fields.has(key)) fields.set(key, value)
+    }
+    const csrfOk = this.#preCsrfValid(req, new URLSearchParams([['_csrf', fields.get('_csrf') ?? '']]))
+    if (!csrfOk) return page(400, current.body as HouseholdRsvpView, 'expired')
+    // Only what the household changed on this page is sent (each row carries what it showed), so a tab left open
+    // never reverts a newer answer recorded by the planner. Rows pair with their hidden ids by position; the JSON
+    // layer bounds the lists and re-checks every one.
+    const answers: HouseholdAnswer[] = []
+    for (let n = 0; n < HOUSEHOLD_FORM_ROWS && fields.has(`g${n}`); n++) {
+      const status = fields.get(`s${n}`)
+      if (status !== 'attending' && status !== 'declined') continue
+      const meal = fields.get(`m${n}`) ?? ''
+      if (status === fields.get(`o${n}`) && meal === (fields.get(`om${n}`) ?? '')) continue
+      answers.push({ guest_id: fields.get(`g${n}`) ?? '', event_id: fields.get(`e${n}`) ?? '', status, ...(meal.length === 0 ? {} : { meal_option_id: meal }) })
+    }
+    const dietary: { guest_id: string; note: string }[] = []
+    for (let j = 0; j < HOUSEHOLD_FORM_ROWS && fields.has(`dg${j}`); j++) {
+      const note = fields.get(`d${j}`) ?? ''
+      if (note !== (fields.get(`od${j}`) ?? '')) dietary.push({ guest_id: fields.get(`dg${j}`) ?? '', note })
+    }
+    const res = this.#api.handle(bearerJson('POST', path, undefined, { answers, dietary }))
+    if (res.status === 200) return redirect(303, `/t/${slug}/rsvp/${encodeURIComponent(rsvpToken)}?saved=1`, { 'referrer-policy': 'no-referrer' })
+    if (res.status === 404) return GENERIC_404
+    const again = read()
+    if (again.status !== 200) return GENERIC_404
+    const notice: HouseholdRsvpNotice = res.status === 409 ? 'closed' : res.status === 429 ? 'rate_limited' : 'invalid'
+    return page(res.status === 429 ? 429 : res.status === 409 ? 409 : 400, again.body as HouseholdRsvpView, notice)
   }
 
   /**
@@ -891,6 +988,7 @@ export class ProductWebUi {
     const call = (method: string, path: string, body?: unknown) => this.#api.handle(bearerJson(method, path, token, body ?? {}))
     const household = encodeURIComponent(value('household_id'))
     const guest = encodeURIComponent(value('guest_id'))
+    if (action === 'rsvp-link') return this.#rsvpLinkMade(slug, token, weddingId, value('household_id'), call('POST', `${base}/households/${household}/rsvp-link`))
     const res =
       action === 'household-add'
         ? call('POST', `${base}/households`, householdBody)

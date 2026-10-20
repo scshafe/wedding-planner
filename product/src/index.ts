@@ -283,6 +283,7 @@ export {
   type GuestImportResult,
   type GuestInput,
   type GuestListCounts,
+  fanOutGuestListHooks,
   type GuestListHooks,
   GuestListService,
   type GuestListView,
@@ -307,6 +308,9 @@ export {
 export {
   type EventInvitation,
   type GuestEventRsvp,
+  HOUSEHOLD_ANSWER_LIMITS,
+  type HouseholdAnswer,
+  type HouseholdRsvpView,
   isLocalDateTime,
   type MealOptionInput,
   type RsvpAnsweredBy,
@@ -319,6 +323,8 @@ export {
   type WeddingEventsView,
 } from './wedding_events/wedding_event_service'
 export { GuestDirectory } from './guests/guest_directory'
+// Households' RSVP links and the grant a resolved link carries (issue #30, ADR 0049).
+export { assertHouseholdGrant, type HouseholdRsvpGrant, RsvpLinkService } from './rsvp/rsvp_link_service'
 export { assertWeddingReach } from './wedding/wedding_reach'
 
 // Operability (issue #13, ADR 0044): the per-request log line and the server-error log.

@@ -61,4 +61,5 @@
 - [Operability: logs, errors, build](operability-logs-errors-build.md) — issue #13 / ADR 0044: route-pattern-only request logs, 500s by code+frames never message, /healthz commit from WP_BUILD_COMMIT or the WP_IMAGE_REF tag
 - [Guest list](guest-list.md) — issue #27 / ADR 0046: household + wedding_guest contracts (not the messaging guest), wedding boundary with NOT_FOUND masking, plus-one model, bounds
 - [Events and RSVPs](events-and-rsvps.md) — #29 / ADR 0048: no RSVP record = event default + pending; counts over guests; GuestDirectory; events are the guest list's hook; assertWeddingReach
+- [Household RSVP page](household-rsvp-page.md) — #30 / ADR 0049: link stored as hash, shown once; HouseholdRsvpGrant (no principal); answers via the one writer; closed in its own collection
 - [Guest list CSV](guest-list-csv.md) — #28 / ADR 0047: export neutralizes formulas; import plans every row, applies all-or-nothing, matches by household + name
