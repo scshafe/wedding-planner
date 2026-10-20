@@ -5,7 +5,7 @@
  */
 
 /**
- * A party of guests invited together to one wedding (issue #27): a couple, a family, a single guest. Owned by one tenant and one wedding; always reached through a tenant-scoped repository keyed (tenant_id, household_id) and filtered by wedding_id. A household is the unit an RSVP link is sent to (M2).
+ * A party of guests invited together to one wedding (issue #27): a couple, a family, a single guest. Owned by one tenant and one wedding; stored under groupedKey(wedding_id, household_id) and read one wedding at a time. A household is the unit an RSVP link is sent to (M2).
  */
 export interface Household {
 /**

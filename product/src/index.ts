@@ -283,6 +283,7 @@ export {
   type GuestImportResult,
   type GuestInput,
   type GuestListCounts,
+  type GuestListHooks,
   GuestListService,
   type GuestListView,
   type GuestSide,
@@ -301,6 +302,24 @@ export {
   toGuestCsv,
   unneutralize,
 } from './guests/guest_csv'
+
+// A wedding's events and the guests' RSVPs per event (issue #29, ADR 0048).
+export {
+  type EventInvitation,
+  type GuestEventRsvp,
+  isLocalDateTime,
+  type MealOptionInput,
+  type RsvpAnsweredBy,
+  type RsvpInput,
+  type RsvpStatus,
+  WEDDING_EVENT_LIMITS,
+  type WeddingEventCounts,
+  type WeddingEventInput,
+  WeddingEventService,
+  type WeddingEventsView,
+} from './wedding_events/wedding_event_service'
+export { GuestDirectory } from './guests/guest_directory'
+export { assertWeddingReach } from './wedding/wedding_reach'
 
 // Operability (issue #13, ADR 0044): the per-request log line and the server-error log.
 export { ERROR_RETENTION, ErrorLog, errorCode, errorName, type ServerError, stackFrames } from './operability/error_log'

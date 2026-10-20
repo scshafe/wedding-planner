@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://wedding-planner.eval/schemas/wedding_guest.json",
   "title": "WeddingGuest",
-  "description": "A person on a wedding's guest list (issue #27), in exactly one household of that wedding. Distinct from the `guest` contract (the messaging binding of an opaque sender ref). Owned by one tenant and one wedding; always reached through a tenant-scoped repository keyed (tenant_id, guest_id) and filtered by wedding_id. Contact details are personal data: never logged, shown only to the wedding's planner and couple.",
+  "description": "A person on a wedding's guest list (issue #27), in exactly one household of that wedding. Distinct from the `guest` contract (the messaging binding of an opaque sender ref). Owned by one tenant and one wedding; stored under groupedKey(wedding_id, guest_id) and read one wedding at a time. Contact details are personal data: never logged, shown only to the wedding's planner and couple.",
   "type": "object",
   "additionalProperties": false,
   "required": ["guest_id", "tenant_id", "wedding_id", "household_id", "first_name", "last_name", "side", "tags", "plus_one_allowed", "created_at"],

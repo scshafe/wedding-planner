@@ -5,7 +5,7 @@
  */
 
 /**
- * A person on a wedding's guest list (issue #27), in exactly one household of that wedding. Distinct from the `guest` contract (the messaging binding of an opaque sender ref). Owned by one tenant and one wedding; always reached through a tenant-scoped repository keyed (tenant_id, guest_id) and filtered by wedding_id. Contact details are personal data: never logged, shown only to the wedding's planner and couple.
+ * A person on a wedding's guest list (issue #27), in exactly one household of that wedding. Distinct from the `guest` contract (the messaging binding of an opaque sender ref). Owned by one tenant and one wedding; stored under groupedKey(wedding_id, guest_id) and read one wedding at a time. Contact details are personal data: never logged, shown only to the wedding's planner and couple.
  */
 export interface WeddingGuest {
 /**

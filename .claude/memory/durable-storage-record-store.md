@@ -28,6 +28,9 @@ of collections is `persistence/collections.ts`: names are on-disk format, renami
   failed deploy, so an OLDER build must run on a newer DB: it opens one whose unknown migrations are all readable,
   else refuses (`PERSISTENCE.SCHEMA_TOO_NEW`). A breaking migration needs its expand step live first AND a
   `status:needs-owner` issue before merge. `open` writes `<db>.pre-vN.sqlite` before migrating an existing DB.
+- New state goes into a NEW collection where it can: an older build (after a rollback) never touches it. A new
+  field on an existing record is also silently DROPPED by an older build's update path, which rebuilds records field
+  by field (e.g. the wedding update), not only refused by validation.
 - A NEW FIELD on an existing record ships expand-then-contract (schemas are `additionalProperties:false`, so an
   older build re-validating a record with an unknown field fails): deploy the schema that accepts it first.
 - The drift test migrates the FROZEN `tests/persistence/fixtures/records_vN.json` and validates every row against

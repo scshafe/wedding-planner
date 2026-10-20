@@ -42,6 +42,8 @@ export type ContractKey =
   | 'escalation_reply'
   | 'household'
   | 'wedding_guest'
+  | 'wedding_event'
+  | 'wedding_rsvp'
 
 export interface ContractDefinition {
   /** Stable friendly key, e.g. 'grade_report'. */
@@ -199,6 +201,18 @@ export const CONTRACT_DEFINITIONS: readonly ContractDefinition[] = [
     key: 'wedding_guest',
     schemaId: `${SCHEMA_ID_PREFIX}/wedding_guest.json`,
     repoRelativePath: 'product/schemas/wedding_guest_schema.json',
+    domain: 'product',
+  },
+  {
+    key: 'wedding_event',
+    schemaId: `${SCHEMA_ID_PREFIX}/wedding_event.json`,
+    repoRelativePath: 'product/schemas/wedding_event_schema.json',
+    domain: 'product',
+  },
+  {
+    key: 'wedding_rsvp',
+    schemaId: `${SCHEMA_ID_PREFIX}/wedding_rsvp.json`,
+    repoRelativePath: 'product/schemas/wedding_rsvp_schema.json',
     domain: 'product',
   },
 ] as const

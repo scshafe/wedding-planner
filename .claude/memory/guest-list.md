@@ -7,11 +7,11 @@ metadata:
 
 Since issue #27 (2026-10-19): `product/src/guests/guest_list_service.ts`.
 
-- Contracts `household` and `wedding_guest` (23 contracts now). NOT the messaging `guest` contract (whose collection
+- Contracts `household` and `wedding_guest`. NOT the messaging `guest` contract (whose collection
   is `guest_binding`). Collections `household` / `wedding_guest`, tenant-scoped, every record carries `wedding_id`.
 - Keys are `groupedKey(wedding_id, id)`; reads use `listGroup(ctx, wedding_id)`, never `list` + filter. Point
   reads/deletes must build the same key with `groupedKey`, or they silently miss.
-- Boundary = the wedding's: `WeddingAuthorizer.authorizeRead` + the wedding exists; couple's other wedding, missing
+- Boundary = the wedding's (`assertWeddingReach`): `WeddingAuthorizer.authorizeRead` + the wedding exists; couple's other wedding, missing
   wedding, sibling-wedding ids → the same `PRODUCT.NOT_FOUND` (masked 404). Couples may create/edit/remove on their own.
   The API calls `guestList.assertReach` BEFORE parsing a body (ADR 0013): keep that for every new guest-list route.
 - Plus-one = a guest with `plus_one_of` (same household, ≤1 per host, host needs `plus_one_allowed`, a plus-one never

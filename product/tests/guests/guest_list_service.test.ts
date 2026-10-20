@@ -159,6 +159,31 @@ describe('GuestListService', () => {
     expect(w.list.view(w.ctx, w.planner, w.theirs).counts).toMatchObject({ guests: 1, households: 1 })
   })
 
+  it('tells its hook which guests went: a guest with their plus-one, a household with its guests', () => {
+    const clock = new ManualClock('2027-06-01T00:00:00.000Z')
+    const store = new InMemoryRecordStore()
+    const tenants = new TenantStore(clock, new SequentialIdGenerator('t'), store)
+    tenants.create({ slug: 'alpha', display_name: 'Alpha', theme: THEME, plan_tier: 'solo', lifecycle_status: 'active' })
+    const ctx = new TenantContextResolver(tenants).resolveBySlug('alpha')
+    const weddings = new WeddingRepository(tenants, clock, new SequentialIdGenerator('w'), store)
+    const wedding = weddings.create(ctx, { couple_display_name: 'Jo & Lee', event_date: '2028-06-10' }).wedding_id
+    const planner = new SessionStore(new SequentialIdGenerator('s')).login(ctx, { role: 'planner' }).principal
+    const removed: string[][] = []
+    const list = new GuestListService(tenants, weddings, new WeddingAuthorizer(), clock, new SequentialIdGenerator('g'), store, undefined, {
+      guestsRemoved: (_c, w, ids) => {
+        expect(w).toBe(wedding)
+        removed.push([...ids])
+      },
+    })
+    const h = list.addHousehold(ctx, planner, wedding, { name: 'One' })
+    const host = list.addGuest(ctx, planner, wedding, { household_id: h.household_id, first_name: 'Ana', side: 'both', plus_one_allowed: true })
+    const plusOne = list.addGuest(ctx, planner, wedding, { first_name: 'Sam', side: 'both', plus_one_of: host.guest_id })
+    const bo = list.addGuest(ctx, planner, wedding, { household_id: h.household_id, first_name: 'Bo', side: 'both' })
+    list.removeGuest(ctx, planner, wedding, host.guest_id)
+    list.removeHousehold(ctx, planner, wedding, h.household_id)
+    expect(removed).toEqual([[host.guest_id, plusOne.guest_id], [bo.guest_id]])
+  })
+
   it('a couple reaches only its own wedding: the other wedding and a missing one are the same NOT_FOUND', () => {
     const w = world()
     const h = w.list.addHousehold(w.ctx, w.couple, w.ours, { name: 'Ours' })
