@@ -310,7 +310,9 @@ export class GuestListService {
 
   /**
    * A household sets one of its own guests' dietary note from its RSVP page (issue #30); blank clears it. The grant is
-   * the authority (no principal); a guest outside the household is PRODUCT.BAD_REQUEST. Nothing else changes.
+   * the authority (no principal); a guest outside the household is PRODUCT.BAD_REQUEST. Nothing else changes. The
+   * caller checks that RSVPs are open first: the household route calls `WeddingEventService.answerAsHousehold`
+   * (which refuses while closed) before any dietary note, in the same transaction.
    */
   setDietaryAsHousehold(grant: HouseholdRsvpGrant, guest_id: string, dietary: string): WeddingGuest {
     assertHouseholdGrant(grant)
@@ -451,10 +453,13 @@ export class GuestListService {
   }
 }
 
-/** Names, notes and numbers never hold a line break or another control character (PRODUCT.BAD_REQUEST). */
+/**
+ * Names, notes and numbers never hold a line break, a control character (C0, DEL, C1), a line or paragraph
+ * separator, or a bidirectional override that could make text display as something else (PRODUCT.BAD_REQUEST).
+ */
 function refuseControlCharacters(...values: readonly (string | undefined)[]): void {
   for (const value of values) {
-    if (value !== undefined && [...value].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) {
+    if (value !== undefined && [...value].some((c) => isDisallowedCharacter(c.charCodeAt(0)))) {
       throw new ProductError('PRODUCT.BAD_REQUEST', 'A name, note or number may not hold a line break or control character.', {})
     }
   }
@@ -466,3 +471,15 @@ function optional<K extends string>(key: K, value: string | undefined): { [P in 
   const trimmed = value?.trim()
   return (trimmed === undefined || trimmed.length === 0 ? {} : { [key]: trimmed }) as { [P in K]?: string }
 }
+
+function isDisallowedCharacter(code: number): boolean {
+  return (
+    code < 0x20 ||
+    (code >= 0x7f && code <= 0x9f) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    (code >= 0x202a && code <= 0x202e) ||
+    (code >= 0x2066 && code <= 0x2069)
+  )
+}
+

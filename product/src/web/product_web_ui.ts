@@ -104,6 +104,8 @@ const SESSION_COOKIE = 'wp_session'
 const PRE_SESSION_COOKIE = 'wp_pre'
 /** The most answer rows a household RSVP form is read for (the JSON layer bounds the list again). */
 const HOUSEHOLD_FORM_ROWS = 240
+/** The most fields a household RSVP form may carry: 6 per answer row, 3 per dietary row, and a few more. */
+const HOUSEHOLD_FORM_MAX_FIELDS = 6 * HOUSEHOLD_FORM_ROWS + 3 * HOUSEHOLD_FORM_ROWS + 10
 
 /** A server-minted token charset guard — never emit a cookie value that could break the header. */
 const SAFE_TOKEN = /^[A-Za-z0-9_-]+$/
@@ -865,21 +867,35 @@ export class ProductWebUi {
       return page(200, res.body as HouseholdRsvpView, queryParam(req.path, 'saved') === '1' ? 'saved' : undefined)
     }
     if (req.method !== 'POST') return GENERIC_404
-    const form = parseForm(req.rawBody)
-    if (!this.#preCsrfValid(req, form)) {
-      const res = read()
-      return res.status === 200 ? page(400, res.body as HouseholdRsvpView, 'expired') : GENERIC_404
+    // The token first: a link that does not resolve is the not-found before any form work (the anti-forgery value is
+    // a double-submit anyone can supply, so it is no gate against a junk body).
+    const current = read()
+    if (current.status !== 200) return GENERIC_404
+    // One pass indexes the form (first value wins), refusing an oversized one; every lookup below is then O(1).
+    const fields = new Map<string, string>()
+    let count = 0
+    for (const [key, value] of parseForm(req.rawBody)) {
+      if (++count > HOUSEHOLD_FORM_MAX_FIELDS) return page(400, current.body as HouseholdRsvpView, 'invalid')
+      if (!fields.has(key)) fields.set(key, value)
     }
-    // Answers are paired with their hidden ids by position; the JSON layer bounds the list and re-checks every one.
+    const csrfOk = this.#preCsrfValid(req, new URLSearchParams([['_csrf', fields.get('_csrf') ?? '']]))
+    if (!csrfOk) return page(400, current.body as HouseholdRsvpView, 'expired')
+    // Only what the household changed on this page is sent (each row carries what it showed), so a tab left open
+    // never reverts a newer answer recorded by the planner. Rows pair with their hidden ids by position; the JSON
+    // layer bounds the lists and re-checks every one.
     const answers: HouseholdAnswer[] = []
-    for (let n = 0; n <= HOUSEHOLD_FORM_ROWS && form.has(`g${n}`); n++) {
-      const status = form.get(`s${n}`)
+    for (let n = 0; n < HOUSEHOLD_FORM_ROWS && fields.has(`g${n}`); n++) {
+      const status = fields.get(`s${n}`)
       if (status !== 'attending' && status !== 'declined') continue
-      const meal = form.get(`m${n}`) ?? ''
-      answers.push({ guest_id: form.get(`g${n}`) ?? '', event_id: form.get(`e${n}`) ?? '', status, ...(meal.length === 0 ? {} : { meal_option_id: meal }) })
+      const meal = fields.get(`m${n}`) ?? ''
+      if (status === fields.get(`o${n}`) && meal === (fields.get(`om${n}`) ?? '')) continue
+      answers.push({ guest_id: fields.get(`g${n}`) ?? '', event_id: fields.get(`e${n}`) ?? '', status, ...(meal.length === 0 ? {} : { meal_option_id: meal }) })
     }
     const dietary: { guest_id: string; note: string }[] = []
-    for (let j = 0; j <= HOUSEHOLD_FORM_ROWS && form.has(`dg${j}`); j++) dietary.push({ guest_id: form.get(`dg${j}`) ?? '', note: form.get(`d${j}`) ?? '' })
+    for (let j = 0; j < HOUSEHOLD_FORM_ROWS && fields.has(`dg${j}`); j++) {
+      const note = fields.get(`d${j}`) ?? ''
+      if (note !== (fields.get(`od${j}`) ?? '')) dietary.push({ guest_id: fields.get(`dg${j}`) ?? '', note })
+    }
     const res = this.#api.handle(bearerJson('POST', path, undefined, { answers, dietary }))
     if (res.status === 200) return redirect(303, `/t/${slug}/rsvp/${encodeURIComponent(rsvpToken)}?saved=1`, { 'referrer-policy': 'no-referrer' })
     if (res.status === 404) return GENERIC_404

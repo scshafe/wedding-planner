@@ -1424,6 +1424,7 @@ export function renderRsvpLinkMade(theme: Tenant['theme'], slug: string, wedding
     <p>Copy this link now and send it to the household. It lets them answer for their own guests until RSVPs close.</p>
     <p><input readonly value="${url}" style="width:100%" aria-label="RSVP link"></p>
     <p class="note">For their privacy the link is stored only as a fingerprint, so it cannot be shown again. If it is lost, make a new one: the old link then stops working.</p>
+    <p class="note"><strong>Do not refresh this page:</strong> that makes another new link and turns this one off.</p>
   </div>`,
     'wedding',
   )
@@ -1703,12 +1704,13 @@ export function renderHouseholdRsvp(
                 : html`<option value="${o.option_id}">${o.label}</option>`,
             )}</select></label>`
       return html`<div><input type="hidden" name="g${n}" value="${a.guest_id}"><input type="hidden" name="e${n}" value="${e.event_id}">
+        <input type="hidden" name="o${n}" value="${a.status}"><input type="hidden" name="om${n}" value="${a.meal_option_id ?? ''}">
         <p><strong>${nameOf.get(a.guest_id) ?? ''}</strong> ${radio('attending', 'Attending')} ${radio('declined', 'Declining')} ${meal}</p></div>`
     })
     return html`<div class="card"><h3>${e.name}</h3><p class="note">${[e.starts_at.replace('T', ' '), ...(e.location === undefined ? [] : [e.location])].join(' · ')}</p>${rows}</div>`
   })
   const dietary = view.guests.map(
-    (g, j) => html`<input type="hidden" name="dg${j}" value="${g.guest_id}"><label>${`Dietary needs for ${nameOf.get(g.guest_id) ?? ''} (optional)`}
+    (g, j) => html`<input type="hidden" name="dg${j}" value="${g.guest_id}"><input type="hidden" name="od${j}" value="${g.dietary ?? ''}"><label>${`Dietary needs for ${nameOf.get(g.guest_id) ?? ''} (optional)`}
       <input name="d${j}" maxlength="300" value="${g.dietary ?? ''}"${view.closed ? html` disabled` : html``}></label>`,
   )
   return themedShell(

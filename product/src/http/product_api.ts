@@ -991,6 +991,8 @@ function dispatchRsvpLinks(
 
 /** At most this many household submissions per link and window: answering is a handful of posts, never thousands. */
 const HOUSEHOLD_RSVP_RATE_LIMIT = Object.freeze({ limit: 20, windowSeconds: 600 })
+/** Reads of one link's page per window (each save reads it twice too). */
+const HOUSEHOLD_RSVP_READ_LIMIT = Object.freeze({ limit: 300, windowSeconds: 600 })
 
 /**
  * GET|POST /t/:slug/household-rsvp/:token (issue #30). The token resolves to a household grant in THIS tenant, or the
@@ -1001,7 +1003,13 @@ const HOUSEHOLD_RSVP_RATE_LIMIT = Object.freeze({ limit: 20, windowSeconds: 600 
 function handleHouseholdRsvp(context: TenantContext, req: ApiRequest, token: string, deps: HouseholdRsvpDeps): ApiResponse {
   const grant = deps.links.resolve(context, token)
   if (grant === undefined) throw routeNotFound()
-  if (req.method === 'GET') return { status: 200, body: deps.events.householdView(grant) }
+  if (req.method === 'GET') {
+    // Only a link holder gets here; a loose limit keeps one link from becoming a load generator.
+    if (!deps.limiter.attempt(`household-rsvp-read:${context.tenant_id}:${token}`, HOUSEHOLD_RSVP_READ_LIMIT)) {
+      throw new ProductError('PRODUCT.RATE_LIMITED', 'Too many requests from this link; try again later.', {})
+    }
+    return { status: 200, body: deps.events.householdView(grant) }
+  }
   if (req.method !== 'POST') throw methodNotAllowed()
   if (!deps.limiter.attempt(`household-rsvp:${context.tenant_id}:${token}`, HOUSEHOLD_RSVP_RATE_LIMIT)) {
     throw new ProductError('PRODUCT.RATE_LIMITED', 'Too many answers from this link; try again later.', {})
@@ -1013,12 +1021,12 @@ function handleHouseholdRsvp(context: TenantContext, req: ApiRequest, token: str
     const meal = optionalString(a, 'meal_option_id')
     return { guest_id: requireString(a, 'guest_id'), event_id: requireString(a, 'event_id'), status, ...(meal === undefined ? {} : { meal_option_id: meal }) }
   })
-  const dietary = boundedList(body.dietary ?? [], 40, 'dietary').map((d) => {
+  const dietary = boundedList(body.dietary ?? [], HOUSEHOLD_ANSWER_LIMITS.dietary, 'dietary').map((d) => {
     const note = d.note
     if (typeof note !== 'string') throw new ProductError('PRODUCT.BAD_REQUEST', "Field 'note' must be a string.", {})
     return { guest_id: requireString(d, 'guest_id'), note }
   })
-  deps.events.answerAsHousehold(grant, answers) // refuses while closed, before any write
+  deps.events.answerAsHousehold(grant, answers) // refuses while closed, before any write — dietary notes included
   for (const d of dietary) deps.guestList.setDietaryAsHousehold(grant, d.guest_id, d.note)
   return { status: 200, body: deps.events.householdView(grant) }
 }

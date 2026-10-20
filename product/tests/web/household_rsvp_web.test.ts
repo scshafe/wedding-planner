@@ -98,6 +98,37 @@ describe('the household RSVP pages', () => {
     expect(after).toContain('value="no nuts"')
   })
 
+  it('a junk form to a link that does not resolve is the not-found before any form work; an oversized form is refused', () => {
+    const w = setup()
+    const rows = Array.from({ length: 241 }, (_, i) => `g${i}=x&s${i}=attending&dg${i}=x`).join('&')
+    const junk = `_csrf=abc&${'a='.repeat(150_000)}&${rows}`
+    const started = performance.now()
+    const res = w.ui.handle({ method: 'POST', path: '/t/demo/rsvp/rsvp_unknown', headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: 'wp_pre=abc' }, rawBody: junk })
+    expect(performance.now() - started).toBeLessThan(100)
+    expect(res.status).toBe(404)
+    const { path } = makeLink(w)
+    const page = w.ui.handle(get(path))
+    const oversized = w.ui.handle({ method: 'POST', path, headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: preCookieOf(page) }, rawBody: `_csrf=${csrfOf(page)}&${'a=1&'.repeat(3000)}` })
+    expect(oversized.status).toBe(400)
+    expect(oversized.body).toContain('could not be saved')
+  })
+
+  it('a tab left open never reverts what the planner recorded since: only changed rows are sent', () => {
+    const w = setup()
+    const { path } = makeLink(w)
+    const stale = w.ui.handle(get(path))
+    const field = (name: string) => new RegExp(`name="${name}" value="([^"]*)"`).exec(stale.body)?.[1] as string
+    // Meanwhile the planner records Ana as declined (the household's page still shows "no answer").
+    const bearer = (w.api.handle({ method: 'POST', path: '/t/demo/sessions', headers: {}, rawBody: JSON.stringify({ role: 'planner' }) }).body as { token: string }).token
+    w.api.handle({ method: 'PUT', path: `/t/demo/weddings/${w.ours}/events/${field('e0')}/rsvps/${field('g0')}`, headers: { authorization: `Bearer ${bearer}` }, rawBody: JSON.stringify({ status: 'declined' }) })
+    // The household saves the old tab, changing only the dietary note.
+    const saved = w.ui.handle(form(path, { _csrf: csrfOf(stale), g0: field('g0'), e0: field('e0'), o0: field('o0'), om0: '', dg0: field('dg0'), od0: '', d0: 'vegan' }, preCookieOf(stale)))
+    expect(saved.status).toBe(303)
+    const after = w.ui.handle(get(path)).body
+    expect(after).toContain('value="declined" checked')
+    expect(after).toContain('value="vegan"')
+  })
+
   it('an unknown or replaced link is the console\'s generic not-found, identical to an unknown workspace', () => {
     const w = setup()
     const { path: first } = makeLink(w)

@@ -163,6 +163,35 @@ describe('the household RSVP page (WeddingEventService + GuestListService with a
     expect(w.events.guestRsvps(w.ctx, w.planner, w.ours, w.mei.guest_id).every((r) => r.answered_by !== 'household')).toBe(true)
   })
 
+  it('a household-answered plus-one follows the host\'s later invitation; one the planner set keeps theirs', () => {
+    const w = withEvents()
+    // The brunch is invite-only; the planner invited Ana, and Sam (her plus-one) follows her.
+    w.events.answerAsHousehold(w.grant, [{ guest_id: w.sam.guest_id, event_id: w.brunch.event_id, status: 'attending' }])
+    w.events.recordAnswer(w.ctx, w.planner, w.ours, w.brunch.event_id, w.ana.guest_id, { invited: false, status: 'pending' })
+    const brunch = () => w.events.view(w.ctx, w.planner, w.ours).events.find((e) => e.event.name === 'Brunch')?.counts
+    expect(brunch()).toMatchObject({ invited: 0, attending: 0 })
+    w.events.recordAnswer(w.ctx, w.planner, w.ours, w.brunch.event_id, w.ana.guest_id, { invited: true, status: 'pending' })
+    expect(brunch()).toMatchObject({ invited: 2, attending: 0 })
+    // Once the planner sets Sam's invitation, Ana's no longer moves it.
+    w.events.recordAnswer(w.ctx, w.planner, w.ours, w.brunch.event_id, w.sam.guest_id, { invited: true, status: 'attending' })
+    w.events.recordAnswer(w.ctx, w.planner, w.ours, w.brunch.event_id, w.ana.guest_id, { invited: false, status: 'pending' })
+    expect(brunch()).toMatchObject({ invited: 1, attending: 1 })
+  })
+
+  it('an answer that changes nothing writes nothing: the planner\'s recorded answer keeps its provenance', () => {
+    const w = withEvents()
+    w.events.recordAnswer(w.ctx, w.planner, w.ours, w.dinner.event_id, w.ana.guest_id, { invited: true, status: 'declined' })
+    w.events.answerAsHousehold(w.grant, [{ guest_id: w.ana.guest_id, event_id: w.dinner.event_id, status: 'declined' }])
+    expect(w.events.guestRsvps(w.ctx, w.planner, w.ours, w.ana.guest_id)[1]).toMatchObject({ status: 'declined', answered_by: 'planner' })
+  })
+
+  it('refuses control characters, line separators and bidirectional overrides in a dietary note', () => {
+    const w = withEvents()
+    for (const note of ['a\u202eb', 'a\u2028b', 'a\u0085b', 'a\u2066b']) {
+      expect(codeOf(() => w.guestList.setDietaryAsHousehold(w.grant, w.ana.guest_id, note))).toBe('PRODUCT.BAD_REQUEST')
+    }
+  })
+
   it('the planner closes RSVPs (the couple may not): the page shows it, and answers are refused', () => {
     const w = withEvents()
     expect(codeOf(() => w.events.setRsvpsClosed(w.ctx, w.couple, w.ours, true))).toBe('PRODUCT.FORBIDDEN')

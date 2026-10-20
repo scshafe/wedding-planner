@@ -42,6 +42,14 @@ minted only there (a module-private WeakSet, like `TenantContext`). It is the ho
 - **The invitation is never the household's to change:** answers go through the one answer writer with the invitation
   taken from the record or the default and `answered_by: household`. An answer for a guest outside the household, or
   for an event the guest is not invited to, refuses the whole submission (400).
+- **A plus-one keeps following their host:** a plus-one's record written by the household holds `invited` only
+  because the household answered while the plus-one was invited through the host. When the planner or the couple
+  then changes the host's invitation, that plus-one's invitation follows. A plus-one invitation the planner or the
+  couple set themselves is kept. (When an event switches from everyone to selected, guests who already answered
+  stay invited, and the planner un-invites whoever should not be there.)
+- **A stale tab never reverts newer answers:** each row carries the answer it showed, and the page sends only what
+  the household changed. On the server, an answer that changes nothing writes nothing, so the answer the planner
+  recorded keeps its provenance.
 - **Closing:** the planner closes or reopens a wedding's RSVPs on the events page (a couple gets 403). The setting is
   its own record (`wedding_rsvp_settings`), never a field on the wedding, so an older build's edit cannot drop it
   after a rollback. While closed, the page shows the answers without letting anyone change them, and a submission is
@@ -54,13 +62,18 @@ minted only there (a module-private WeakSet, like `TenantContext`). It is the ho
   any other request's.
 - **No existence oracle:** an unknown, replaced or other tenant's token, a junk token, and an unknown or suspended
   workspace are all the generic not-found page.
+- **The token before any form work:** the web handler resolves the link before reading the form. The anti-forgery
+  value is a double-submit anyone can supply, so it is no gate against a junk body: the security review measured
+  about 0.6 s of CPU per 1 MiB junk form against a handler that read the form first. The form is then indexed in
+  one pass, and a form with more fields than a full page can carry is refused.
 - **Anti-forgery:** the pre-session double-submit (`wp_pre`), as on the sign-in page.
 - **`no-referrer`:** the URL is the secret, so it must not leak in a Referer header.
 - **Request log:** the token segment logs as `:id`.
 - **Limits:**
-  - 20 submissions per link per ten minutes (429);
-  - at most 240 answers and 40 dietary notes per submission, checked before any per-item work;
-  - a dietary note is at most 300 characters, with no control characters;
+  - 20 submissions and 300 reads per link per ten minutes (429);
+  - at most 240 answers and 240 dietary notes per submission, checked before any per-item work;
+  - a dietary note is at most 300 characters, with no control characters (C0, DEL, C1), line separators or
+    bidirectional overrides;
   - a token is at most 128 characters before it is hashed;
   - the body cap is 1 MiB.
 
@@ -68,6 +81,6 @@ minted only there (a module-private WeakSet, like `TenantContext`). It is the ho
 
 - A household can answer and come back to change its answers until RSVPs close, and the counts move at once.
 - Making a new link is the only way to replace a lost one, which also turns off the one already sent. The page
-  that makes a link says so.
+  that makes a link says so, and warns that refreshing it makes another.
 - Not done: sending the link by email (the outbox could carry it later); naming a plus-one from the page; a reminder
   for households that have not answered.

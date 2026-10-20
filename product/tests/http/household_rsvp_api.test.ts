@@ -89,6 +89,12 @@ describe('/t/:slug/household-rsvp/:token and the RSVP link routes', () => {
     expect(w.call('POST', `/t/demo/household-rsvp/${w.token}`, undefined, { answers: [] }).status).toBe(409)
   })
 
+  it('reads of one link are limited too (loosely): past 300 in ten minutes, a 429', () => {
+    const w = setup()
+    for (let i = 0; i < 300; i++) expect(w.call('GET', `/t/demo/household-rsvp/${w.token}`).status).toBe(200)
+    expect(w.call('GET', `/t/demo/household-rsvp/${w.token}`).status).toBe(429)
+  })
+
   it('more than 20 submissions from one link in ten minutes are a 429, until the window passes', () => {
     const w = setup()
     const post = () => w.call('POST', `/t/demo/household-rsvp/${w.token}`, undefined, { answers: [] }).status

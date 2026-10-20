@@ -95,7 +95,7 @@ export interface WeddingEventsView {
 }
 
 /** The bounds of one household submission (raw lists, checked before any per-item work). */
-export const HOUSEHOLD_ANSWER_LIMITS = Object.freeze({ answers: 240 })
+export const HOUSEHOLD_ANSWER_LIMITS = Object.freeze({ answers: 240, dietary: 240 })
 
 /** One answer a household gives on its RSVP page: attending or declined, with a meal when attending. */
 export interface HouseholdAnswer {
@@ -233,6 +233,10 @@ export class WeddingEventService implements GuestListHooks {
       if (guest === undefined || event === undefined || !answers.invited(event, guest)) {
         throw new ProductError('PRODUCT.BAD_REQUEST', 'That answer is not for a guest of this household at an event they are invited to.', {})
       }
+      // An answer that changes nothing writes nothing (the recorded answer and who gave it stay as they are).
+      const stored = answers.rsvp(event, guest)
+      const meal = answer.status === 'attending' ? answer.meal_option_id : undefined
+      if (stored !== undefined && stored.status === answer.status && stored.meal_option_id === meal) continue
       this.#write(context, event, guest.guest_id, true, answer.status, answer.meal_option_id, 'household')
     }
   }
@@ -331,7 +335,16 @@ export class WeddingEventService implements GuestListHooks {
     this.assertReach(context, principal, wedding_id)
     const event = this.#event(context, wedding_id, event_id)
     this.#guest(context, wedding_id, guest_id)
-    return this.#write(context, event, guest_id, input.invited, input.status, input.meal_option_id, principal.role)
+    const written = this.#write(context, event, guest_id, input.invited, input.status, input.meal_option_id, principal.role)
+    // A plus-one follows their host's invitation. A plus-one answered by the household holds `invited` only because
+    // the household answered while invited through the host, so it follows a host's new invitation too; a plus-one
+    // whose invitation the planner or the couple set themselves keeps it.
+    const plusOne = this.guests.guestsOf(context, wedding_id).find((g) => g.plus_one_of === guest_id)
+    const theirs = plusOne === undefined ? undefined : this.#rsvp(context, wedding_id, event_id, plusOne.guest_id)
+    if (theirs !== undefined && theirs.answered_by === 'household' && theirs.invited !== input.invited) {
+      this.#write(context, event, theirs.guest_id, input.invited, input.invited ? theirs.status : 'pending', theirs.meal_option_id, 'household')
+    }
+    return written
   }
 
   /** The guest list's hook: these guests were removed, so forget their answers (same request, same transaction). */
