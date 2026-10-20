@@ -32,9 +32,9 @@ import type { TenantLivenessCheck } from '../tenant/tenant_store'
  *
  * Invariant: every queued or running job has its index entry (`enqueue` puts it back whenever it returns a live job).
  * The rows hold ids only — the facts are read again when the job runs — and the index holds the tenant, the job's key
- * and its due time, never tenant content. One drain runs at a time (`drain` joins the running one), one job at a time;
- * it starts after each response (`ProductApi.runDeferredWork`), at boot, and when the next job falls due (the injected
- * timer).
+ * and its due time, never tenant content. One drain runs at a time (`drain` joins the running one), one job at a time,
+ * in batches from one scan of the index, giving the event loop a turn between jobs (the injected `yieldTurn`); it starts
+ * after each response (`ProductApi.runDeferredWork`), at boot, and when the next job falls due (the injected timer).
  *
  * related: model_service.ts (the call it makes), copilot_service.ts (the first kind), ADR 0057 (the requirements).
  */
@@ -55,6 +55,8 @@ export type JobLimits = { readonly [K in keyof typeof JOB_LIMITS]: number }
 /** What a kind of job does. `execute` runs outside any transaction; `wanted`, `complete` and `failed` inside one. */
 export interface JobKind<R> {
   readonly kind: string
+  /** A job per event rather than per long-lived subject (one per guest message): its row is removed when it ends. */
+  readonly ephemeral?: boolean
   /** Whether the job is still worth running (say, its draft was discarded); `false` ends it without running. */
   wanted?(context: TenantContext, job: Job): boolean
   /** Read what the job needs (fresh) and do the slow part; the checked result. */
@@ -96,6 +98,8 @@ export class JobQueue {
     private readonly store: RecordStore,
     private readonly timer: DeadlineTimer | undefined = undefined,
     private readonly errors: { record(error: unknown, request: { readonly method: string; readonly path: string }): void } | undefined = undefined,
+    /** Gives the event loop a turn between jobs (compose passes one; absent in tests). Injected: no ambient scheduling here. */
+    private readonly yieldTurn: (() => Promise<void>) | undefined = undefined,
     private readonly limits: JobLimits = JOB_LIMITS,
   ) {
     this.#jobs = new TenantScopedRepository<Job>(liveness, (j) => groupedKey(j.kind, j.subject_id), COLLECTIONS.job, store)
@@ -162,40 +166,65 @@ export class JobQueue {
     // Entries that threw while being claimed are passed over for the rest of this drain (they never stop it).
     const passed = new Set<string>()
     for (;;) {
-      const claimed = this.store.transaction(() => this.#claim(passed))
-      if (claimed === undefined) return ran
-      ran += 1
-      await this.#run(claimed.context, claimed.job)
+      // One scan of the index per batch (not per job); a batch that claims nothing ends the drain.
+      const batch = this.store.transaction(() => this.#due(passed))
+      let claimedAny = false
+      for (const entry of batch) {
+        const claimed = this.store.transaction(() => this.#claim(entry, passed))
+        if (claimed === undefined) continue
+        claimedAny = true
+        ran += 1
+        await this.#run(claimed.context, claimed.job)
+        // Let other work (requests, /healthz) in between jobs: a model that answers at once must not starve the server.
+        if (this.yieldTurn !== undefined) await this.yieldTurn()
+      }
+      if (!claimedAny) return ran
     }
   }
 
-  /** Claim the next due job (inside a transaction, each entry in its own savepoint), or nothing. */
-  #claim(passed: Set<string>): Claim | undefined {
+  /**
+   * The entries due now, in fair order: round-robin across tenants (each tenant's first entry, then each one's second,
+   * …), the tenant that ran least recently first, then by due time. Reads only the index — no tenant data.
+   */
+  #due(passed: Set<string>): QueuedJob[] {
     const now = this.clock.now()
-    const due = this.store
+    const byDue = this.store
       .list(COLLECTIONS.jobQueue, GLOBAL_PARTITION)
       .filter((entry) => entry.due_at <= now && !passed.has(queueKey(entry.tenant_id, entry.job_key)))
-      .sort((a, b) => (this.#lastRun.get(a.tenant_id) ?? -1) - (this.#lastRun.get(b.tenant_id) ?? -1) || (a.due_at < b.due_at ? -1 : a.due_at > b.due_at ? 1 : 0))
-    for (const entry of due) {
-      try {
-        const claimed = this.store.transaction(() => this.#claimEntry(entry, now))
-        if (claimed !== undefined) {
-          this.#claims += 1
-          this.#lastRun.set(entry.tenant_id, this.#claims)
-          return claimed
-        }
-      } catch (error) {
-        passed.add(queueKey(entry.tenant_id, entry.job_key))
-        this.errors?.record(error, { method: 'JOB', path: '/jobs/claim' })
-        try {
-          // Looked at again after a lease period, not on every wake.
-          this.#index(entry.tenant_id, entry.job_key, this.#later(this.limits.lease_ms))
-        } catch {
-          // The store is failing: the next drain tries again.
-        }
+      .sort((a, b) => (a.due_at < b.due_at ? -1 : a.due_at > b.due_at ? 1 : 0))
+    const turn = new Map<string, number>()
+    const ranked = byDue.map((entry) => {
+      const rank = turn.get(entry.tenant_id) ?? 0
+      turn.set(entry.tenant_id, rank + 1)
+      return { entry, rank }
+    })
+    return ranked
+      .sort((a, b) => a.rank - b.rank || (this.#lastRun.get(a.entry.tenant_id) ?? -1) - (this.#lastRun.get(b.entry.tenant_id) ?? -1))
+      .map((r) => r.entry)
+  }
+
+  /** Claim one entry's job (inside a transaction; the entry in its own savepoint), or nothing. */
+  #claim(entry: QueuedJob, passed: Set<string>): Claim | undefined {
+    if (passed.has(queueKey(entry.tenant_id, entry.job_key))) return undefined
+    const now = this.clock.now()
+    try {
+      const claimed = this.store.transaction(() => this.#claimEntry(entry, now))
+      if (claimed !== undefined) {
+        this.#claims += 1
+        this.#lastRun.set(entry.tenant_id, this.#claims)
       }
+      return claimed
+    } catch (error) {
+      passed.add(queueKey(entry.tenant_id, entry.job_key))
+      this.errors?.record(error, { method: 'JOB', path: '/jobs/claim' })
+      try {
+        // Looked at again after a lease period, not on every wake.
+        this.#index(entry.tenant_id, entry.job_key, this.#later(this.limits.lease_ms))
+      } catch {
+        // The store is failing: the next drain tries again.
+      }
+      return undefined
     }
-    return undefined
   }
 
   /** One entry: claim its job, end it, or leave it (a suspended workspace). */
@@ -292,8 +321,11 @@ export class JobQueue {
   }
 
   #finish(context: TenantContext, job: Job, status: 'done' | 'failed', code?: string): void {
-    this.#put(context, { ...withoutTiming(job), status, ...(code === undefined ? {} : { last_error: code }), updated_at: this.clock.now() })
-    this.#unindex(context.tenant_id, groupedKey(job.kind, job.subject_id))
+    const key = groupedKey(job.kind, job.subject_id)
+    // An ephemeral kind's row goes when the job ends (its outcome lives elsewhere: a reply sent, an escalation filed).
+    if (this.#kinds.get(job.kind)?.ephemeral === true) this.#jobs.delete(context, key)
+    else this.#put(context, { ...withoutTiming(job), status, ...(code === undefined ? {} : { last_error: code }), updated_at: this.clock.now() })
+    this.#unindex(context.tenant_id, key)
   }
 
   /** Whether the stored job is still the claim `job` ran under. */

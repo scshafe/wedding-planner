@@ -60,9 +60,9 @@ A request never awaits the slow part. It **enqueues** a job and returns; the dra
 
 - **No input fingerprint.** The dedupe key is the row key (kind and subject), and the facts are read fresh when the job
   runs, so nothing would compare a fingerprint.
-- **No pruning yet.** Finished rows are overwritten by the next request for the same subject, which is enough for kinds
-  keyed by a long-lived subject (a wedding). Pruning finished rows past an age arrives with the first kind keyed per
-  event (the concierge, #60).
+- **Pruning by kind.** Finished rows are overwritten by the next request for the same subject, which is enough for kinds
+  keyed by a long-lived subject (a wedding). A kind keyed per event (the concierge, #60, ADR 0059) is `ephemeral`: its
+  rows are deleted when the job ends.
 - **`MODEL.INVALID_OUTPUT` is never retried.** The queue cannot tell a deterministic adapter (where a retry repeats the
   same answer) from a real one; with a real provider, at most one retry could be added.
 

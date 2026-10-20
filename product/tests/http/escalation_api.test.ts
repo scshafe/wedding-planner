@@ -5,7 +5,6 @@ import {
   GuestAuthorizer,
   type ApiRequest,
   BillingLedger,
-  DeterministicGuestQaResponder,
   EscalationLog,
   EscalationReplyLog,
   EscalationResolutionLog,
@@ -24,6 +23,8 @@ import {
   WeddingRepository,
 } from '@wedding-planner/product'
 
+import { conciergeWorld } from '../support/concierge_world'
+
 /**
  * Phase 26 — the escalation-inbox JSON read surface (`GET /t/:slug/escalations`). An `escalated` guest
  * question (recorded at the inbound edge) is read scoped by manageScope: a PLANNER sees the whole tenant's
@@ -41,6 +42,8 @@ const THEME: Tenant['theme'] = {
 const WH = 'wh-secret'
 
 interface World {
+  /** Run the concierge jobs an inbound message queued (issue #60). */
+  drain: () => Promise<number>
   api: ProductApi
 }
 
@@ -61,6 +64,19 @@ function makeWorld(): World {
   const replies = new EscalationReplyLog(store, new SequentialIdGenerator('seedRep'), clock)
   const messaging = new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS'))
   const guestAuthorizer = new GuestAuthorizer()
+  const cwReceipts = new InboundReceiptLog(store, new SequentialIdGenerator('seedIR'))
+  const cw = conciergeWorld({
+    tenants: store,
+    resolver: resolver,
+    clock: clock,
+    weddings: weddings,
+    registry: registry,
+    receipts: cwReceipts,
+    service: messaging,
+    escalations: escalations,
+    resolutions: resolutions,
+    replies: replies,
+  })
   const api = new ProductApi({
     resolver,
     sessionStore: sessions,
@@ -70,20 +86,10 @@ function makeWorld(): World {
     operators: new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret']),
     onboarding: new OnboardingService(store, billing),
     webhookCredentials: new ProviderWebhookCredentialStore(new SequentialIdGenerator('seedWH'), [WH]),
-    messaging: {
-      port: adapter,
-      receipts: new InboundReceiptLog(store, new SequentialIdGenerator('seedIR')),
-      registry,
-      weddings,
-      responder: new DeterministicGuestQaResponder(),
-      service: messaging,
-      escalations,
-      resolutions,
-      replies,
-    },
+    messaging: { port: adapter, receipts: cwReceipts, registry: registry, weddings: weddings, concierge: cw.concierge },
     escalations: { escalations, resolutions, replies, authorizer: guestAuthorizer, service: messaging },
   })
-  return { api }
+  return { api, drain: cw.drain }
 }
 
 function req(method: string, path: string, opts: { token?: string; body?: unknown } = {}): ApiRequest {
@@ -112,7 +118,7 @@ function registerGuest(w: World, slug: string, plannerToken: string, ref: string
 }
 
 /** Drive an UNANSWERABLE inbound (a parking question on a wedding with no parking_info) -> records an escalation. */
-function escalate(w: World, slug: string, ref: string, providerRef: string, text = 'where do I park?'): void {
+async function escalate(w: World, slug: string, ref: string, providerRef: string, text = 'where do I park?'): Promise<void> {
   const res = w.api.handle({
     method: 'POST',
     path: `/t/${slug}/messaging/inbound`,
@@ -120,6 +126,8 @@ function escalate(w: World, slug: string, ref: string, providerRef: string, text
     rawBody: JSON.stringify({ channel: 'sms', from_ref: ref, text, provider_message_ref: providerRef }),
   })
   expect(res.status).toBe(202)
+  // Issue #60: the concierge files the question in a job after the response.
+  await w.drain()
 }
 
 function listEscalations(w: World, slug: string, token?: string): { status: number; rows: GuestEscalation[] } {
@@ -134,28 +142,28 @@ describe('escalation-inbox JSON read surface', () => {
     w = makeWorld()
   })
 
-  it('a planner sees ALL of the tenant escalations (whole partition)', () => {
+  it('a planner sees ALL of the tenant escalations (whole partition)', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     const wedB = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
     registerGuest(w, 'alpha', planner, 'sms:+2', wedB)
-    escalate(w, 'alpha', 'sms:+1', 'pm_1')
-    escalate(w, 'alpha', 'sms:+2', 'pm_2')
+    await escalate(w, 'alpha', 'sms:+1', 'pm_1')
+    await escalate(w, 'alpha', 'sms:+2', 'pm_2')
 
     const { status, rows } = listEscalations(w, 'alpha', planner)
     expect(status).toBe(200)
     expect(rows.map((r) => r.provider_message_ref).sort()).toEqual(['pm_1', 'pm_2'])
   })
 
-  it('a couple sees ONLY their bound wedding escalations (a sibling wedding never appears)', () => {
+  it('a couple sees ONLY their bound wedding escalations (a sibling wedding never appears)', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     const wedB = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
     registerGuest(w, 'alpha', planner, 'sms:+2', wedB)
-    escalate(w, 'alpha', 'sms:+1', 'pm_A')
-    escalate(w, 'alpha', 'sms:+2', 'pm_B')
+    await escalate(w, 'alpha', 'sms:+1', 'pm_A')
+    await escalate(w, 'alpha', 'sms:+2', 'pm_B')
 
     const coupleA = login(w, 'alpha', { role: 'couple', wedding_id: wedA })
     const a = listEscalations(w, 'alpha', coupleA)
@@ -167,22 +175,22 @@ describe('escalation-inbox JSON read surface', () => {
     expect(listEscalations(w, 'alpha', coupleB).rows.map((r) => r.provider_message_ref)).toEqual(['pm_B'])
   })
 
-  it('a couple bound to NO escalated wedding sees an empty inbox (no leak)', () => {
+  it('a couple bound to NO escalated wedding sees an empty inbox (no leak)', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     const wedOther = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    escalate(w, 'alpha', 'sms:+1', 'pm_A')
+    await escalate(w, 'alpha', 'sms:+1', 'pm_A')
 
     const coupleOther = login(w, 'alpha', { role: 'couple', wedding_id: wedOther })
     expect(listEscalations(w, 'alpha', coupleOther).rows).toEqual([])
   })
 
-  it('is tenant-isolated: tenant beta planner never sees tenant alpha escalations', () => {
+  it('is tenant-isolated: tenant beta planner never sees tenant alpha escalations', async () => {
     const plannerA = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', plannerA)
     registerGuest(w, 'alpha', plannerA, 'sms:+1', wedA)
-    escalate(w, 'alpha', 'sms:+1', 'pm_A')
+    await escalate(w, 'alpha', 'sms:+1', 'pm_A')
 
     const plannerB = login(w, 'beta', { role: 'planner' })
     expect(listEscalations(w, 'beta', plannerB).rows).toEqual([])
@@ -197,12 +205,12 @@ describe('escalation-inbox JSON read surface', () => {
     expect(w.api.handle(req('POST', '/t/alpha/escalations')).status).toBe(401)
   })
 
-  it('an ANSWERED question never appears in the inbox (only escalations land)', () => {
+  it('an ANSWERED question never appears in the inbox (only escalations land)', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
     // "when is the wedding?" answers from event_date (required) -> no escalation.
-    escalate(w, 'alpha', 'sms:+1', 'pm_ans', 'when is the wedding?')
+    await escalate(w, 'alpha', 'sms:+1', 'pm_ans', 'when is the wedding?')
     expect(listEscalations(w, 'alpha', planner).rows).toEqual([])
   })
 })

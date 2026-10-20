@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/guest_answer_output.json",
+  "title": "GuestAnswerOutput",
+  "description": "What the model returns for a guest's question (issue #60, ADR 0059): answer with some of the concierge's fact keys, or escalate. Untrusted model output: it never carries text — the reply is worded from the trusted values of keys the projection holds, and an answer naming any other key is escalated. The count is bounded in code.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action", "facts"],
+  "properties": {
+    "action": { "enum": ["answer", "escalate"] },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(event_date|ceremony_time|venue_name|parking_info|dress_code|travel|(schedule|hotel|faq|registry):[0-9]{1,2})$"
+      }
+    }
+  }
+}

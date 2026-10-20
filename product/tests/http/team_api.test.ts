@@ -24,7 +24,7 @@ function req(method: string, path: string, opts: { token?: string; body?: unknow
 
 function setup() {
   const clock = new ManualClock('2027-06-01T00:00:00.000Z')
-  const { api } = composeProductSurface({
+  const { api, drainJobs } = composeProductSurface({
     clock,
     ids: new SequentialIdGenerator('team'),
     operatorToken: OP,
@@ -51,7 +51,7 @@ function setup() {
     expect(res.status).toBe(201)
     return res.body as { token: string; principal: { principal_id: string; role: string; wedding_id?: string } }
   }
-  return { clock, call, outbox, lastLink, ownerToken, createWedding, join, acmeId }
+  return { clock, call, outbox, lastLink, ownerToken, createWedding, join, acmeId, drainJobs }
 }
 
 describe('inviting a teammate', () => {
@@ -227,7 +227,7 @@ describe('bounded invitations', () => {
 })
 
 describe('an invited couple stays inside its own wedding — guests and questions too', () => {
-  it('guest and escalation reads are scoped to the couple\'s wedding, and removal ends the couple\'s session', () => {
+  it('guest and escalation reads are scoped to the couple\'s wedding, and removal ends the couple\'s session', async () => {
     const w = setup()
     const ours = w.createWedding('Jo & Lee')
     const theirs = w.createWedding('Sam & Kit')
@@ -237,6 +237,8 @@ describe('an invited couple stays inside its own wedding — guests and question
       w.call('POST', '/t/acme/messaging/inbound', 'team-webhook-token-0123456789', { channel: 'sms', from_ref: from, text: 'where do I park?', provider_message_ref: pmr })
     expect(inbound('sms:+15550001', 'p1').status).toBe(202)
     expect(inbound('sms:+15550002', 'p2').status).toBe(202)
+    // Issue #60: the concierge files the questions in jobs after the responses.
+    await w.drainJobs()
     const couple = w.join(w.ownerToken, { email: 'jo@couple.test', role: 'couple', wedding_id: ours })
     const guests = w.call('GET', '/t/acme/guests', couple.token).body as { guests: { recipient_ref: string }[] }
     expect(guests.guests.map((g) => g.recipient_ref)).toEqual(['sms:+15550001'])

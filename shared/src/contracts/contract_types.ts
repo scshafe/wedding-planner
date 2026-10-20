@@ -94,3 +94,6 @@ export type { WeddingDocument } from './generated/wedding_document'
 export type { CopilotDraftOutput } from './generated/copilot_draft_output'
 export type { CopilotDraft } from './generated/copilot_draft'
 export type { Job } from './generated/job'
+// The guest concierge's model output and pending questions (issue #60). ADR 0059.
+export type { GuestAnswerOutput } from './generated/guest_answer_output'
+export type { PendingGuestQuestion } from './generated/pending_guest_question'

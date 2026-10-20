@@ -1,3 +1,4 @@
+import { simulateGuestAnswer } from '../concierge/concierge_simulation'
 import { simulateCopilotDraft } from '../copilot/copilot_simulation'
 import type { SimulatedTask } from './simulated_model_adapter'
 
@@ -9,4 +10,6 @@ import type { SimulatedTask } from './simulated_model_adapter'
 export const SIMULATED_MODEL_TASKS: Readonly<Record<string, SimulatedTask>> = Object.freeze({
   // The planner copilot's draft (issue #61).
   copilot_draft: simulateCopilotDraft,
+  // The guest concierge's choice of facts (issue #60).
+  guest_answer: simulateGuestAnswer,
 })

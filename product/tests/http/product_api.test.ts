@@ -6,7 +6,6 @@ import {
   type ApiRequest,
   type ApiResponse,
   BillingLedger,
-  DeterministicGuestQaResponder,
   EscalationLog,
   EscalationReplyLog,
   EscalationResolutionLog,
@@ -25,6 +24,8 @@ import {
   WeddingRepository,
 } from '@wedding-planner/product'
 
+import { conciergeWorld } from '../support/concierge_world'
+
 /**
  * Step-3 handler-level coverage: every endpoint's happy path + the error->status map. The adversarial
  * cross-boundary cases live in the keystone (Step 5); here we prove the routes work and map correctly.
@@ -38,6 +39,8 @@ const THEME: Tenant['theme'] = {
 }
 
 interface World {
+  /** Run the concierge jobs an inbound message queued (issue #60). */
+  drain: () => Promise<number>
   api: ProductApi
   sessions: SessionStore
   weddings: WeddingRepository
@@ -64,6 +67,23 @@ function makeWorld(): World {
   const onboarding = new OnboardingService(store, billing)
   const adapter = new SimulatedMessagingAdapter(new ManualClock('2027-05-01T00:00:00.000Z'), new SequentialIdGenerator('seedM'))
   const messagingService = new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS'))
+  const cwReceipts = new InboundReceiptLog(store, new SequentialIdGenerator('seedIR'))
+  const cwRegistry = new GuestRegistry(store)
+  const cwEscalations = new EscalationLog(store, new SequentialIdGenerator('seedEsc'))
+  const cwResolutions = new EscalationResolutionLog(store, new SequentialIdGenerator('seedRes'), new ManualClock('2027-03-01T00:00:00.000Z'))
+  const cwReplies = new EscalationReplyLog(store, new SequentialIdGenerator('seedRep'), new ManualClock('2027-03-01T00:00:00.000Z'))
+  const cw = conciergeWorld({
+    tenants: store,
+    resolver: resolver,
+    clock: new ManualClock('2027-03-01T00:00:00.000Z'),
+    weddings: weddings,
+    registry: cwRegistry,
+    receipts: cwReceipts,
+    service: messagingService,
+    escalations: cwEscalations,
+    resolutions: cwResolutions,
+    replies: cwReplies,
+  })
   const api = new ProductApi({
     resolver,
     sessionStore: sessions,
@@ -73,19 +93,9 @@ function makeWorld(): World {
     operators,
     onboarding,
     webhookCredentials,
-    messaging: {
-      port: adapter,
-      receipts: new InboundReceiptLog(store, new SequentialIdGenerator('seedIR')),
-      registry: new GuestRegistry(store),
-      weddings,
-      responder: new DeterministicGuestQaResponder(),
-      service: messagingService,
-      escalations: new EscalationLog(store, new SequentialIdGenerator('seedEsc')),
-      resolutions: new EscalationResolutionLog(store, new SequentialIdGenerator('seedRes'), new ManualClock('2027-03-01T00:00:00.000Z')),
-      replies: new EscalationReplyLog(store, new SequentialIdGenerator('seedRep'), new ManualClock('2027-03-01T00:00:00.000Z')),
-    },
+    messaging: { port: adapter, receipts: cwReceipts, registry: cwRegistry, weddings: weddings, concierge: cw.concierge },
   })
-  return { api, sessions, weddings, resolver }
+  return { api, sessions, weddings, resolver, drain: cw.drain }
 }
 
 function req(method: string, path: string, opts: { token?: string; body?: unknown } = {}): ApiRequest {

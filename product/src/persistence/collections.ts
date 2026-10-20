@@ -24,6 +24,7 @@ import type {
   WeddingDocument,
   CopilotDraft,
   Job,
+  PendingGuestQuestion,
 } from '@wedding-planner/shared'
 
 import type { AccountEmailIndex, UserAccount } from '../accounts/account_store'
@@ -148,4 +149,6 @@ export const COLLECTIONS = Object.freeze({
   jobQueue: collection<QueuedJob>('job_queue', 'global'),
   /** Key wedding_id: the planner copilot's draft (issue #61). */
   copilotDraft: collection<CopilotDraft>('copilot_draft', 'tenant', 'copilot_draft'),
+  /** Key question_id (a hash of the provider's ref): a guest's question waiting for the concierge's job (issue #60). */
+  pendingGuestQuestion: collection<PendingGuestQuestion>('pending_guest_question', 'tenant', 'pending_guest_question'),
 })

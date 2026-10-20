@@ -10,7 +10,7 @@
     "job_id": { "type": "string", "minLength": 1, "maxLength": 128 },
     "tenant_id": { "type": "string", "minLength": 1, "description": "The owning tenant. Compared to the context's tenant only; never selects the partition." },
     "kind": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
-    "subject_id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "What the job is about (a wedding id)." },
+    "subject_id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "What the job is about: a wedding id, or a hash of a guest message's ref (per kind)." },
     "requested_by": { "type": "string", "minLength": 1, "maxLength": 128 },
     "status": { "enum": ["queued", "running", "done", "failed"] },
     "attempts": { "type": "integer", "minimum": 0, "maximum": 100 },

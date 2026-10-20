@@ -52,8 +52,8 @@ describe('composeProductSurface — the wired surface boots demoable', () => {
     expect(res.status).toBe(200)
   })
 
-  it('the seeded demo guest can text in and gets a metered reply end-to-end (Phase 19)', () => {
-    const { api, messaging, demo } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+  it('the seeded demo guest can text in and gets a metered reply end-to-end (Phase 19)', async () => {
+    const { api, messaging, demo, drainJobs } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
     expect(demo?.guestRecipientRef).toBe('sms:+15550100')
     const res = api.handle({
       method: 'POST',
@@ -67,6 +67,8 @@ describe('composeProductSurface — the wired surface boots demoable', () => {
       }),
     })
     expect(res).toEqual({ status: 202, body: { status: 'accepted' } })
+    // Issue #60: the concierge answers in a job after the response.
+    await drainJobs()
     // The meter fired through the wired surface: one usage_charge for the demo tenant.
     const usage = messaging.usageView(demo?.tenantId ?? '')
     expect(usage.message_count).toBe(1)
@@ -228,13 +230,14 @@ describe('composeProductSurface — Phase 23 e2e: a browser-set logistic reaches
     }
   }
 
-  it('a planner sets dress_code via the BROWSER edit form, then a guest texting "dress code" gets a metered reply (escalated→answered)', () => {
-    const { ui, api, messaging, demo } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+  it('a planner sets dress_code via the BROWSER edit form, then a guest texting "dress code" gets a metered reply (escalated→answered)', async () => {
+    const { ui, api, messaging, demo, drainJobs } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
     const ref = demo?.guestRecipientRef as string
     const tenantId = demo?.tenantId as string
 
     // BEFORE: dress_code is unset on the demo wedding, so the question ESCALATES — no send, no meter.
     expect(api.handle(dressCodeInbound(ref, 'pmr_before')).status).toBe(202)
+    await drainJobs()
     expect(messaging.usageView(tenantId).message_count).toBe(0)
 
     // The planner logs in through the HTML front door and sets the dress code via the edit form.
@@ -254,6 +257,7 @@ describe('composeProductSurface — Phase 23 e2e: a browser-set logistic reaches
 
     // AFTER: the SAME question is now ANSWERED from the browser-set fact — one metered reply fires.
     expect(api.handle(dressCodeInbound(ref, 'pmr_after')).status).toBe(202)
+    await drainJobs()
     const usage = messaging.usageView(tenantId)
     expect(usage.message_count).toBe(1)
     expect(usage.billed_total_cents).toBeGreaterThan(0)
@@ -274,6 +278,7 @@ describe('composeProductSurface — Phase 23 e2e: a browser-set logistic reaches
     )
     expect(clearedRes.status).toBe(303)
     expect(api.handle(dressCodeInbound(ref, 'pmr_cleared')).status).toBe(202)
+    await drainJobs()
     expect(messaging.usageView(tenantId).message_count).toBe(1) // escalated again -> no new metered reply
   })
 })
@@ -296,14 +301,15 @@ describe('composeProductSurface — Phase 26 e2e: the guest→couple escalation 
     }
   }
 
-  it('a guest asks an unanswerable question → the COUPLE sees it in the inbox → fills the fact → the next ask is answered', () => {
-    const { ui, api, messaging, demo } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+  it('a guest asks an unanswerable question → the COUPLE sees it in the inbox → fills the fact → the next ask is answered', async () => {
+    const { ui, api, messaging, demo, drainJobs } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
     const ref = demo?.guestRecipientRef as string
     const tenantId = demo?.tenantId as string
     const weddingId = demo?.weddingId as string
 
     // A guest texts an unanswerable parking question (parking_info unset) → escalates, no meter, RECORDED.
     expect(api.handle(inbound(ref, 'pmr_q1', 'where do I park?')).status).toBe(202)
+    await drainJobs()
     expect(messaging.usageView(tenantId).message_count).toBe(0)
 
     // The COUPLE logs in via the HTML front door and opens the escalation inbox — the question is there.
@@ -329,14 +335,16 @@ describe('composeProductSurface — Phase 26 e2e: the guest→couple escalation 
 
     // The SAME question (fresh provider ref) is now ANSWERED from the couple-set fact — one metered reply fires.
     expect(api.handle(inbound(ref, 'pmr_q2', 'where do I park?')).status).toBe(202)
+    await drainJobs()
     expect(messaging.usageView(tenantId).message_count).toBe(1)
   })
 
-  it('an UNTRUSTED guest question is HTML-escaped in the rendered inbox (no stored XSS)', () => {
-    const { ui, api, demo } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+  it('an UNTRUSTED guest question is HTML-escaped in the rendered inbox (no stored XSS)', async () => {
+    const { ui, api, demo, drainJobs } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
     const ref = demo?.guestRecipientRef as string
     // A hostile question with no logistics keyword classifies as 'unknown' → escalates → recorded verbatim.
     api.handle(inbound(ref, 'pmr_xss', '<script>alert(1)</script>'))
+    await drainJobs()
 
     const loginRes = ui.handle(form('POST', '/t/demo/login', { role: 'planner' }))
     const cookie = `wp_session=${/wp_session=([^;]+)/.exec(loginRes.headers['set-cookie'] ?? '')?.[1]}`
@@ -370,13 +378,14 @@ describe('composeProductSurface — Phase 27 e2e: resolving an escalation clears
     }
   }
 
-  it('the couple marks an escalated question handled via the browser form → it moves to Handled, idempotently', () => {
-    const { ui, api, demo } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+  it('the couple marks an escalated question handled via the browser form → it moves to Handled, idempotently', async () => {
+    const { ui, api, demo, drainJobs } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
     const ref = demo?.guestRecipientRef as string
     const weddingId = demo?.weddingId as string
 
     // A guest texts an unanswerable parking question → escalated, recorded in the inbox.
     expect(api.handle(inbound(ref, 'pmr_q1', 'where do I park?')).status).toBe(202)
+    await drainJobs()
 
     // The couple logs in and opens the inbox — the question is Open with a Resolve/Dismiss form.
     const loginRes = ui.handle(form('POST', '/t/demo/login', { role: 'couple', wedding_id: weddingId }))
@@ -407,14 +416,15 @@ describe('composeProductSurface — Phase 27 e2e: resolving an escalation clears
     expect(final.body).not.toContain('Dismissed by couple')
   })
 
-  it('Phase 28: the couple REPLIES to an escalated guest via the browser form → a metered send goes out + it moves to Handled', () => {
-    const { ui, api, demo, messaging } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
+  it('Phase 28: the couple REPLIES to an escalated guest via the browser form → a metered send goes out + it moves to Handled', async () => {
+    const { ui, api, demo, messaging, drainJobs } = composeProductSurface(baseConfig({ demoSlug: 'demo' }))
     const ref = demo?.guestRecipientRef as string
     const weddingId = demo?.weddingId as string
     const tenantId = demo?.tenantId as string
 
     // A guest texts an unanswerable parking question → escalated, recorded in the inbox.
     expect(api.handle(inbound(ref, 'pmr_reply_1', 'where do I park?')).status).toBe(202)
+    await drainJobs()
     expect(messaging.usageView(tenantId).message_count).toBe(0) // nothing answered/sent yet
 
     // The couple logs in, opens the inbox — the question is Open with a Reply form.

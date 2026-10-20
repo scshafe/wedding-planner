@@ -6,7 +6,6 @@ import {
   type ApiRequest,
   type ApiResponse,
   BillingLedger,
-  DeterministicGuestQaResponder,
   EscalationLog,
   EscalationReplyLog,
   EscalationResolutionLog,
@@ -24,6 +23,8 @@ import {
   WeddingAuthorizer,
   WeddingRepository,
 } from '@wedding-planner/product'
+
+import { conciergeWorld } from '../support/concierge_world'
 
 /**
  * Phase 28/34 — `POST /t/:slug/escalations` with a `reply_text` REPLIES to an escalated guest from the inbox: a
@@ -47,6 +48,8 @@ const THEME: Tenant['theme'] = {
 const WH = 'wh-secret'
 
 interface World {
+  /** Run the concierge jobs an inbound message queued (issue #60). */
+  drain: () => Promise<number>
   api: ProductApi
   messaging: MessagingService
   resolver: TenantContextResolver
@@ -68,6 +71,19 @@ function makeWorld(): World {
   const replies = new EscalationReplyLog(store, new SequentialIdGenerator('seedRep'), clock)
   const messaging = new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS'))
   const guestAuthorizer = new GuestAuthorizer()
+  const cwReceipts = new InboundReceiptLog(store, new SequentialIdGenerator('seedIR'))
+  const cw = conciergeWorld({
+    tenants: store,
+    resolver: resolver,
+    clock: clock,
+    weddings: weddings,
+    registry: registry,
+    receipts: cwReceipts,
+    service: messaging,
+    escalations: escalations,
+    resolutions: resolutions,
+    replies: replies,
+  })
   const api = new ProductApi({
     resolver,
     sessionStore: sessions,
@@ -77,20 +93,10 @@ function makeWorld(): World {
     operators: new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret']),
     onboarding: new OnboardingService(store, billing),
     webhookCredentials: new ProviderWebhookCredentialStore(new SequentialIdGenerator('seedWH'), [WH]),
-    messaging: {
-      port: adapter,
-      receipts: new InboundReceiptLog(store, new SequentialIdGenerator('seedIR')),
-      registry,
-      weddings,
-      responder: new DeterministicGuestQaResponder(),
-      service: messaging,
-      escalations,
-      resolutions,
-      replies,
-    },
+    messaging: { port: adapter, receipts: cwReceipts, registry: registry, weddings: weddings, concierge: cw.concierge },
     escalations: { escalations, resolutions, replies, authorizer: guestAuthorizer, service: messaging },
   })
-  return { api, messaging, resolver }
+  return { api, messaging, resolver, drain: cw.drain }
 }
 
 function req(method: string, path: string, opts: { token?: string; body?: unknown } = {}): ApiRequest {
@@ -119,7 +125,7 @@ function registerGuest(w: World, slug: string, plannerToken: string, ref: string
 }
 
 /** Drive an UNANSWERABLE inbound -> records an escalation; return its server-minted id. */
-function escalate(w: World, slug: string, plannerToken: string, ref: string, providerRef: string, channel = 'sms'): string {
+async function escalate(w: World, slug: string, plannerToken: string, ref: string, providerRef: string, channel = 'sms'): Promise<string> {
   const res = w.api.handle({
     method: 'POST',
     path: `/t/${slug}/messaging/inbound`,
@@ -127,6 +133,8 @@ function escalate(w: World, slug: string, plannerToken: string, ref: string, pro
     rawBody: JSON.stringify({ channel, from_ref: ref, text: 'where do I park?', provider_message_ref: providerRef }),
   })
   expect(res.status).toBe(202)
+  // Issue #60: the concierge files the question in a job after the response.
+  await w.drain()
   const listed = w.api.handle(req('GET', `/t/${slug}/escalations`, { token: plannerToken }))
   const row = (listed.body as { escalations: GuestEscalation[] }).escalations.find((e) => e.provider_message_ref === providerRef)
   expect(row).toBeDefined()
@@ -165,11 +173,11 @@ describe('escalation reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
     w = makeWorld()
   })
 
-  it('a planner reply sends a metered message + appends to the thread, and the escalation STAYS OPEN (no auto-resolve)', () => {
+  it('a planner reply sends a metered message + appends to the thread, and the escalation STAYS OPEN (no auto-resolve)', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
 
     const res = reply(w, 'alpha', planner, escId, { seq: 0 })
     expect(res.status).toBe(200)
@@ -188,11 +196,11 @@ describe('escalation reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
     ])
   })
 
-  it('multi-turn: a SECOND distinct reply at seq=1 sends again (the thread grows; nothing is resolved)', () => {
+  it('multi-turn: a SECOND distinct reply at seq=1 sends again (the thread grows; nothing is resolved)', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
 
     expect(reply(w, 'alpha', planner, escId, { seq: 0, reply_text: 'Parking is in lot B.' }).body).toEqual({ replied: true })
     expect(reply(w, 'alpha', planner, escId, { seq: 1, reply_text: 'By the oak tree.' }).body).toEqual({ replied: true })
@@ -202,11 +210,11 @@ describe('escalation reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
     expect(listResolutions(w, 'alpha', planner)).toHaveLength(0)
   })
 
-  it('a couple replies ONLY to their bound wedding escalation (sender: couple)', () => {
+  it('a couple replies ONLY to their bound wedding escalation (sender: couple)', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
 
     const coupleA = login(w, 'alpha', { role: 'couple', wedding_id: wedA })
     expect(reply(w, 'alpha', coupleA, escId, { seq: 0 }).body).toEqual({ replied: true })
@@ -214,22 +222,22 @@ describe('escalation reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
     expect(listReplies(w, 'alpha', coupleA)[0]).toMatchObject({ sender: 'couple' })
   })
 
-  it('the reply channel is the GUEST-chosen inbound channel (whatsapp asked -> whatsapp reply)', () => {
+  it('the reply channel is the GUEST-chosen inbound channel (whatsapp asked -> whatsapp reply)', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'wa:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'wa:+1', 'pm_w', 'whatsapp')
+    const escId = await escalate(w, 'alpha', planner, 'wa:+1', 'pm_w', 'whatsapp')
     expect(reply(w, 'alpha', planner, escId, { seq: 0 }).body).toEqual({ replied: true })
     expect(usage(w, 'alpha').records[0]).toMatchObject({ recipient_ref: 'wa:+1', channel: 'whatsapp' })
   })
 
-  it('NO-ORACLE: a couple replying to an ABSENT id and a SIBLING-WEDDING id get the BYTE-IDENTICAL {replied:false}, NO send', () => {
+  it('NO-ORACLE: a couple replying to an ABSENT id and a SIBLING-WEDDING id get the BYTE-IDENTICAL {replied:false}, NO send', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     const wedB = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
     registerGuest(w, 'alpha', planner, 'sms:+2', wedB)
-    const escB = escalate(w, 'alpha', planner, 'sms:+2', 'pm_B') // an escalation in wedding B
+    const escB = await escalate(w, 'alpha', planner, 'sms:+2', 'pm_B') // an escalation in wedding B
 
     const coupleA = login(w, 'alpha', { role: 'couple', wedding_id: wedA })
     const absent = reply(w, 'alpha', coupleA, 'escalation_does_not_exist', { seq: 0 })
@@ -243,11 +251,11 @@ describe('escalation reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
     expect(listReplies(w, 'alpha', planner)).toHaveLength(0)
   })
 
-  it('double-submit: same seq + same body meters exactly ONCE (idempotent); same seq + DIFFERENT body -> 409', () => {
+  it('double-submit: same seq + same body meters exactly ONCE (idempotent); same seq + DIFFERENT body -> 409', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
 
     expect(reply(w, 'alpha', planner, escId, { seq: 0, reply_text: 'X' }).body).toEqual({ replied: true })
     // Re-submit of the SAME rendered form (same seq + same body) -> idempotent success, NO second send.
@@ -264,11 +272,11 @@ describe('escalation reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
     expect(listReplies(w, 'alpha', planner).map((r) => r.body)).toEqual(['X'])
   })
 
-  it('an already-DISMISSED escalation cannot be replied to (no billed message to an ignored guest — keystone)', () => {
+  it('an already-DISMISSED escalation cannot be replied to (no billed message to an ignored guest — keystone)', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
     // Dismiss it first (status-based resolve), then attempt a reply.
     expect(w.api.handle(req('POST', `/t/alpha/escalations`, { token: planner, body: { escalation_id: escId, status: 'dismissed' } })).body).toEqual({ resolved: true })
     expect(reply(w, 'alpha', planner, escId, { seq: 0 }).body).toEqual({ replied: false })
@@ -276,21 +284,21 @@ describe('escalation reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
     expect(listReplies(w, 'alpha', planner)).toHaveLength(0)
   })
 
-  it('an already-RESOLVED escalation cannot be replied to (a closed escalation accepts no further reply)', () => {
+  it('an already-RESOLVED escalation cannot be replied to (a closed escalation accepts no further reply)', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
     expect(w.api.handle(req('POST', `/t/alpha/escalations`, { token: planner, body: { escalation_id: escId, status: 'resolved' } })).body).toEqual({ resolved: true })
     expect(reply(w, 'alpha', planner, escId, { seq: 0 }).body).toEqual({ replied: false })
     expect(usage(w, 'alpha').message_count).toBe(0)
   })
 
-  it('Phase 36 keystone-CONDITIONAL: a REOPENED escalation accepts a reply again (dismiss blocks → reopen re-enables one billed send)', () => {
+  it('Phase 36 keystone-CONDITIONAL: a REOPENED escalation accepts a reply again (dismiss blocks → reopen re-enables one billed send)', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
     // Dismiss → the no-bill gate blocks the reply (terminal-style, exactly as before).
     expect(w.api.handle(req('POST', `/t/alpha/escalations`, { token: planner, body: { escalation_id: escId, status: 'dismissed' } })).body).toEqual({ resolved: true })
     expect(reply(w, 'alpha', planner, escId, { seq: 0 }).body).toEqual({ replied: false })
@@ -302,11 +310,11 @@ describe('escalation reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
     expect(listReplies(w, 'alpha', planner).map((r) => r.body)).toEqual(['Parking is in lot B.'])
   })
 
-  it('Phase 37 keystone-CONDITIONAL: a GUEST follow-up auto-reopens a resolved escalation → an operator reply now sends one billed message', () => {
+  it('Phase 37 keystone-CONDITIONAL: a GUEST follow-up auto-reopens a resolved escalation → an operator reply now sends one billed message', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1') // E1 OPEN
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1') // E1 OPEN
     // Operator resolves → the Phase-28/36 no-bill gate blocks a reply (effectiveStatus !== 'open').
     expect(w.api.handle(req('POST', `/t/alpha/escalations`, { token: planner, body: { escalation_id: escId, status: 'resolved' } })).body).toEqual({ resolved: true })
     expect(reply(w, 'alpha', planner, escId, { seq: 0 }).body).toEqual({ replied: false })
@@ -317,6 +325,7 @@ describe('escalation reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
       req('POST', `/t/alpha/messaging/inbound`, { token: WH, body: { channel: 'sms', from_ref: 'sms:+1', text: 'where do I park?', provider_message_ref: 'pm_followup' } }),
     )
     expect(followup.status).toBe(202)
+    await w.drain()
     expect(usage(w, 'alpha').message_count).toBe(0) // the guest turn carries NO send
     expect(listReplies(w, 'alpha', planner)).toEqual([{ ...listReplies(w, 'alpha', planner)[0], escalation_id: escId, seq: 0, sender: 'guest', body: 'where do I park?' }])
     // E1 is effective-open again → the operator reply (seq 1, after the guest turn) now sends EXACTLY one billed message.
@@ -324,11 +333,11 @@ describe('escalation reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
     expect(usage(w, 'alpha').message_count).toBe(1)
   })
 
-  it('a malformed reply (missing/empty reply_text) is a masked 400 INDEPENDENT of existence (no oracle)', () => {
+  it('a malformed reply (missing/empty reply_text) is a masked 400 INDEPENDENT of existence (no oracle)', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
     // Present escalation, empty reply_text -> 400. Absent escalation, empty reply_text -> the SAME 400.
     const present = w.api.handle(req('POST', `/t/alpha/escalations`, { token: planner, body: { escalation_id: escId, reply_text: '', seq: 0 } }))
     const absent = w.api.handle(req('POST', `/t/alpha/escalations`, { token: planner, body: { escalation_id: 'nope', reply_text: '', seq: 0 } }))
@@ -338,11 +347,11 @@ describe('escalation reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
     expect(usage(w, 'alpha').message_count).toBe(0)
   })
 
-  it('a malformed/absent seq is a masked 400 INDEPENDENT of existence (no oracle); never defaulted', () => {
+  it('a malformed/absent seq is a masked 400 INDEPENDENT of existence (no oracle); never defaulted', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
     // A present escalation with a bad/absent seq, and an absent escalation with a bad seq, 400 BYTE-IDENTICALLY.
     for (const seqVal of [undefined, -1, 1.5, 'abc'] as const) {
       const presentBody: Record<string, unknown> = { escalation_id: escId, reply_text: 'hi' }
@@ -360,21 +369,21 @@ describe('escalation reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
     expect(usage(w, 'alpha').message_count).toBe(0)
   })
 
-  it('transcript: the operator reply is PERSISTED on the thread + read back via the scoped GET', () => {
+  it('transcript: the operator reply is PERSISTED on the thread + read back via the scoped GET', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
 
     expect(reply(w, 'alpha', planner, escId, { seq: 0, reply_text: 'Parking is in lot B, by the oak tree.' }).body).toEqual({ replied: true })
     expect(listReplies(w, 'alpha', planner).find((r) => r.escalation_id === escId)?.body).toBe('Parking is in lot B, by the oak tree.')
   })
 
-  it('a resolve-FORM resolution (no reply) appends NO thread message', () => {
+  it('a resolve-FORM resolution (no reply) appends NO thread message', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
 
     // Resolve via the status form (Phase 27 path), not a reply -> no send, no thread message.
     expect(w.api.handle(req('POST', `/t/alpha/escalations`, { token: planner, body: { escalation_id: escId, status: 'resolved' } })).status).toBe(200)
@@ -383,11 +392,11 @@ describe('escalation reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
     expect(usage(w, 'alpha').message_count).toBe(0)
   })
 
-  it('tenant isolation: a planner cannot reply to another tenant escalation (id is absent in their partition)', () => {
+  it('tenant isolation: a planner cannot reply to another tenant escalation (id is absent in their partition)', async () => {
     const plannerA = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', plannerA)
     registerGuest(w, 'alpha', plannerA, 'sms:+1', wedA)
-    const escA = escalate(w, 'alpha', plannerA, 'sms:+1', 'pm_1')
+    const escA = await escalate(w, 'alpha', plannerA, 'sms:+1', 'pm_1')
 
     const plannerB = login(w, 'beta', { role: 'planner' })
     expect(reply(w, 'beta', plannerB, escA, { seq: 0 }).body).toEqual({ replied: false })

@@ -15,7 +15,7 @@ job_id: string
 tenant_id: string
 kind: string
 /**
- * What the job is about (a wedding id).
+ * What the job is about: a wedding id, or a hash of a guest message's ref (per kind).
  */
 subject_id: string
 requested_by: string

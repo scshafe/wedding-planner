@@ -7,7 +7,6 @@ import {
   type ApiRequest,
   type HttpResult,
   BillingLedger,
-  DeterministicGuestQaResponder,
   EscalationLog,
   EscalationReplyLog,
   EscalationResolutionLog,
@@ -27,6 +26,8 @@ import {
   WeddingRepository,
 } from '@wedding-planner/product'
 
+import { conciergeWorld } from '../support/concierge_world'
+
 /**
  * Phase 30 — the planner billing & usage browser page (?view=billing). The page delegates through the
  * planner-only JSON GET /t/:slug/billing and themes strictly by status: a planner sees their own summary, a
@@ -43,6 +44,8 @@ const THEME: Tenant['theme'] = {
 const WH = 'wh-secret'
 
 interface World {
+  /** Run the concierge jobs an inbound message queued (issue #60). */
+  drain: () => Promise<number>
   ui: ProductWebUi
   api: ProductApi
 }
@@ -61,6 +64,19 @@ function makeWorld(): World {
   const replies = new EscalationReplyLog(store, new SequentialIdGenerator('seedRep'), clock)
   const messaging = new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS'))
   const guestAuthorizer = new GuestAuthorizer()
+  const cwReceipts = new InboundReceiptLog(store, new SequentialIdGenerator('seedIR'))
+  const cw = conciergeWorld({
+    tenants: store,
+    resolver: new TenantContextResolver(store),
+    clock: clock,
+    weddings: weddings,
+    registry: registry,
+    receipts: cwReceipts,
+    service: messaging,
+    escalations: escalations,
+    resolutions: resolutions,
+    replies: replies,
+  })
   const api = new ProductApi({
     resolver: new TenantContextResolver(store),
     sessionStore: sessions,
@@ -70,21 +86,11 @@ function makeWorld(): World {
     weddings,
     authorizer: new WeddingAuthorizer(),
     guests: { registry, weddings, authorizer: guestAuthorizer },
-    messaging: {
-      port: adapter,
-      receipts: new InboundReceiptLog(store, new SequentialIdGenerator('seedIR')),
-      registry,
-      weddings,
-      responder: new DeterministicGuestQaResponder(),
-      service: messaging,
-      escalations,
-      resolutions,
-      replies,
-    },
+    messaging: { port: adapter, receipts: cwReceipts, registry: registry, weddings: weddings, concierge: cw.concierge },
     escalations: { escalations, resolutions, replies, authorizer: guestAuthorizer, service: messaging },
     billing: { ledger: billing, tenants: store, authorizer: guestAuthorizer },
   })
-  return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store), csrf: sessions }), api }
+  return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store), csrf: sessions }), api, drain: cw.drain }
 }
 
 function get(ui: ProductWebUi, path: string, cookie?: string): HttpResult {
@@ -115,13 +121,15 @@ function escalationIdFrom(html: string): string {
 }
 
 /** Planner creates a wedding + registers a guest + drives an UNANSWERABLE inbound → one OPEN escalation. */
-function seedEscalation(api: ProductApi, slug: string): string {
+async function seedEscalation(api: ProductApi, slug: string, drain: () => Promise<number>): Promise<string> {
   const token = (api.handle({ method: 'POST', path: `/t/${slug}/sessions`, headers: {}, rawBody: JSON.stringify({ role: 'planner' }) }).body as { token: string }).token
   const auth = { authorization: `Bearer ${token}`, 'content-type': 'application/json' }
   const create = api.handle({ method: 'POST', path: `/t/${slug}/weddings`, headers: auth, rawBody: JSON.stringify({ couple_display_name: 'Alex & Sam', event_date: '2029-05-05' }) })
   const weddingId = (create.body as { wedding: { wedding_id: string } }).wedding.wedding_id
   api.handle({ method: 'POST', path: `/t/${slug}/guests`, headers: auth, rawBody: JSON.stringify({ recipient_ref: 'sms:+15550100', wedding_id: weddingId, guest_id: 'g1' }) })
   api.handle({ method: 'POST', path: `/t/${slug}/messaging/inbound`, headers: { authorization: `Bearer ${WH}`, 'content-type': 'application/json' }, rawBody: JSON.stringify({ channel: 'sms', from_ref: 'sms:+15550100', text: 'where do I park?', provider_message_ref: 'pm_1' }) })
+  // Issue #60: the concierge files the question in a job after the response.
+  await drain()
   return weddingId
 }
 
@@ -143,9 +151,9 @@ describe('billing page (?view=billing)', () => {
     expect(res.body).toContain('$0.00 owed')
   })
 
-  it('the meter→bill→customer loop: a metered guest reply raises the customer-visible usage + balance', () => {
-    const { ui, api } = makeWorld()
-    seedEscalation(api, 'acme')
+  it('the meter→bill→customer loop: a metered guest reply raises the customer-visible usage + balance', async () => {
+    const { ui, api, drain } = makeWorld()
+    await seedEscalation(api, 'acme', drain)
     const cookie = loginCookie(ui, 'acme', 'planner')
     const page = get(ui, '/t/acme?view=escalations', cookie).body as string
     const sent = postForm(ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(page), escalation_id: escalationIdFrom(page), reply_text: 'Parking is in lot B.', seq: '0' }, cookie)
@@ -156,9 +164,9 @@ describe('billing page (?view=billing)', () => {
     expect(billing).toContain('$0.06 owed')
   })
 
-  it('a couple is themed Forbidden (403) — billing is a planner-only capability', () => {
-    const { ui, api } = makeWorld()
-    const weddingId = seedEscalation(api, 'acme')
+  it('a couple is themed Forbidden (403) — billing is a planner-only capability', async () => {
+    const { ui, api, drain } = makeWorld()
+    const weddingId = await seedEscalation(api, 'acme', drain)
     const cookie = loginCookie(ui, 'acme', 'couple', weddingId)
     const res = get(ui, '/t/acme?view=billing', cookie)
     expect(res.status).toBe(403)
@@ -181,17 +189,17 @@ describe('billing page (?view=billing)', () => {
 
 describe('billing Pay form (Phase 31 — settle the owed balance)', () => {
   /** Drive a metered guest reply so the tenant owes a balance; return the planner cookie. */
-  function oweBalance(ui: ProductWebUi, api: ProductApi): string {
-    seedEscalation(api, 'acme')
+  async function oweBalance(ui: ProductWebUi, api: ProductApi, drain: () => Promise<number>): Promise<string> {
+    await seedEscalation(api, 'acme', drain)
     const cookie = loginCookie(ui, 'acme', 'planner')
     const inbox = get(ui, '/t/acme?view=escalations', cookie).body as string
     postForm(ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(inbox), escalation_id: escalationIdFrom(inbox), reply_text: 'Parking is in lot B.', seq: '0' }, cookie)
     return cookie
   }
 
-  it('the full meter→bill→customer→pay loop: a planner pays and the page then shows $0.00 owed', () => {
-    const { ui, api } = makeWorld()
-    const cookie = oweBalance(ui, api)
+  it('the full meter→bill→customer→pay loop: a planner pays and the page then shows $0.00 owed', async () => {
+    const { ui, api, drain } = makeWorld()
+    const cookie = await oweBalance(ui, api, drain)
     const billing = get(ui, '/t/acme?view=billing', cookie).body as string
     expect(billing).toContain('$0.06 owed')
     expect(billing).toContain('action="/t/acme/billing/pay"')
@@ -205,9 +213,9 @@ describe('billing Pay form (Phase 31 — settle the owed balance)', () => {
     expect(settled).not.toContain('/billing/pay') // no Pay form once settled
   })
 
-  it('a forged CSRF token is a masked 403 and records NO payment (the balance is unchanged)', () => {
-    const { ui, api } = makeWorld()
-    const cookie = oweBalance(ui, api)
+  it('a forged CSRF token is a masked 403 and records NO payment (the balance is unchanged)', async () => {
+    const { ui, api, drain } = makeWorld()
+    const cookie = await oweBalance(ui, api, drain)
     const res = postForm(ui, '/t/acme/billing/pay', { _csrf: 'forged-not-the-token' }, cookie)
     expect(res.status).toBe(403)
     // The balance is untouched — a forged Pay never settled anything.
@@ -225,9 +233,9 @@ describe('billing Pay form (Phase 31 — settle the owed balance)', () => {
     expect(get(ui, '/t/acme?view=billing', cookie).body).toContain('$0.00 owed')
   })
 
-  it('a couple cannot reach the Pay form (themed Forbidden) and a forged-cookie POST mutates nothing', () => {
-    const { ui, api } = makeWorld()
-    const weddingId = seedEscalation(api, 'acme')
+  it('a couple cannot reach the Pay form (themed Forbidden) and a forged-cookie POST mutates nothing', async () => {
+    const { ui, api, drain } = makeWorld()
+    const weddingId = await seedEscalation(api, 'acme', drain)
     // The planner owes a balance.
     const plannerCookie = loginCookie(ui, 'acme', 'planner')
     const inbox = get(ui, '/t/acme?view=escalations', plannerCookie).body as string
@@ -256,9 +264,9 @@ describe('billing activity card (Phase 32 — the itemized line items)', () => {
     expect(billing).toContain('No activity yet.')
   })
 
-  it('the meter→bill→pay loop itemizes: the activity lists the messaging usage and then the payment', () => {
-    const { ui, api } = makeWorld()
-    seedEscalation(api, 'acme')
+  it('the meter→bill→pay loop itemizes: the activity lists the messaging usage and then the payment', async () => {
+    const { ui, api, drain } = makeWorld()
+    await seedEscalation(api, 'acme', drain)
     const cookie = loginCookie(ui, 'acme', 'planner')
     // A metered guest reply accrues a usage_charge.
     const inbox = get(ui, '/t/acme?view=escalations', cookie).body as string
@@ -277,9 +285,9 @@ describe('billing activity card (Phase 32 — the itemized line items)', () => {
     expect(activitySection.indexOf('Payment')).toBeLessThan(activitySection.indexOf('Messaging usage'))
   })
 
-  it('a couple never sees the activity card (themed Forbidden — billing is planner-only)', () => {
-    const { ui, api } = makeWorld()
-    const weddingId = seedEscalation(api, 'acme')
+  it('a couple never sees the activity card (themed Forbidden — billing is planner-only)', async () => {
+    const { ui, api, drain } = makeWorld()
+    const weddingId = await seedEscalation(api, 'acme', drain)
     const cookie = loginCookie(ui, 'acme', 'couple', weddingId)
     const res = get(ui, '/t/acme?view=billing', cookie)
     expect(res.status).toBe(403)
@@ -293,9 +301,9 @@ describe('billing activity card (Phase 32 — the itemized line items)', () => {
  * surface (escalations wired) so the home gate's three reads (weddings/escalations/guests) all return 200.
  */
 describe('account home overview (default /t/:slug — Phase 33)', () => {
-  it('a planner home shows the weddings/guests/open-questions counts AND the billing card', () => {
-    const { ui, api } = makeWorld()
-    seedEscalation(api, 'acme') // one wedding + one guest + one OPEN escalation
+  it('a planner home shows the weddings/guests/open-questions counts AND the billing card', async () => {
+    const { ui, api, drain } = makeWorld()
+    await seedEscalation(api, 'acme', drain) // one wedding + one guest + one OPEN escalation
     const cookie = loginCookie(ui, 'acme', 'planner')
     const home = get(ui, '/t/acme', cookie)
     expect(home.status).toBe(200)
@@ -312,9 +320,9 @@ describe('account home overview (default /t/:slug — Phase 33)', () => {
     expect(home.body).toContain('?view=guests')
   })
 
-  it('a couple home is 200 (NOT 403) with the overview scoped to their wedding and NO billing card', () => {
-    const { ui, api } = makeWorld()
-    const weddingId = seedEscalation(api, 'acme')
+  it('a couple home is 200 (NOT 403) with the overview scoped to their wedding and NO billing card', async () => {
+    const { ui, api, drain } = makeWorld()
+    const weddingId = await seedEscalation(api, 'acme', drain)
     const cookie = loginCookie(ui, 'acme', 'couple', weddingId)
     const home = get(ui, '/t/acme', cookie)
     expect(home.status).toBe(200) // P1: a couple's billing 403 must NOT turn the whole home into a Forbidden wall
@@ -326,9 +334,9 @@ describe('account home overview (default /t/:slug — Phase 33)', () => {
     expect(home.body).not.toContain('owed')
   })
 
-  it('the open-questions count drops to 0 once the escalation is resolved (single-sourced "open" join)', () => {
-    const { ui, api } = makeWorld()
-    seedEscalation(api, 'acme')
+  it('the open-questions count drops to 0 once the escalation is resolved (single-sourced "open" join)', async () => {
+    const { ui, api, drain } = makeWorld()
+    await seedEscalation(api, 'acme', drain)
     const cookie = loginCookie(ui, 'acme', 'planner')
     expect(get(ui, '/t/acme', cookie).body).toContain('1 need attention')
     // Resolve it via the inbox Resolve form, then the home count drops.

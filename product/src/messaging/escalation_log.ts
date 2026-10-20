@@ -9,7 +9,7 @@ import type { RecipientRef } from './messaging_port'
 
 /**
  * @canonical escalation_log -- the per-tenant, wedding-scoped record of guest questions the platform could NOT
- * answer (Phase 26). The product-side trace of an `escalated` responder outcome (guest_qa_responder.ts: a
+ * answer (Phase 26). The product-side trace of an escalated guest question (concierge_service.ts: a
  * logistics fact was unset, or the topic was unknown). It closes the guest->couple loop: the couple (their
  * wedding) and planner (whole tenant) READ these to learn which fact to fill so the next ask is answered.
  *
@@ -40,7 +40,7 @@ import type { RecipientRef } from './messaging_port'
  * every op, partition keyed by `context.tenant_id` ALONE, `#`-private. The couple slice mirrors
  * guest_registry.ts: {@link listForWedding} filters the partition on `wedding_id` (oracle-free; `undefined` → []).
  *
- * related: guest_qa_responder.ts (produces the `escalated` outcome), inbound_receipt_log.ts (the dedup pattern
+ * related: concierge_service.ts (escalates a question it does not answer), inbound_receipt_log.ts (the dedup pattern
  * reused), guest_registry.ts (the couple-scope filter mirrored), product_api.ts (the inbound capture + the read).
  */
 

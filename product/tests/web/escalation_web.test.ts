@@ -7,7 +7,6 @@ import {
   type ApiRequest,
   type HttpResult,
   BillingLedger,
-  DeterministicGuestQaResponder,
   EscalationLog,
   EscalationReplyLog,
   EscalationResolutionLog,
@@ -27,6 +26,8 @@ import {
   WeddingRepository,
 } from '@wedding-planner/product'
 
+import { conciergeWorld } from '../support/concierge_world'
+
 /**
  * Phase 27 — the escalation Resolve/Dismiss browser flow + CSRF. Like guests, the web layer is the SOLE place
  * a cookie becomes a credential, so it is where CSRF lives; the JSON resolve API is Bearer-only and not
@@ -44,6 +45,8 @@ const THEME: Tenant['theme'] = {
 const WH = 'wh-secret'
 
 interface World {
+  /** Run the concierge jobs an inbound message queued (issue #60). */
+  drain: () => Promise<number>
   ui: ProductWebUi
   api: ProductApi
   messaging: MessagingService
@@ -65,6 +68,19 @@ function makeWorld(): World {
   const replies = new EscalationReplyLog(store, new SequentialIdGenerator('seedRep'), clock)
   const messaging = new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS'))
   const guestAuthorizer = new GuestAuthorizer()
+  const cwReceipts = new InboundReceiptLog(store, new SequentialIdGenerator('seedIR'))
+  const cw = conciergeWorld({
+    tenants: store,
+    resolver: new TenantContextResolver(store),
+    clock: clock,
+    weddings: weddings,
+    registry: registry,
+    receipts: cwReceipts,
+    service: messaging,
+    escalations: escalations,
+    resolutions: resolutions,
+    replies: replies,
+  })
   const api = new ProductApi({
     resolver: new TenantContextResolver(store),
     sessionStore: sessions,
@@ -74,20 +90,10 @@ function makeWorld(): World {
     weddings,
     authorizer: new WeddingAuthorizer(),
     guests: { registry, weddings, authorizer: guestAuthorizer },
-    messaging: {
-      port: adapter,
-      receipts: new InboundReceiptLog(store, new SequentialIdGenerator('seedIR')),
-      registry,
-      weddings,
-      responder: new DeterministicGuestQaResponder(),
-      service: messaging,
-      escalations,
-      resolutions,
-      replies,
-    },
+    messaging: { port: adapter, receipts: cwReceipts, registry: registry, weddings: weddings, concierge: cw.concierge },
     escalations: { escalations, resolutions, replies, authorizer: guestAuthorizer, service: messaging },
   })
-  return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store), csrf: sessions }), api, messaging, store, clock }
+  return { ui: new ProductWebUi({ api, themes: new ThemeResolver(store), csrf: sessions }), api, messaging, store, clock, drain: cw.drain }
 }
 
 function get(ui: ProductWebUi, path: string, cookie?: string): HttpResult {
@@ -123,7 +129,7 @@ function loginCookie(ui: ProductWebUi, slug: string, role: string, weddingId?: s
 }
 
 /** Create a wedding (planner) + register a guest + drive an UNANSWERABLE inbound, leaving one OPEN escalation. */
-function seedEscalation(api: ProductApi, slug: string): string {
+async function seedEscalation(api: ProductApi, slug: string, drain: () => Promise<number>): Promise<string> {
   const login = api.handle({ method: 'POST', path: `/t/${slug}/sessions`, headers: {}, rawBody: JSON.stringify({ role: 'planner' }) })
   const token = (login.body as { token: string }).token
   const create = api.handle({
@@ -146,13 +152,15 @@ function seedEscalation(api: ProductApi, slug: string): string {
     rawBody: JSON.stringify({ channel: 'sms', from_ref: 'sms:+15550100', text: 'where do I park?', provider_message_ref: 'pm_1' }),
   })
   expect(inbound.status).toBe(202)
+  // Issue #60: the concierge files the question in a job after the response.
+  await drain()
   return weddingId
 }
 
 describe('escalation inbox web page (?view=escalations) + resolve flow', () => {
-  it('a planner sees the Open question with Resolve/Dismiss forms carrying a _csrf field', () => {
-    const { ui, api } = makeWorld()
-    seedEscalation(api, 'acme')
+  it('a planner sees the Open question with Resolve/Dismiss forms carrying a _csrf field', async () => {
+    const { ui, api, drain } = makeWorld()
+    await seedEscalation(api, 'acme', drain)
     const cookie = loginCookie(ui, 'acme', 'planner')
     const res = get(ui, '/t/acme?view=escalations', cookie)
     expect(res.status).toBe(200)
@@ -161,9 +169,9 @@ describe('escalation inbox web page (?view=escalations) + resolve flow', () => {
     expect(res.body).toContain('name="_csrf"')
   })
 
-  it('a valid CSRF resolve moves the question to Handled (PRG redirect → 303)', () => {
-    const { ui, api } = makeWorld()
-    seedEscalation(api, 'acme')
+  it('a valid CSRF resolve moves the question to Handled (PRG redirect → 303)', async () => {
+    const { ui, api, drain } = makeWorld()
+    await seedEscalation(api, 'acme', drain)
     const cookie = loginCookie(ui, 'acme', 'planner')
     const page = get(ui, '/t/acme?view=escalations', cookie).body
     const csrf = csrfFrom(page)
@@ -183,9 +191,9 @@ describe('escalation inbox web page (?view=escalations) + resolve flow', () => {
     expect(after).toContain('>Reopen<')
   })
 
-  it('Phase 36: a planner resolves → reopens → replies, all via the browser forms (the full loop)', () => {
-    const { ui, api, messaging, store } = makeWorld()
-    seedEscalation(api, 'acme')
+  it('Phase 36: a planner resolves → reopens → replies, all via the browser forms (the full loop)', async () => {
+    const { ui, api, messaging, store, drain } = makeWorld()
+    await seedEscalation(api, 'acme', drain)
     const cookie = loginCookie(ui, 'acme', 'planner')
     const escId = escalationIdFrom(get(ui, '/t/acme?view=escalations', cookie).body)
     const tenantId = new TenantContextResolver(store).resolveBySlug('acme').tenant_id
@@ -209,9 +217,9 @@ describe('escalation inbox web page (?view=escalations) + resolve flow', () => {
     expect(messaging.usageView(tenantId).message_count).toBe(1)
   })
 
-  it('a forged CSRF resolve is masked 403 and performs NO mutation (stays Open)', () => {
-    const { ui, api } = makeWorld()
-    seedEscalation(api, 'acme')
+  it('a forged CSRF resolve is masked 403 and performs NO mutation (stays Open)', async () => {
+    const { ui, api, drain } = makeWorld()
+    await seedEscalation(api, 'acme', drain)
     const cookie = loginCookie(ui, 'acme', 'planner')
     const escId = escalationIdFrom(get(ui, '/t/acme?view=escalations', cookie).body)
 
@@ -221,9 +229,9 @@ describe('escalation inbox web page (?view=escalations) + resolve flow', () => {
     expect(get(ui, '/t/acme?view=escalations', cookie).body).toContain('action="/t/acme/escalations/resolve"')
   })
 
-  it('a couple resolves THEIR wedding question via the form (303 → Handled)', () => {
-    const { ui, api } = makeWorld()
-    const weddingId = seedEscalation(api, 'acme')
+  it('a couple resolves THEIR wedding question via the form (303 → Handled)', async () => {
+    const { ui, api, drain } = makeWorld()
+    const weddingId = await seedEscalation(api, 'acme', drain)
     const cookie = loginCookie(ui, 'acme', 'couple', weddingId)
     const page = get(ui, '/t/acme?view=escalations', cookie).body
     const resolved = postForm(ui, '/t/acme/escalations/resolve', { _csrf: csrfFrom(page), escalation_id: escalationIdFrom(page), status: 'dismissed' }, cookie)
@@ -254,9 +262,9 @@ describe('escalation inbox web page (?view=escalations) + resolve flow', () => {
 describe('escalation inbox web page — reply-from-the-inbox (Phase 28/34 multi-turn)', () => {
   const usageCount = (w: World): number => w.messaging.usageView(w.store.findBySlug('acme')!.tenant_id).message_count
 
-  it('an Open question carries a Reply form (textarea reply_text + hidden seq) posting to the 4-seg reply route', () => {
+  it('an Open question carries a Reply form (textarea reply_text + hidden seq) posting to the 4-seg reply route', async () => {
     const w = makeWorld()
-    seedEscalation(w.api, 'acme')
+    await seedEscalation(w.api, 'acme', w.drain)
     const cookie = loginCookie(w.ui, 'acme', 'planner')
     const res = get(w.ui, '/t/acme?view=escalations', cookie)
     expect(res.body).toContain('action="/t/acme/escalations/reply"')
@@ -264,9 +272,9 @@ describe('escalation inbox web page — reply-from-the-inbox (Phase 28/34 multi-
     expect(res.body).toContain('name="seq" value="0"') // fresh thread → seq 0
   })
 
-  it('a valid CSRF reply sends a metered message + appends to the thread, and the question STAYS OPEN (PRG 303)', () => {
+  it('a valid CSRF reply sends a metered message + appends to the thread, and the question STAYS OPEN (PRG 303)', async () => {
     const w = makeWorld()
-    seedEscalation(w.api, 'acme')
+    await seedEscalation(w.api, 'acme', w.drain)
     const cookie = loginCookie(w.ui, 'acme', 'planner')
     const page = get(w.ui, '/t/acme?view=escalations', cookie).body as string
     const sent = postForm(
@@ -286,9 +294,9 @@ describe('escalation inbox web page — reply-from-the-inbox (Phase 28/34 multi-
     expect(after).toContain('name="seq" value="1"')
   })
 
-  it('multi-turn: a second reply at seq=1 sends again (the thread grows)', () => {
+  it('multi-turn: a second reply at seq=1 sends again (the thread grows)', async () => {
     const w = makeWorld()
-    seedEscalation(w.api, 'acme')
+    await seedEscalation(w.api, 'acme', w.drain)
     const cookie = loginCookie(w.ui, 'acme', 'planner')
     const page = get(w.ui, '/t/acme?view=escalations', cookie).body as string
     const escId = escalationIdFrom(page)
@@ -301,9 +309,9 @@ describe('escalation inbox web page — reply-from-the-inbox (Phase 28/34 multi-
     expect(after).toContain('Planner: “Second.”')
   })
 
-  it('a forged CSRF reply is masked 403 and sends NOTHING (stays Open)', () => {
+  it('a forged CSRF reply is masked 403 and sends NOTHING (stays Open)', async () => {
     const w = makeWorld()
-    seedEscalation(w.api, 'acme')
+    await seedEscalation(w.api, 'acme', w.drain)
     const cookie = loginCookie(w.ui, 'acme', 'planner')
     const escId = escalationIdFrom(get(w.ui, '/t/acme?view=escalations', cookie).body as string)
     const res = postForm(w.ui, '/t/acme/escalations/reply', { _csrf: 'forged', escalation_id: escId, reply_text: 'hi', seq: '0' }, cookie)
@@ -322,7 +330,7 @@ describe('escalation inbox web page — reply-from-the-inbox (Phase 28/34 multi-
 
 describe('escalation inbox web page — guest-reply thread correlation (Phase 35)', () => {
   /** Drive an UNANSWERABLE inbound follow-up from the SAME guest (fresh ref) → threads into the open escalation. */
-  function followUp(api: ProductApi, slug: string, text: string, ref: string): void {
+  async function followUp(api: ProductApi, slug: string, text: string, ref: string, drain: () => Promise<number>): Promise<void> {
     const res = api.handle({
       method: 'POST',
       path: `/t/${slug}/messaging/inbound`,
@@ -330,38 +338,39 @@ describe('escalation inbox web page — guest-reply thread correlation (Phase 35
       rawBody: JSON.stringify({ channel: 'sms', from_ref: 'sms:+15550100', text, provider_message_ref: ref }),
     })
     expect(res.status).toBe(202)
+    await drain()
   }
 
-  it('a guest follow-up renders as a "Guest:" turn in the thread, interleaved with an operator reply', () => {
+  it('a guest follow-up renders as a "Guest:" turn in the thread, interleaved with an operator reply', async () => {
     const w = makeWorld()
-    seedEscalation(w.api, 'acme') // opens E1 (the guest asked "where do I park?")
+    await seedEscalation(w.api, 'acme', w.drain) // opens E1 (the guest asked "where do I park?")
     const cookie = loginCookie(w.ui, 'acme', 'planner')
     // The operator replies, then the guest texts a follow-up that threads in.
     const page = get(w.ui, '/t/acme?view=escalations', cookie).body as string
     postForm(w.ui, '/t/acme/escalations/reply', { _csrf: csrfFrom(page), escalation_id: escalationIdFrom(page), reply_text: 'Lot B.', seq: '0' }, cookie)
-    followUp(w.api, 'acme', 'Can I bring my dog too?', 'pm_follow')
+    await followUp(w.api, 'acme', 'Can I bring my dog too?', 'pm_follow', w.drain)
     const after = get(w.ui, '/t/acme?view=escalations', cookie).body as string
     expect(after).toContain('Planner: “Lot B.”') // operator turn
     expect(after).toContain('Guest: “Can I bring my dog too?”') // guest turn (three-way label — NOT "Couple")
     expect(after).not.toContain('Couple: “Can I bring my dog too?”') // would be the binary-ternary mislabel
   })
 
-  it('an UNTRUSTED guest follow-up body is HTML-escaped in the thread (no stored XSS into the operator view)', () => {
+  it('an UNTRUSTED guest follow-up body is HTML-escaped in the thread (no stored XSS into the operator view)', async () => {
     const w = makeWorld()
-    seedEscalation(w.api, 'acme')
+    await seedEscalation(w.api, 'acme', w.drain)
     const cookie = loginCookie(w.ui, 'acme', 'planner')
-    followUp(w.api, 'acme', "<script>alert('x')</script>", 'pm_xss')
+    await followUp(w.api, 'acme', "<script>alert('x')</script>", 'pm_xss', w.drain)
     const after = get(w.ui, '/t/acme?view=escalations', cookie).body as string
     expect(after).toContain('Guest: “&lt;script&gt;') // escaped
     expect(after).not.toContain("<script>alert('x')</script>") // never raw
   })
 
-  it('the reply form seq counts a guest turn (the operator double-submit guard stays correct)', () => {
+  it('the reply form seq counts a guest turn (the operator double-submit guard stays correct)', async () => {
     const w = makeWorld()
-    seedEscalation(w.api, 'acme')
+    await seedEscalation(w.api, 'acme', w.drain)
     const cookie = loginCookie(w.ui, 'acme', 'planner')
     expect(get(w.ui, '/t/acme?view=escalations', cookie).body).toContain('name="seq" value="0"') // empty thread
-    followUp(w.api, 'acme', 'Any update?', 'pm_seq')
+    await followUp(w.api, 'acme', 'Any update?', 'pm_seq', w.drain)
     expect(get(w.ui, '/t/acme?view=escalations', cookie).body).toContain('name="seq" value="1"') // the guest turn occupies slot 0
   })
 })
@@ -378,11 +387,12 @@ describe('per-conversation transcript page (?view=escalations&conversation=ID) �
     return (res.body as { escalations: EscRow[] }).escalations
   }
   /** Create a wedding + register a guest + drive one UNANSWERABLE inbound; return {weddingId, escalationId}. */
-  function seedConversation(
+  async function seedConversation(
     api: ProductApi,
     slug: string,
     opts: { couple: string; ref: string; guestId: string; text: string; pm: string },
-  ): { weddingId: string; escalationId: string } {
+    drain: () => Promise<number>,
+  ): Promise<{ weddingId: string; escalationId: string }> {
     const token = plannerToken(api, slug)
     const create = api.handle({
       method: 'POST',
@@ -403,13 +413,14 @@ describe('per-conversation transcript page (?view=escalations&conversation=ID) �
       headers: { authorization: `Bearer ${WH}`, 'content-type': 'application/json' },
       rawBody: JSON.stringify({ channel: 'sms', from_ref: opts.ref, text: opts.text, provider_message_ref: opts.pm }),
     })
+    await drain()
     const escalationId = escalationsOf(api, slug, token).find((e) => e.provider_message_ref === opts.pm)!.escalation_id
     return { weddingId, escalationId }
   }
 
-  it('the inbox row links to the transcript at the right conversation id', () => {
-    const { ui, api } = makeWorld()
-    seedEscalation(api, 'acme')
+  it('the inbox row links to the transcript at the right conversation id', async () => {
+    const { ui, api, drain } = makeWorld()
+    await seedEscalation(api, 'acme', drain)
     const cookie = loginCookie(ui, 'acme', 'planner')
     const page = get(ui, '/t/acme?view=escalations', cookie).body as string
     const escId = escalationIdFrom(page)
@@ -417,9 +428,9 @@ describe('per-conversation transcript page (?view=escalations&conversation=ID) �
     expect(page).toContain('View full conversation')
   })
 
-  it('a planner sees the transcript: the question + reply turns + transition history, interleaved', () => {
-    const { ui, api, store, clock } = makeWorld()
-    seedEscalation(api, 'acme')
+  it('a planner sees the transcript: the question + reply turns + transition history, interleaved', async () => {
+    const { ui, api, store, clock, drain } = makeWorld()
+    await seedEscalation(api, 'acme', drain)
     const cookie = loginCookie(ui, 'acme', 'planner')
     const escId = escalationIdFrom(get(ui, '/t/acme?view=escalations', cookie).body as string)
     const tenantId = store.findBySlug('acme')!.tenant_id
@@ -444,9 +455,9 @@ describe('per-conversation transcript page (?view=escalations&conversation=ID) �
     expect(body.indexOf('Lot B.')).toBeLessThan(body.indexOf('Marked resolved'))
   })
 
-  it('end-to-end auto-reopen (Phase 37): the transcript shows question → reply → resolved → guest follow-up → reopened, in order', () => {
-    const { ui, api, clock } = makeWorld()
-    seedEscalation(api, 'acme') // E1: "where do I park?"
+  it('end-to-end auto-reopen (Phase 37): the transcript shows question → reply → resolved → guest follow-up → reopened, in order', async () => {
+    const { ui, api, clock, drain } = makeWorld()
+    await seedEscalation(api, 'acme', drain) // E1: "where do I park?"
     const cookie = loginCookie(ui, 'acme', 'planner')
     const escId = escalationIdFrom(get(ui, '/t/acme?view=escalations', cookie).body as string)
 
@@ -464,6 +475,7 @@ describe('per-conversation transcript page (?view=escalations&conversation=ID) �
       headers: { authorization: `Bearer ${WH}`, 'content-type': 'application/json' },
       rawBody: JSON.stringify({ channel: 'sms', from_ref: 'sms:+15550100', text: 'is there overflow parking?', provider_message_ref: 'pm_reopen' }),
     })
+    await drain()
 
     const body = get(ui, `/t/acme?view=escalations&conversation=${escId}`, cookie).body as string
     const iQ = body.indexOf('where do I park?')
@@ -480,10 +492,10 @@ describe('per-conversation transcript page (?view=escalations&conversation=ID) �
     expect(iReopen).toBeLessThan(iFollow)
   })
 
-  it('NO ORACLE: a couple gets the byte-identical not-found notice for a SIBLING wedding conversation AND an absent id', () => {
-    const { ui, api } = makeWorld()
-    const a = seedConversation(api, 'acme', { couple: 'A & A', ref: 'sms:+15550111', guestId: 'ga', text: 'Q-A', pm: 'pm_a' })
-    const b = seedConversation(api, 'acme', { couple: 'B & B', ref: 'sms:+15550222', guestId: 'gb', text: 'Q-B', pm: 'pm_b' })
+  it('NO ORACLE: a couple gets the byte-identical not-found notice for a SIBLING wedding conversation AND an absent id', async () => {
+    const { ui, api, drain } = makeWorld()
+    const a = await seedConversation(api, 'acme', { couple: 'A & A', ref: 'sms:+15550111', guestId: 'ga', text: 'Q-A', pm: 'pm_a' }, drain)
+    const b = await seedConversation(api, 'acme', { couple: 'B & B', ref: 'sms:+15550222', guestId: 'gb', text: 'Q-B', pm: 'pm_b' }, drain)
     // A couple bound to wedding A.
     const coupleA = loginCookie(ui, 'acme', 'couple', a.weddingId)
     // Their OWN conversation renders.
@@ -499,9 +511,9 @@ describe('per-conversation transcript page (?view=escalations&conversation=ID) �
     expect(sibling.body).toBe(absent.body) // foreign ≡ absent — no cross-wedding existence oracle
   })
 
-  it('NO REFLECTION: the not-found notice never echoes the submitted conversation id', () => {
-    const { ui, api } = makeWorld()
-    seedEscalation(api, 'acme')
+  it('NO REFLECTION: the not-found notice never echoes the submitted conversation id', async () => {
+    const { ui, api, drain } = makeWorld()
+    await seedEscalation(api, 'acme', drain)
     const cookie = loginCookie(ui, 'acme', 'planner')
     const res = get(ui, '/t/acme?view=escalations&conversation=esc_PROBE_12345', cookie)
     expect(res.status).toBe(200)
@@ -509,9 +521,9 @@ describe('per-conversation transcript page (?view=escalations&conversation=ID) �
     expect(res.body).not.toContain('esc_PROBE_12345')
   })
 
-  it('a malformed/encoded conversation id never throws — it is a pure filter key (no 500 oracle)', () => {
-    const { ui, api } = makeWorld()
-    seedEscalation(api, 'acme')
+  it('a malformed/encoded conversation id never throws — it is a pure filter key (no 500 oracle)', async () => {
+    const { ui, api, drain } = makeWorld()
+    await seedEscalation(api, 'acme', drain)
     const cookie = loginCookie(ui, 'acme', 'planner')
     for (const probe of ['..%2F..%2Fetc', '', '%00', 'a'.repeat(5000)]) {
       const res = get(ui, `/t/acme?view=escalations&conversation=${probe}`, cookie)
@@ -520,9 +532,9 @@ describe('per-conversation transcript page (?view=escalations&conversation=ID) �
     }
   })
 
-  it('unauthenticated / unknown-tenant requests for a transcript mask BYTE-IDENTICALLY to the inbox', () => {
-    const { ui, api } = makeWorld()
-    const { escalationId } = seedConversation(api, 'acme', { couple: 'A & A', ref: 'sms:+15550100', guestId: 'g1', text: 'where do I park?', pm: 'pm_1' })
+  it('unauthenticated / unknown-tenant requests for a transcript mask BYTE-IDENTICALLY to the inbox', async () => {
+    const { ui, api, drain } = makeWorld()
+    const { escalationId } = await seedConversation(api, 'acme', { couple: 'A & A', ref: 'sms:+15550100', guestId: 'g1', text: 'where do I park?', pm: 'pm_1' }, drain)
     // No cookie → unauthenticated: the transcript reuses #renderNonData, so it is byte-identical to the
     // unauthenticated inbox (no transcript content leaks — the read's 401 mask wins before any selection).
     const anonInbox = get(ui, '/t/acme?view=escalations')

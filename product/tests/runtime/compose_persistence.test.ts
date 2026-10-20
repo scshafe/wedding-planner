@@ -105,6 +105,8 @@ describe('durable storage — data written before a restart is read back after i
     // Answered (receipt + metered send + usage_charge) and escalated (an escalation) inbound messages.
     expect(api1.handle(inbound(ref, 'pmr_answered', 'When is the wedding?')).status).toBe(202)
     expect(api1.handle(inbound(ref, 'pmr_escalated', 'where do I park?')).status).toBe(202)
+    // Issue #60: the concierge answers one and escalates the other, in jobs after the responses.
+    expect(await first.surface.drainJobs()).toBe(2)
     const escalations = api1.handle(req('GET', '/t/demo/escalations', { token }))
     const escalationId = (escalations.body as { escalations: { escalation_id: string }[] }).escalations[0]
       ?.escalation_id as string
@@ -160,6 +162,8 @@ describe('durable storage — data written before a restart is read back after i
     expect(api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/copilot`, { token })).status).toBe(202)
     expect(await first.surface.drainJobs()).toBe(1)
     expect(api1.handle(req('POST', `/t/demo/weddings/${demo?.weddingId}/copilot`, { token })).status).toBe(202)
+    // A guest question still waiting for the concierge (issue #60): pending_guest_question, and its job.
+    expect(api1.handle(inbound(ref, 'pmr_pending', 'Is there a shuttle?')).status).toBe(202)
     const provisioned = api1.handle(
       req('POST', '/admin/tenants', {
         token: OP,
