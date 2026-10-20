@@ -222,6 +222,11 @@ export class ProductWebUi {
     return slug !== undefined && token !== undefined && this.#uploadGate?.(token, slug) === true ? DOCUMENT_UPLOAD_MAX_BODY_BYTES : MAX_BODY_BYTES
   }
 
+  /** Issue #48: whose large upload a request is, for the one-per-workspace place (the normalized slug). */
+  uploadOwner(path: string): string {
+    return normalizeSlugForRoute(splitPath(path)[1] ?? '') ?? ''
+  }
+
   handle(req: ApiRequest): HttpResult {
     try {
       return this.#route(req)

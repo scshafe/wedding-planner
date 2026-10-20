@@ -10,6 +10,7 @@ import {
   composeProductSurface,
   createProductWebUiServer,
   MAX_BODY_BYTES,
+  MAX_PENDING_RESPONSES_PER_SOCKET,
   BillingLedger,
   OnboardingService,
   OperatorCredentialStore,
@@ -163,23 +164,38 @@ describe('web_server guards (issue #48 security review)', () => {
   afterEach(async () => {
     const s = server
     server = undefined
+    s?.closeAllConnections()
     if (s !== undefined) await new Promise<void>((resolve) => s.close(() => resolve()))
   })
 
-  /** A stub UI: a large body limit on /big, a large response on /large, and a body limit check that throws on /boom. */
-  async function start(limits: { response_bytes: number; large_uploads: number; upload_deadline_ms: number }): Promise<string> {
+  type Limits = { response_bytes: number; response_deadline_ms: number; large_uploads: number; upload_deadline_ms: number }
+  const LIMITS: Limits = { response_bytes: 1024 * 1024, response_deadline_ms: 5000, large_uploads: 2, upload_deadline_ms: 5000 }
+
+  /**
+   * A stub UI: a large body limit on /big*, its owner the path; a 300 KiB response on /large and a 16 MiB one on
+   * /huge; a body-limit check that throws on /boom.
+   */
+  async function start(limits: Partial<Limits> = {}): Promise<{ base: string; port: number; transfers: TransferBudget }> {
+    const transfers = new TransferBudget({ ...LIMITS, ...limits })
     const stub = {
-      transfers: new TransferBudget(limits),
+      transfers,
       bodyLimit: (_method: string, path: string) => {
         if (path === '/boom') throw new Error('storage failed')
-        return path === '/big' ? 2 * 1024 * 1024 : MAX_BODY_BYTES
+        return path.startsWith('/big') ? 2 * 1024 * 1024 : MAX_BODY_BYTES
       },
-      handle: (req: { path: string }) => ({ status: 200, headers: { 'content-type': 'text/plain' }, body: req.path === '/large' ? 'x'.repeat(300 * 1024) : 'ok' }),
+      uploadOwner: (path: string) => path,
+      handle: (req: { path: string }) => ({
+        status: 200,
+        headers: { 'content-type': 'text/plain' },
+        body: req.path === '/large' ? 'x'.repeat(300 * 1024) : 'ok',
+        ...(req.path === '/huge' ? { bytes: Buffer.alloc(16 * 1024 * 1024) } : {}),
+      }),
       runDeferredWork: () => undefined,
     }
     server = createProductWebUiServer(stub as unknown as ProductWebUi)
     await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve))
-    return `http://127.0.0.1:${(server?.address() as AddressInfo).port}`
+    const port = (server?.address() as AddressInfo).port
+    return { base: `http://127.0.0.1:${port}`, port, transfers }
   }
 
   /** Start a POST with a declared length and send only part of it; resolves with the response when one comes. */
@@ -196,46 +212,85 @@ describe('web_server guards (issue #48 security review)', () => {
     return { response, finish: () => req.end(Buffer.alloc(declared - sent)) }
   }
 
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
   it('a body-limit check that throws falls back to the default instead of crashing the process', async () => {
-    const base = await start({ response_bytes: 1024 * 1024, large_uploads: 1, upload_deadline_ms: 5000 })
+    const { base } = await start()
     expect((await fetch(`${base}/boom`, { method: 'POST', body: 'a' })).status).toBe(200)
     expect((await fetch(`${base}/boom`, { method: 'POST', body: 'a'.repeat(MAX_BODY_BYTES + 1) })).status).toBe(413)
     expect((await fetch(`${base}/ok`)).status).toBe(200)
   })
 
-  it('large upload bodies take one of a few places: the next one is 503 until a place frees', async () => {
-    const base = await start({ response_bytes: 1024 * 1024, large_uploads: 1, upload_deadline_ms: 5000 })
-    const first = partial(`${base}/big`, 2_000_000, 1000)
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    const second = await fetch(`${base}/big`, { method: 'POST', body: 'x' })
-    expect([second.status, second.headers.get('retry-after')]).toEqual([503, '10'])
+  it('large upload bodies take one of a few places, one per owner: the next is 503 until a place frees', async () => {
+    const { base } = await start()
+    const first = partial(`${base}/big-a`, 2_000_000, 1000)
+    await pause(50)
+    // The same owner cannot take a second place, though one is free.
+    const same = await fetch(`${base}/big-a`, { method: 'POST', body: 'x' })
+    expect([same.status, same.headers.get('retry-after')]).toEqual([503, '10'])
+    const second = partial(`${base}/big-b`, 2_000_000, 1000)
+    await pause(50)
+    // Both places taken.
+    expect((await fetch(`${base}/big-c`, { method: 'POST', body: 'x' })).status).toBe(503)
     first.finish()
-    expect(await first.response).toBe(200)
-    expect((await fetch(`${base}/big`, { method: 'POST', body: 'x' })).status).toBe(200)
+    second.finish()
+    expect([await first.response, await second.response]).toEqual([200, 200])
+    expect((await fetch(`${base}/big-c`, { method: 'POST', body: 'x' })).status).toBe(200)
   })
 
-  it('a large upload body that does not arrive in time is ended (408)', async () => {
-    const base = await start({ response_bytes: 1024 * 1024, large_uploads: 1, upload_deadline_ms: 100 })
-    const slow = partial(`${base}/big`, 2_000_000, 1000)
+  it('a large upload body that does not arrive in time is ended (408), and its place freed', async () => {
+    const { base } = await start({ upload_deadline_ms: 100 })
+    const slow = partial(`${base}/big-a`, 2_000_000, 1000)
     expect(await slow.response).toBe(408)
-    // Its place is free again.
-    expect((await fetch(`${base}/big`, { method: 'POST', body: 'x' })).status).toBe(200)
+    expect((await fetch(`${base}/big-a`, { method: 'POST', body: 'x' })).status).toBe(200)
   })
 
-  it('a large response that does not fit the budget is refused (503), not held', async () => {
-    const base = await start({ response_bytes: 100 * 1024, large_uploads: 1, upload_deadline_ms: 5000 })
-    const res = await fetch(`${base}/large`)
+  it('a response that does not fit the budget is refused (503), not held; one within it is sent and released', async () => {
+    const tight = await start({ response_bytes: 100 * 1024 })
+    const res = await fetch(`${tight.base}/large`)
     expect([res.status, res.headers.get('retry-after')]).toEqual([503, '5'])
-    expect((await fetch(`${base}/small`)).status).toBe(200)
+    expect((await fetch(`${tight.base}/small`)).status).toBe(200)
+    await new Promise<void>((resolve) => server?.close(() => resolve()))
+    server = undefined
+    const roomy = await start({ response_bytes: 400 * 1024 })
+    for (let i = 0; i < 3; i++) {
+      const ok = await fetch(`${roomy.base}/large`)
+      expect(ok.status).toBe(200)
+      expect((await ok.text()).length).toBe(300 * 1024)
+    }
+    expect(roomy.transfers.canSend(400 * 1024)).toBe(true)
   })
 
-  it('a large response within the budget is sent, and released when written', async () => {
-    const base = await start({ response_bytes: 400 * 1024, large_uploads: 1, upload_deadline_ms: 5000 })
-    for (let i = 0; i < 3; i++) {
-      const res = await fetch(`${base}/large`)
-      expect(res.status).toBe(200)
-      expect((await res.text()).length).toBe(300 * 1024)
-    }
+  /** Wait (up to a second) until `check` holds. */
+  async function eventually(check: () => boolean): Promise<boolean> {
+    for (let i = 0; i < 100 && !check(); i++) await pause(10)
+    return check()
+  }
+
+  it('an unread large response holds the budget only until its deadline; the connection is dropped and the budget freed', async () => {
+    const { port, transfers } = await start({ response_bytes: 20 * 1024 * 1024, response_deadline_ms: 300 })
+    const socket = new (await import('node:net')).Socket()
+    socket.on('error', () => undefined)
+    socket.connect(port, '127.0.0.1', () => socket.write('GET /huge HTTP/1.1\r\nHost: x\r\n\r\n'))
+    socket.pause() // never read
+    expect(await eventually(() => !transfers.canSend(16 * 1024 * 1024))).toBe(true)
+    await pause(100)
+    // Still held before the deadline; freed after it.
+    expect(transfers.canSend(16 * 1024 * 1024)).toBe(false)
+    expect(await eventually(() => transfers.canSend(16 * 1024 * 1024))).toBe(true)
+    socket.destroy()
+  })
+
+  it(`a connection with more than ${MAX_PENDING_RESPONSES_PER_SOCKET} unfinished responses is dropped, releasing what it queued`, async () => {
+    const { port, transfers } = await start({ response_bytes: 80 * 1024 * 1024 })
+    const socket = new (await import('node:net')).Socket()
+    socket.on('error', () => undefined)
+    // All in one write, so the server reads them as one batch of pipelined requests.
+    const requests = 'GET /huge HTTP/1.1\r\nHost: x\r\n\r\n'.repeat(MAX_PENDING_RESPONSES_PER_SOCKET + 2)
+    socket.connect(port, '127.0.0.1', () => socket.write(requests))
+    socket.pause()
+    await pause(100)
+    expect(await eventually(() => transfers.canSend(80 * 1024 * 1024))).toBe(true)
+    socket.destroy()
   })
 })
-

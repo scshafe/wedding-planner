@@ -1,4 +1,5 @@
 import http from 'node:http'
+import type { Socket } from 'node:net'
 
 import type { Clock } from '@wedding-planner/shared'
 
@@ -34,8 +35,47 @@ export interface RequestLogging {
   readonly elapsedMs: () => number
 }
 
+/**
+ * Issue #48: the most unfinished responses one connection may have. Browsers and the serving proxy send one request at
+ * a time; a client that pipelines more and does not read the answers would make the process hold them all.
+ */
+export const MAX_PENDING_RESPONSES_PER_SOCKET = 4
+
+/**
+ * Run `fn` once, when the response is done with: written (`finish`), closed, or its connection closed. The last one
+ * matters: on Node 22 a pipelined response still queued behind another never emits `close` when the connection dies,
+ * so a release tied only to the response would leak.
+ */
+function whenDone(res: http.ServerResponse, socket: Socket, fn: () => void): void {
+  let done = false
+  const finish = (): void => {
+    if (done) return
+    done = true
+    res.off('finish', finish)
+    res.off('close', finish)
+    socket.off('close', finish)
+    fn()
+  }
+  res.once('finish', finish)
+  res.once('close', finish)
+  socket.once('close', finish)
+}
+
+/** Issue #48: a connection with no traffic for this long is closed (a stalled reader holds nothing for long). */
+export const SOCKET_IDLE_TIMEOUT_MS = 120_000
+
 export function createProductWebUiServer(ui: ProductWebUi, logging?: RequestLogging): http.Server {
-  return http.createServer((req, res) => {
+  const pending = new WeakMap<Socket, number>()
+  const server = http.createServer((req, res) => {
+    const socket = req.socket
+    const unfinished = (pending.get(socket) ?? 0) + 1
+    if (unfinished > MAX_PENDING_RESPONSES_PER_SOCKET) {
+      // Too many unread answers on one connection: drop it (and everything it queued).
+      socket.destroy()
+      return
+    }
+    pending.set(socket, unfinished)
+    whenDone(res, socket, () => pending.set(socket, (pending.get(socket) ?? 1) - 1))
     const startedMs = logging?.elapsedMs()
     // One line per request, after the response: the route PATTERN only (request_log.ts) — never the path's ids or
     // query, a header, a cookie, or the body.
@@ -79,8 +119,14 @@ export function createProductWebUiServer(ui: ProductWebUi, logging?: RequestLogg
       return
     }
     if (limit > MAX_BODY_BYTES) {
-      // A large upload: one of a few places, and a deadline for the whole body.
-      const release = ui.transfers.holdUpload()
+      // A large upload: one of a few places (one per workspace), and a deadline for the whole body.
+      let owner = ''
+      try {
+        owner = ui.uploadOwner(req.url ?? '/')
+      } catch {
+        // Never throw outside the handler: an unknown owner shares one place.
+      }
+      const release = ui.transfers.holdUpload(owner)
       if (release === undefined) {
         refuse(503, 'busy', { 'retry-after': '10' })
         return
@@ -93,7 +139,7 @@ export function createProductWebUiServer(ui: ProductWebUi, logging?: RequestLogg
         release()
       }
       req.once('end', () => clearTimeout(deadline))
-      res.once('close', done)
+      whenDone(res, socket, done)
     }
 
     req.on('data', (chunk: Buffer) => {
@@ -120,16 +166,23 @@ export function createProductWebUiServer(ui: ProductWebUi, logging?: RequestLogg
         }
         const result = ui.handle(apiReq)
         if (res.headersSent) return
+        // Every response is held until it is written or its connection closes; one that does not fit is not held.
         const size = result.bytes?.byteLength ?? Buffer.byteLength(result.body)
+        const release = ui.transfers.holdResponse(size)
+        if (release === undefined) {
+          res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '5', 'cache-control': 'no-store' })
+          res.end(JSON.stringify({ error: 'busy' }))
+          return
+        }
         if (size >= LARGE_TRANSFER_BYTES) {
-          // Held until it is written or the connection closes; a response that does not fit is not held at all.
-          const release = ui.transfers.holdResponse(size)
-          if (release === undefined) {
-            res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '5', 'cache-control': 'no-store' })
-            res.end(JSON.stringify({ error: 'busy' }))
-            return
-          }
-          res.once('close', release)
+          // A large response must be written in time: an unread one would otherwise hold the budget indefinitely.
+          const deadline = setTimeout(() => socket.destroy(), ui.transfers.limits.response_deadline_ms)
+          whenDone(res, socket, () => {
+            clearTimeout(deadline)
+            release()
+          })
+        } else {
+          whenDone(res, socket, release)
         }
         res.writeHead(result.status, result.headers)
         res.end(result.bytes ?? result.body)
@@ -151,6 +204,8 @@ export function createProductWebUiServer(ui: ProductWebUi, logging?: RequestLogg
       }
     })
   })
+  server.setTimeout(SOCKET_IDLE_TIMEOUT_MS)
+  return server
 }
 
 /** Normalize incoming headers to a lowercased single-value map (Node lowercases keys; coalesce arrays). */

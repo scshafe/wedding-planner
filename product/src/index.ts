@@ -114,7 +114,7 @@ export { createProductApiServer, MAX_BODY_BYTES } from './http/node_server'
 export type { HttpResult } from './web/web_response'
 export { ThemeResolver } from './web/theme_resolver'
 export { attachmentDisposition, DOCUMENT_UPLOAD_MAX_BODY_BYTES, ProductWebUi, type ProductWebUiDeps } from './web/product_web_ui'
-export { createProductWebUiServer } from './web/web_server'
+export { createProductWebUiServer, MAX_PENDING_RESPONSES_PER_SOCKET, SOCKET_IDLE_TIMEOUT_MS } from './web/web_server'
 
 // The engine↔surface seam (Phase 17): the pure projection of the loop's champion StrategyGenome into
 // read-only, planner-facing guidance. A deterministic function of the genome alone (no context/principal/

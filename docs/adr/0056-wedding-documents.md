@@ -83,8 +83,9 @@ The boundary is the wedding's (`assertWeddingReach`).
 - **The JSON upload route keeps the 1 MiB default.** The form reaches it in-process, and parsing a 7 MiB JSON body is
   a heap and event-loop risk of its own (security review). An API client can send files up to about 750 KB as base64
   JSON. A raw-bytes route could come later if one needs more.
-- **Large uploads are limited.** At most 3 large upload bodies are received at once (503 with `Retry-After`
-  otherwise), and each must arrive within 60 seconds (408).
+- **Large uploads are limited.** At most 3 large upload bodies are received at once, and at most one per workspace
+  (503 with `Retry-After` otherwise), so no workspace takes every place. Each body must arrive within 60 seconds
+  (408).
 - **The web adapter passes a multipart body's raw bytes** (`ApiRequest.bodyBytes`), not a UTF-8 copy nobody reads.
   Every other body is the UTF-8 `rawBody`, as before.
 - **The form is `multipart/form-data`**, parsed by `multipart_form.ts`. The parser:
@@ -96,14 +97,25 @@ The boundary is the wedding's (`assertWeddingReach`).
   CSRF is checked on the parsed form before anything else. A form that does not parse has no token, so it gets the
   masked 403. The file then goes to the JSON route as base64, so the JSON API stays the only data path.
 
-### Large responses: one budget for the process
+### Responses: one budget for the process
 
 The security review showed that one couple session could pipeline 100 downloads of a 5 MiB document without reading
 them, and make the process hold over 500 MB: an out-of-memory kill of the 512 MiB container, for every tenant. So:
-- **The edge holds every response of at least 256 KiB** (a download, a big JSON body or page) against one 48 MiB
-  budget until it is written or its connection closes (`TransferBudget`).
+- **The edge holds every response** against one 48 MiB budget until it is written, closed, or its connection closes
+  (`TransferBudget`, `whenDone`).
+  - The connection matters: on Node 22 (production), a pipelined response still queued behind another never emits
+    `close` when the connection dies (Node 24 does). A re-review found that releasing only on the response's own
+    `close` leaked the budget permanently.
 - **A response that does not fit is answered 503 with `Retry-After`**, and is not held.
+- **Large responses (256 KiB or more) must be written within 120 seconds**, or the connection is dropped. Any
+  connection idle for 120 seconds is closed, so an unread response holds the budget for a bounded time.
+- **One connection may have at most 4 unfinished responses.** Browsers and the serving proxy send one at a time; a
+  client that pipelines more is dropped, along with everything it queued.
 - **The download page checks the budget before reading a document**, so a full budget costs no reads or decoding.
+
+**The trade:** a client that holds the budget gets everyone else 503s for at most two minutes at a time. That is a
+denial, not an out-of-memory kill, and a client identity (to limit per client) is not available behind the proxy. In
+production the proxy does not pipeline, so the per-connection cap is reached only by direct connections.
 
 ### Downloads: never a page of this origin
 
