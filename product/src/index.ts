@@ -171,7 +171,7 @@ export { EscalationReplyLog, type RecordReplyInput } from './messaging/escalatio
 // How an unanswered guest question reaches the inbox (Phases 26/35/37), and the guest concierge that answers the rest
 // from the allow-listed facts through the job queue (issue #60, ADR 0059).
 export { type EscalationFilingDeps, fileGuestEscalation } from './messaging/escalation_filing'
-export { CONCIERGE_JOB, ConciergeService, GUEST_ANSWER, isSurpriseProbe, MAX_QUESTION_FOR_MODEL, questionId } from './concierge/concierge_service'
+export { CONCIERGE_JOB, CONCIERGE_LIMITS, ConciergeService, GUEST_ANSWER, isSurpriseProbe, MAX_QUESTION_FOR_MODEL, questionId } from './concierge/concierge_service'
 export { type ConciergeFacts, conciergeFactKeys, MAX_ANSWER_KEYS, MAX_REPLY_LENGTH, projectConciergeFacts, renderConciergeAnswer, SINGLE_FACT_KEYS } from './concierge/concierge_facts'
 export { type GuestAnswerInput, keysHeld, simulateGuestAnswer } from './concierge/concierge_simulation'
 

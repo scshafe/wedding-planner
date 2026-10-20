@@ -13,7 +13,9 @@ import {
   GuestRegistry,
   InboundReceiptLog,
   InMemoryRecordStore,
+  CONCIERGE_LIMITS,
   isSurpriseProbe,
+  ProductError,
   JobQueue,
   MAX_REPLY_LENGTH,
   MessagingService,
@@ -163,7 +165,7 @@ describe('the concierge through the inbound edge', () => {
 })
 
 describe('the concierge job (service level)', () => {
-  function world(output: unknown) {
+  function world(output: unknown, beforeAnswer?: () => Promise<void>, failingSend = false) {
     const clock = new ManualClock('2028-01-10T12:00:00.000Z')
     const tenants = new TenantStore(clock, new SequentialIdGenerator('t'))
     tenants.create({ slug: 'alpha', display_name: 'Alpha', theme: { brand_name: 'B', primary_color_hex: '#111111', accent_color_hex: '#222222', logo_ref: 'l' }, plan_tier: 'studio', lifecycle_status: 'active' })
@@ -179,10 +181,18 @@ describe('the concierge job (service level)', () => {
     const escalations = new EscalationLog(tenants, new SequentialIdGenerator('e'))
     const filing = { escalations, resolutions: new EscalationResolutionLog(tenants, new SequentialIdGenerator('r'), clock), replies: new EscalationReplyLog(tenants, new SequentialIdGenerator('p'), clock) }
     const receipts = new InboundReceiptLog(tenants, new SequentialIdGenerator('i'))
-    const model = new ModelService(tenants, { complete: () => (output instanceof Error ? Promise.reject(output) : Promise.resolve({ output, usage: { input_tokens: 1, output_tokens: 1, cost_micro_cents: 1 }, model: 'm' })) }, clock)
+    const model = new ModelService(
+      tenants,
+      { complete: async () => {
+        await beforeAnswer?.()
+        return { output, usage: { input_tokens: 1, output_tokens: 1, cost_micro_cents: 1 }, model: 'm' }
+      } },
+      clock,
+    )
     const queueStore = new InMemoryRecordStore()
     const jobs = new JobQueue(tenants, resolver, clock, new SequentialIdGenerator('j'), queueStore)
-    const concierge = new ConciergeService(tenants, registry, weddings, undefined, model, jobs, receipts, service, filing, queueStore)
+    const sender = failingSend ? { send: () => { throw new ProductError('PRODUCT.PROVIDER_COST_INVALID', 'provider down', {}) } } : service
+    const concierge = new ConciergeService(tenants, registry, weddings, undefined, model, jobs, receipts, sender, filing, queueStore)
     jobs.register(concierge.jobKind())
     const ask = (text: string, pmr: string) => concierge.receive(ctx, { channel: 'sms', sender_ref: 'sms:+1', body: text, provider_message_ref: pmr, received_at: clock.now() }, wedding)
     return { ctx, registry, wedding, other, escalations, service, jobs, ask, tenants, queueStore }
@@ -207,18 +217,60 @@ describe('the concierge job (service level)', () => {
     expect(w.escalations.list(w.ctx).map((e) => e.text)).toEqual(['Anything?'])
   })
 
-  it('answers the guest from their CURRENT binding; a guest unbound since is not answered', async () => {
+  it('a guest re-bound or removed since the message came in is neither answered nor filed', async () => {
     const w = world({ action: 'answer', facts: ['event_date'] })
     w.ask('When?', 'p1')
-    // Re-bound to another wedding before the job runs (the registry needs a remove first).
     w.registry.remove(w.ctx, 'sms:+1')
     w.registry.register(w.ctx, { recipient_ref: 'sms:+1', wedding_id: w.other, guest_id: 'g1' })
     await w.jobs.drain()
-    expect(w.service.usageView(w.ctx.tenant_id).message_count).toBe(1)
     w.ask('When again?', 'p2')
     w.registry.remove(w.ctx, 'sms:+1')
     await w.jobs.drain()
-    expect(w.service.usageView(w.ctx.tenant_id).message_count).toBe(1)
+    expect(w.service.usageView(w.ctx.tenant_id).message_count).toBe(0)
     expect(w.escalations.list(w.ctx)).toEqual([])
+  })
+
+  it('a guest removed DURING the model call gets no reply (the binding is checked again when the job completes)', async () => {
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const w = world({ action: 'answer', facts: ['event_date'] }, () => gate)
+    w.ask('When?', 'p1')
+    const running = w.jobs.drain()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    w.registry.remove(w.ctx, 'sms:+1')
+    release()
+    await running
+    expect(w.service.usageView(w.ctx.tenant_id).message_count).toBe(0)
+    expect(w.escalations.list(w.ctx)).toEqual([])
+  })
+
+  it('a re-delivered escalated message does not call the model again', async () => {
+    let calls = 0
+    const w = world({ action: 'escalate', facts: [] }, () => {
+      calls += 1
+      return Promise.resolve()
+    })
+    w.ask('Anything?', 'p1')
+    await w.jobs.drain()
+    w.ask('Anything?', 'p1')
+    w.ask('Anything?', 'p1')
+    await w.jobs.drain()
+    expect(calls).toBe(1)
+    expect(w.escalations.list(w.ctx)).toHaveLength(1)
+  })
+
+  it('a send that fails files the question instead of losing it', async () => {
+    const w = world({ action: 'answer', facts: ['event_date'] }, undefined, true)
+    w.ask('When?', 'p1')
+    await w.jobs.drain()
+    expect(w.escalations.list(w.ctx).map((e) => e.text)).toEqual(['When?'])
+  })
+
+  it('one guest has at most a few questions waiting; more go straight to the inbox without a job', () => {
+    const w = world({ action: 'answer', facts: ['event_date'] })
+    const outcomes = Array.from({ length: CONCIERGE_LIMITS.pending_per_sender + 2 }, (_, i) => w.ask(`Question ${i}?`, `p${i}`))
+    expect(outcomes.filter((o) => o === 'queued')).toHaveLength(CONCIERGE_LIMITS.pending_per_sender)
+    expect(outcomes.slice(-2)).toEqual(['filed', 'filed'])
+    expect(w.escalations.list(w.ctx).length).toBeGreaterThan(0)
   })
 })

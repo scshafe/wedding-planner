@@ -41,8 +41,8 @@ export const SINGLE_FACT_KEYS = ['event_date', 'ceremony_time', 'venue_name', 'p
 /** The most keys one answer may use. */
 export const MAX_ANSWER_KEYS = 3
 
-/** The longest reply: a few text messages' worth. Longer facts are cut at a word. */
-export const MAX_REPLY_LENGTH = 600
+/** The longest reply: three text messages' worth. Longer facts are cut at a word. */
+export const MAX_REPLY_LENGTH = 480
 
 /** Build the allow-listed projection. Explicit fields only, never a spread: anything not named here stays private. */
 export function projectConciergeFacts(wedding: Wedding, site: PublicSiteView | undefined): ConciergeFacts {
@@ -127,10 +127,12 @@ export function renderConciergeAnswer(facts: ConciergeFacts, keys: readonly stri
 
 function cut(text: string, max: number): string {
   if (text.length <= max) return text
-  const space = text.lastIndexOf(' ', max - 1)
-  let end = space > max / 2 ? space : max - 1
+  // Room for the three dots within `max`.
+  const space = text.lastIndexOf(' ', max - 4)
+  let end = space > max / 2 ? space : max - 3
   // Never split a surrogate pair (an emoji): the reply must stay well-formed text.
   const code = text.charCodeAt(end - 1)
   if (code >= 0xd800 && code <= 0xdbff) end -= 1
-  return `${text.slice(0, end)}…`
+  // ASCII dots: a non-GSM character would force the dearer SMS encoding for the whole reply.
+  return `${text.slice(0, end)}...`
 }

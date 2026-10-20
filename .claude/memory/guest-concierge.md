@@ -16,5 +16,8 @@ Since issue #60 (2026-10-20): `product/src/concierge/`, `product/src/messaging/e
   even with a real model.
 - **Refusal** (`isSurpriseProbe`) happens at the edge and reads no wedding data. Do not make it conditional on facts.
 - **`guest_answer` is an ephemeral job kind:** finished rows are deleted (per-message pruning).
+- **The binding rule:** answer or file only while the guest is still bound to the wedding the message came in under
+  (`pending.wedding_id`). It is checked in `execute` AND again in `complete`.
+- **Bounds:** 5 pending per sender, 200 per workspace; over them, a message is filed straight to the inbox.
 
 Related: [[model-jobs-and-copilot]], [[model-port]], [[wedding-website]].

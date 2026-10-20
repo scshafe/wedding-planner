@@ -55,8 +55,15 @@ export const GUEST_ANSWER = defineModelTask<GuestAnswerOutput>({
 /** The job kind's name. */
 export const CONCIERGE_JOB = 'guest_answer'
 
-/** How much of a guest's message the model sees (the inbox keeps all of it). */
+/** How much of a guest's message the model sees. */
 export const MAX_QUESTION_FOR_MODEL = 500
+
+/**
+ * Bounds on questions waiting for the concierge. Over them, a message goes straight to the inbox (no job, no model call),
+ * so neither one guest nor one workspace can grow the queue without bound; the stored text is capped (guest messages are
+ * texts: far shorter).
+ */
+export const CONCIERGE_LIMITS = Object.freeze({ pending_per_sender: 5, pending_per_workspace: 200, stored_text: 4000 })
 
 /**
  * Whether a message is a surprise or secret probe: refused without reading any wedding data. A keyword choice on the
@@ -67,11 +74,8 @@ export function isSurpriseProbe(text: string): boolean {
   return /\b(surprise|surprises|secret|secrets)\b/.test(text.toLowerCase())
 }
 
-/** What a job decided, for its completion to carry out. */
-type ConciergeResult =
-  | { readonly kind: 'answer'; readonly reply: string; readonly recipient_ref: string }
-  | { readonly kind: 'escalate'; readonly wedding_id: string }
-  | { readonly kind: 'none' }
+/** What a job decided, for its completion to carry out (against the binding the message came in under). */
+type ConciergeResult = { readonly kind: 'answer'; readonly reply: string; readonly recipient_ref: string } | { readonly kind: 'escalate' } | { readonly kind: 'none' }
 
 export class ConciergeService {
   readonly #pending: TenantScopedRepository<PendingGuestQuestion>
@@ -92,13 +96,18 @@ export class ConciergeService {
   }
 
   /**
-   * The inbound edge's decision for a message from a bound guest (inside the webhook's transaction): refused, or queued
-   * for the concierge. Never sends, never reads the wedding.
+   * The inbound edge's decision for a message from a bound guest (inside the webhook's transaction): refused, queued for
+   * the concierge, or — over the bounds — filed straight to the inbox. Never sends, never reads the wedding's facts.
    */
-  receive(context: TenantContext, message: InboundMessage, wedding_id: string): 'refused' | 'queued' {
+  receive(context: TenantContext, message: InboundMessage, wedding_id: string): 'refused' | 'queued' | 'filed' {
     if (isSurpriseProbe(message.body)) return 'refused'
     const question_id = questionId(message.provider_message_ref)
     if (this.#pending.read(context, question_id) === undefined) {
+      const waiting = this.#pending.list(context)
+      if (waiting.length >= CONCIERGE_LIMITS.pending_per_workspace || waiting.filter((q) => q.sender_ref === message.sender_ref).length >= CONCIERGE_LIMITS.pending_per_sender) {
+        fileGuestEscalation(context, this.filing, wedding_id, message)
+        return 'filed'
+      }
       const pending: PendingGuestQuestion = {
         question_id,
         tenant_id: context.tenant_id,
@@ -106,7 +115,7 @@ export class ConciergeService {
         provider_message_ref: message.provider_message_ref,
         sender_ref: message.sender_ref,
         channel: message.channel,
-        body: message.body,
+        body: safeSlice(message.body, CONCIERGE_LIMITS.stored_text),
         received_at: message.received_at,
       }
       getSchemaRegistry().assertValid<PendingGuestQuestion>('pending_guest_question', pending)
@@ -123,13 +132,17 @@ export class ConciergeService {
       ephemeral: true,
       execute: (context, job) => this.#decide(context, job),
       complete: (context, job, result) => this.#carryOut(context, job, result),
-      // The model failed for good: the question goes to the inbox rather than being lost.
+      // The model failed for good: the question goes to the inbox rather than being lost (if the guest is still bound
+      // to the wedding it came in under, as for any answer).
       failed: (context, job) => {
         const pending = this.#question(context, job.subject_id)
         if (pending === undefined) return
-        const binding = this.registry.lookup(context, pending.sender_ref)
-        fileGuestEscalation(context, this.filing, binding?.wedding_id ?? pending.wedding_id, toMessage(pending))
-        this.#pending.delete(context, pending.question_id)
+        try {
+          if (this.#stillBound(context, pending) !== undefined) fileGuestEscalation(context, this.filing, pending.wedding_id, toMessage(pending))
+        } finally {
+          // Never left behind holding a guest's text, whatever happened above.
+          this.#pending.delete(context, pending.question_id)
+        }
       },
     }
   }
@@ -137,38 +150,59 @@ export class ConciergeService {
   /** Read the question and the guest's binding again, ask the model, and check its answer. */
   async #decide(context: TenantContext, job: Job): Promise<ConciergeResult> {
     const pending = this.#question(context, job.subject_id)
-    if (pending === undefined || this.receipts.seen(context, pending.provider_message_ref)) return { kind: 'none' }
-    // The CURRENT binding, as the edge would see it now: a guest unbound since is not answered (no oracle), a re-bound
-    // one is answered from their current wedding.
-    const binding = this.registry.lookup(context, pending.sender_ref)
+    if (pending === undefined || this.#handled(context, pending)) return { kind: 'none' }
+    // The binding the message came in under: a guest unbound or re-bound since is neither answered nor filed (no
+    // oracle; a question written for one wedding never reaches another's inbox).
+    const binding = this.#stillBound(context, pending)
     if (binding === undefined) return { kind: 'none' }
-    const wedding = this.weddings.get(context, binding.wedding_id)
+    const wedding = this.weddings.get(context, pending.wedding_id)
     if (wedding === undefined) return { kind: 'none' }
-    const facts: ConciergeFacts = projectConciergeFacts(wedding, this.sites?.publishedSiteOf(context, binding.wedding_id))
-    const output = await this.model.run(context, GUEST_ANSWER, { facts, question: pending.body.slice(0, MAX_QUESTION_FOR_MODEL) })
-    const keys = output.action === 'answer' ? output.facts.slice(0, MAX_ANSWER_KEYS) : []
-    if (keys.length === 0 || !keysHeld(facts, keys)) return { kind: 'escalate', wedding_id: binding.wedding_id }
+    // A cancelled wedding answers nothing automatically: the planner sees the question.
+    if (wedding.status === 'cancelled') return { kind: 'escalate' }
+    const facts: ConciergeFacts = projectConciergeFacts(wedding, this.sites?.publishedSiteOf(context, pending.wedding_id))
+    const output = await this.model.run(context, GUEST_ANSWER, { facts, question: safeSlice(pending.body, MAX_QUESTION_FOR_MODEL) })
+    const keys = output.action === 'answer' ? [...new Set(output.facts)].slice(0, MAX_ANSWER_KEYS) : []
+    if (keys.length === 0 || !keysHeld(facts, keys)) return { kind: 'escalate' }
     return { kind: 'answer', reply: renderConciergeAnswer(facts, keys), recipient_ref: binding.recipient_ref }
   }
 
-  /** Send the answer or file the question (one transaction), then forget the question. */
+  /**
+   * Send the answer or file the question (one transaction), then forget the question. The binding is checked again here:
+   * the model call took time, and a guest removed or re-bound meanwhile is not answered or filed.
+   */
   #carryOut(context: TenantContext, job: Job, result: ConciergeResult): void {
     const pending = this.#question(context, job.subject_id)
     if (pending === undefined) return
-    if (result.kind === 'answer' && !this.receipts.seen(context, pending.provider_message_ref)) {
+    const binding = result.kind === 'none' ? undefined : this.#stillBound(context, pending)
+    const live = binding !== undefined && this.weddings.get(context, pending.wedding_id) !== undefined
+    if (live && result.kind === 'answer' && binding.recipient_ref === result.recipient_ref && !this.receipts.seen(context, pending.provider_message_ref)) {
       const replyId = this.receipts.mintReplyId()
       try {
         this.service.send(context.tenant_id, { channel: pending.channel, recipient_ref: result.recipient_ref, body: result.reply, idempotency_key: replyId })
         // Commit-after-success: only now is the message a no-op for re-deliveries.
         this.receipts.markReplied(context, pending.provider_message_ref, replyId)
       } catch (error) {
-        // A structured send failure is a dropped reply: not marked replied, so a re-delivery can try again.
+        // A structured send failure: the provider will not deliver this message again, so the question goes to the inbox
+        // rather than being lost.
         if (!(error instanceof WeddingPlannerError)) throw error
+        fileGuestEscalation(context, this.filing, pending.wedding_id, toMessage(pending))
       }
-    } else if (result.kind === 'escalate') {
-      fileGuestEscalation(context, this.filing, result.wedding_id, toMessage(pending))
+    } else if (live && result.kind === 'escalate') {
+      fileGuestEscalation(context, this.filing, pending.wedding_id, toMessage(pending))
     }
     this.#pending.delete(context, pending.question_id)
+  }
+
+  /** The guest's binding, if it is still to the wedding the message came in under. */
+  #stillBound(context: TenantContext, pending: PendingGuestQuestion): ReturnType<GuestRegistry['lookup']> {
+    const binding = this.registry.lookup(context, pending.sender_ref)
+    return binding !== undefined && binding.wedding_id === pending.wedding_id ? binding : undefined
+  }
+
+  /** Whether this message was already replied to, or already filed (a re-delivery): no model call for it. */
+  #handled(context: TenantContext, pending: PendingGuestQuestion): boolean {
+    const ref = pending.provider_message_ref
+    return this.receipts.seen(context, ref) || this.filing.escalations.getByProviderRef(context, ref) !== undefined || this.filing.replies.guestTurnByProviderRef(context, ref) !== undefined
   }
 
   #question(context: TenantContext, question_id: string): PendingGuestQuestion | undefined {
@@ -179,6 +213,13 @@ export class ConciergeService {
 /** The pending question's id: a fixed-length hash of the provider's ref (which has no length limit). */
 export function questionId(provider_message_ref: string): string {
   return `q${createHash('sha256').update(provider_message_ref).digest('hex').slice(0, 40)}`
+}
+
+/** The first `max` code units of a text, never splitting a surrogate pair. */
+function safeSlice(text: string, max: number): string {
+  if (text.length <= max) return text
+  const code = text.charCodeAt(max - 1)
+  return text.slice(0, code >= 0xd800 && code <= 0xdbff ? max - 1 : max)
 }
 
 function toMessage(pending: PendingGuestQuestion): InboundMessage {

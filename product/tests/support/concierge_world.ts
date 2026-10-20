@@ -40,7 +40,9 @@ export interface ConciergeWorldDeps {
 export function conciergeWorld(deps: ConciergeWorldDeps): { readonly concierge: ConciergeService; readonly drain: () => Promise<number> } {
   const store = new InMemoryRecordStore()
   const model = new ModelService(deps.tenants, new SimulatedModelAdapter(SIMULATED_MODEL_TASKS), deps.clock, store)
-  const jobs = new JobQueue(deps.tenants, deps.resolver, deps.clock, new SequentialIdGenerator('job'), store)
+  // A job that fails is recorded here, and draining then throws: a test can never pass because a job failed silently.
+  const errors: unknown[] = []
+  const jobs = new JobQueue(deps.tenants, deps.resolver, deps.clock, new SequentialIdGenerator('job'), store, undefined, { record: (error) => errors.push(error) })
   const concierge = new ConciergeService(
     deps.tenants,
     deps.registry,
@@ -54,5 +56,10 @@ export function conciergeWorld(deps: ConciergeWorldDeps): { readonly concierge: 
     store,
   )
   jobs.register(concierge.jobKind())
-  return { concierge, drain: () => jobs.drain() }
+  const drain = async (): Promise<number> => {
+    const ran = await jobs.drain()
+    if (errors.length > 0) throw new Error(`A concierge job failed: ${String(errors[0])}`)
+    return ran
+  }
+  return { concierge, drain }
 }

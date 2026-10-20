@@ -139,6 +139,8 @@ export interface ComposeProductSurfaceConfig {
    * Injected so the composition keeps no ambient time.
    */
   readonly jobTimer?: DeadlineTimer
+  /** Issue #60: gives the event loop a turn between jobs. The entrypoint passes one; absent ⇒ none (tests). */
+  readonly jobYield?: () => Promise<void>
 }
 
 /** A handle to the demo tenant seeded by THIS composition — present only when the seed ran (empty store). */
@@ -317,7 +319,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const checklist = new ChecklistService(tenants, weddings, authorizer, clock, ids, store)
   const runOfShow = new RunOfShowService(tenants, weddings, authorizer, vendors, events, clock, ids, store)
   // Issue #61: model calls made after the request that asked (the outbox), and the planner copilot, their first kind.
-  const jobs = new JobQueue(tenants, resolver, clock, ids, store, config.jobTimer, errors)
+  const jobs = new JobQueue(tenants, resolver, clock, ids, store, config.jobTimer, errors, config.jobYield)
   const copilot = new CopilotService(tenants, weddings, authorizer, events, vendors, checklist, runOfShow, model, jobs, clock, store)
   jobs.register(copilot.jobKind())
   // Issue #60: the guest concierge — answers from the allow-listed facts (and the published website), through the job

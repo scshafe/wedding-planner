@@ -79,6 +79,8 @@ function main(): void {
       timer.unref()
       return () => clearTimeout(timer)
     },
+    // Issue #60: a turn of the event loop between jobs, so a burst of guest questions never starves requests.
+    jobYield: () => new Promise((resolve) => setImmediate(resolve)),
   })
 
   // Precompute the dummy password hash so no request pays for it (uniform sign-in timing from the first request).
