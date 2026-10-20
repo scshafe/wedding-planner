@@ -62,7 +62,7 @@ The `/admin` provisioning surface is operator-gated — present the operator tok
 | `WP_REQUIRE_DATABASE` | `false`   | When true, boot fails closed without `WP_DATABASE_PATH` even in demo mode (the deployed stack sets it). |
 | `WP_BUILD_COMMIT`   | *(build arg)* | The commit `/healthz` reports. `scripts/docker_build.sh` bakes the full sha in with `--build-arg`. |
 | `WP_IMAGE_REF`      | *(unset)*   | An image reference (`name:<short sha>`); its tag is reported as the commit when `WP_BUILD_COMMIT` is absent. The deployed stack sets it to the pinned image. |
-| `WP_PUBLIC_URL`     | *(unset)*   | The site's public origin (e.g. `https://planner.example`, no path or trailing slash) used in links inside emails (password reset, account setup). Unset ⇒ site-relative links. Never derived from a request's Host header. |
+| `WP_PUBLIC_URL`     | *(unset)*   | The site's public origin (e.g. `https://planner.example`, no path or trailing slash) used in links inside emails (password reset, account setup, invitations). Unset or empty ⇒ site-relative links. Never derived from a request's Host header. In the deployed stack it is an owner value in the host's `.env` (`stack.toml` `[env] owner`), never committed: the repository is public and the origin names the tailnet. |
 
 ## Data and backups
 

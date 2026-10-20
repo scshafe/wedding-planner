@@ -25,4 +25,4 @@ paths = [".env", "state/app"]        # the owner tokens; the app's SQLite databa
 [env]
 required = ["TS_AUTHKEY"]
 generated = []
-owner = ["WP_OPERATOR_TOKEN", "WP_PROVIDER_WEBHOOK_TOKEN"]
+owner = ["WP_OPERATOR_TOKEN", "WP_PROVIDER_WEBHOOK_TOKEN", "WP_PUBLIC_URL"]

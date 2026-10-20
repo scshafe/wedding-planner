@@ -101,7 +101,9 @@ transaction (ADR 0039), anything the limiter needs to remember must live outside
 ### Links come from a configured base, never the Host header
 
 - Emails link to `${WP_PUBLIC_URL}/t/<slug>/reset?token=…`. `WP_PUBLIC_URL` is validated as an http(s) origin
-  and fails closed otherwise.
+  and fails closed otherwise. In the deployed stack it is an `[env] owner` value the owner sets in the host's
+  `.env`; the compose file only passes it through (`${WP_PUBLIC_URL:-}`). It is never committed, because the
+  repository is public and the node's origin names the tailnet.
 - Without it, links are site-relative paths. Deriving them from the request's Host header would let a requester
   mail a victim a link to the requester's own host, carrying the victim's token.
 - The reset page sends `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
