@@ -142,6 +142,8 @@ describe('durable storage — data written before a restart is read back after i
     expect(tableRes.status).toBe(201)
     const tableId = (tableRes.body as { table: { table_id: string } }).table.table_id
     expect(api1.handle(req('PUT', `/t/demo/weddings/${newWeddingId}/seating/seats/${guestId}`, { token, body: { table_id: tableId } })).status).toBe(200)
+    // A wedding website (issue #47).
+    expect(api1.handle(req('PUT', `/t/demo/weddings/${newWeddingId}/site`, { token, body: { site_name: 'ana-and-bo' } })).status).toBe(200)
     const provisioned = api1.handle(
       req('POST', '/admin/tenants', {
         token: OP,

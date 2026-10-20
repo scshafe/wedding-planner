@@ -85,3 +85,6 @@ export type { RunOfShowItem } from './generated/run_of_show_item'
 // A wedding's seating plan: tables, and where each guest sits (issue #46). ADR 0054.
 export type { SeatingTable } from './generated/seating_table'
 export type { SeatAssignment } from './generated/seat_assignment'
+// A wedding's public website and the workspace's site-name index (issue #47). ADR 0055.
+export type { WeddingSite } from './generated/wedding_site'
+export type { WeddingSiteName } from './generated/wedding_site_name'

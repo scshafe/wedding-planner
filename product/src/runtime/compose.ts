@@ -18,6 +18,7 @@ import { VendorService } from '../vendors/vendor_service'
 import { BudgetService } from '../budget/budget_service'
 import { RunOfShowService } from '../run_of_show/run_of_show_service'
 import { SeatingService } from '../seating/seating_service'
+import { SITE_LIMITS, SiteService } from '../site/site_service'
 import { BillingLedger } from '../billing/billing_ledger'
 import { WeddingEventService } from '../wedding_events/wedding_event_service'
 import { FeedbackService } from '../feedback/feedback_service'
@@ -309,6 +310,8 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     // Each wedding's run of show (issue #45): the day-of timeline and vendor call times.
     runOfShow: new RunOfShowService(tenants, weddings, authorizer, vendors, events, clock, ids, store),
     seating,
+    // Each wedding's public website (issue #47): edited by the planner and the couple, read by guests when published.
+    site: { sites: new SiteService(tenants, weddings, authorizer, events, clock, ids, store, SITE_LIMITS, limiter) },
     // In-app feedback (issue #12): stored in the shared store, read by the operator at /admin/feedback.
     feedback: new FeedbackService(clock, ids, limiter, store),
     // Operability (issue #13): 500s are recorded (code + location, never data); /healthz names the build.

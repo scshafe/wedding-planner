@@ -53,6 +53,8 @@ export type ContractKey =
   | 'run_of_show_item'
   | 'seating_table'
   | 'seat_assignment'
+  | 'wedding_site'
+  | 'wedding_site_name'
 
 export interface ContractDefinition {
   /** Stable friendly key, e.g. 'grade_report'. */
@@ -276,6 +278,18 @@ export const CONTRACT_DEFINITIONS: readonly ContractDefinition[] = [
     key: 'seat_assignment',
     schemaId: `${SCHEMA_ID_PREFIX}/seat_assignment.json`,
     repoRelativePath: 'product/schemas/seat_assignment_schema.json',
+    domain: 'product',
+  },
+  {
+    key: 'wedding_site',
+    schemaId: `${SCHEMA_ID_PREFIX}/wedding_site.json`,
+    repoRelativePath: 'product/schemas/wedding_site_schema.json',
+    domain: 'product',
+  },
+  {
+    key: 'wedding_site_name',
+    schemaId: `${SCHEMA_ID_PREFIX}/wedding_site_name.json`,
+    repoRelativePath: 'product/schemas/wedding_site_name_schema.json',
     domain: 'product',
   },
 ] as const

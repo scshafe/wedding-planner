@@ -7,6 +7,7 @@ import { centsFromText, VENDOR_LIMITS, type VendorsView } from '../vendors/vendo
 import type { BudgetView } from '../budget/budget_service'
 import type { RunOfShowView } from '../run_of_show/run_of_show_service'
 import type { SeatingView } from '../seating/seating_service'
+import { type PublicSiteView, SITE_LIMITS, type SiteEditView } from '../site/site_service'
 import { toGuestCsv } from '../guests/guest_csv'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
@@ -48,6 +49,10 @@ import {
   renderBudget,
   renderRunOfShow,
   renderSeating,
+  renderSiteEditor,
+  renderPublicSite,
+  type SiteNotice,
+  BLANK_SITE_ROWS,
   type SeatingNotice,
   type RunOfShowNotice,
   type BudgetNotice,
@@ -261,6 +266,16 @@ export class ProductWebUi {
       if (segments.length === 4 && segments[2] === 'rsvp' && this.#accounts !== undefined) {
         return slug === undefined ? GENERIC_404 : this.#householdRsvp(req, slug, segments[3] ?? '')
       }
+      // /t/:slug/w/<site-name> (issue #47) — a published wedding website: PUBLIC (no session). Anything that is not a
+      // published site of this workspace is the generic not-found.
+      if (segments.length === 4 && segments[2] === 'w') {
+        return slug === undefined || req.method !== 'GET' ? GENERIC_404 : this.#publicSite(slug, segments[3] ?? '')
+      }
+      // /t/:slug/site/<action> (issue #47) — the website editor's FORM posts (CSRF-protected).
+      if (segments.length === 4 && segments[2] === 'site' && req.method === 'POST') {
+        if (slug === undefined) return GENERIC_404
+        return this.#siteAction(req, slug, segments[3] ?? '')
+      }
       // /t/:slug/seating/<action> (issue #46) — the seating FORM posts (CSRF-protected).
       if (segments.length === 4 && segments[2] === 'seating' && req.method === 'POST') {
         if (slug === undefined) return GENERIC_404
@@ -366,6 +381,8 @@ export class ProductWebUi {
     const weddingId = queryParam(req.path, 'wedding')
     // ?wedding=ID&tab=guests (issue #27): the wedding's guest list (or one guest's edit page with &guest=ID).
     if (weddingId !== undefined && queryParam(req.path, 'tab') === 'guests') return this.#guestListPage(req, slug, weddingId)
+    // ?wedding=ID&tab=site (issue #47): edit the wedding's public website.
+    if (weddingId !== undefined && queryParam(req.path, 'tab') === 'site') return this.#siteEditor(req, slug, weddingId)
     // ?wedding=ID&tab=seating[&event=ID][&print=1] (issue #46): the wedding's seating plan.
     if (weddingId !== undefined && queryParam(req.path, 'tab') === 'seating') return this.#seatingPage(req, slug, weddingId)
     // ?wedding=ID&tab=run-of-show[&print=1] (issue #45): the wedding's run of show.
@@ -895,6 +912,86 @@ export class ProductWebUi {
     const notice =
       res.status === 200 || res.status === 201 ? (action === 'event-remove' ? 'removed' : 'saved') : res.status === 409 ? 'conflict' : 'invalid'
     return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=events&notice=${notice}`)
+  }
+
+  /** GET /t/:slug/w/<site-name> (issue #47): the public site, through the pipeline's public read; else not found. */
+  #publicSite(slug: string, siteName: string): HttpResult {
+    const theme = this.#themes.resolveActiveTheme(slug)
+    if (theme === undefined) return GENERIC_404
+    const res = this.#api.handle(bearerGet(`/t/${slug}/site/${encodeURIComponent(siteName)}`, undefined))
+    if (res.status !== 200) return GENERIC_404
+    return htmlResult(200, renderPublicSite(theme, slug, res.body as PublicSiteView), { 'referrer-policy': 'no-referrer' })
+  }
+
+  /** GET /t/:slug?wedding=ID&tab=site (issue #47) — the wedding, then its site editor view; any non-200 is masked. */
+  #siteEditor(req: ApiRequest, slug: string, weddingId: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const id = encodeURIComponent(weddingId)
+    const weddingRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}`, token))
+    if (weddingRes.status !== 200) return this.#renderNonData(slug, weddingRes.status)
+    const siteRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}/site`, token))
+    if (siteRes.status !== 200) return this.#renderNonData(slug, siteRes.status)
+    const theme = this.#themes.resolveActiveTheme(slug)
+    const csrf = this.#csrf.issueCsrf(token)
+    const wedding = readWedding(weddingRes.body)
+    if (theme === undefined || wedding === undefined) return GENERIC_404
+    if (csrf === undefined) return ERROR_500
+    const raw = queryParam(req.path, 'notice')
+    const notice = (['saved', 'invalid', 'taken', 'busy', 'published', 'unpublished'] as const).find((n) => n === raw)
+    return htmlResult(200, renderSiteEditor(theme, slug, wedding, siteRes.body as SiteEditView, csrf, notice))
+  }
+
+  /** POST /t/:slug/site/<action> (issue #47) — CSRF first, then the JSON route of the form's wedding; a notice back. */
+  #siteAction(req: ApiRequest, slug: string, action: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    // One pass indexes the form; rows are read by index, bounded by the site's own limits.
+    const fields = new Map<string, string>()
+    const publicEvents: string[] = []
+    for (const [key, val] of form) {
+      if (key === 'public_event') {
+        if (publicEvents.length <= SITE_LIMITS.public_events) publicEvents.push(val)
+      } else if (!fields.has(key)) {
+        fields.set(key, val)
+      }
+    }
+    const value = (name: string): string => (fields.get(name) ?? '').trim()
+    const weddingId = value('wedding_id')
+    const base = `/t/${slug}/weddings/${encodeURIComponent(weddingId)}/site`
+    const call = (method: string, path: string, body?: unknown) => this.#api.handle(bearerJson(method, path, token, body ?? {}))
+    const rows = <T,>(limit: number, blank: number, build: (n: number) => T | undefined): T[] => {
+      const out: T[] = []
+      for (let n = 0; n < limit + blank; n++) {
+        const row = build(n)
+        if (row !== undefined) out.push(row)
+      }
+      return out
+    }
+    const optional = (name: string, key: string) => (value(name).length === 0 ? {} : { [key]: value(name) })
+    const siteBody = () => ({
+      site_name: value('site_name'),
+      ...optional('welcome', 'welcome'),
+      ...optional('travel', 'travel'),
+      public_event_ids: publicEvents,
+      hotels: rows(SITE_LIMITS.hotels, BLANK_SITE_ROWS.hotels, (n) =>
+        value(`h${n}_name`).length === 0
+          ? undefined
+          : { name: value(`h${n}_name`), ...optional(`h${n}_address`, 'address'), ...optional(`h${n}_url`, 'booking_url'), ...optional(`h${n}_code`, 'block_code'), ...optional(`h${n}_by`, 'book_by') },
+      ),
+      faq: rows(SITE_LIMITS.faq, BLANK_SITE_ROWS.faq, (n) => (value(`f${n}_q`).length === 0 ? undefined : { question: value(`f${n}_q`), answer: value(`f${n}_a`) })),
+      registry: rows(SITE_LIMITS.registry, BLANK_SITE_ROWS.registry, (n) => (value(`r${n}_label`).length === 0 ? undefined : { label: value(`r${n}_label`), url: value(`r${n}_url`) })),
+    })
+    const res =
+      action === 'site-save' ? call('PUT', base, siteBody()) : action === 'site-publish' ? call('PUT', `${base}/published`, { published: value('published') === 'true' }) : undefined
+    if (res === undefined) return GENERIC_404
+    if (res.status === 404 || res.status === 401 || res.status === 403) return this.#renderNonData(slug, res.status)
+    const published = value('published') === 'true'
+    const notice: SiteNotice =
+      res.status === 200
+        ? action === 'site-publish' ? (published ? 'published' : 'unpublished') : 'saved'
+        : res.status === 409 ? 'taken' : res.status === 429 ? 'busy' : 'invalid'
+    return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=site&notice=${notice}`)
   }
 
   /** GET /t/:slug?wedding=ID&tab=seating (issue #46) — the wedding, then its seating plan; any non-200 is masked. */

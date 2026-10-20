@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/wedding_site.json",
+  "title": "WeddingSite",
+  "description": "A wedding's public website (issue #47): what guests may read at /t/<slug>/w/<site_name> once it is published \u2014 the welcome, the public events, travel notes, hotel blocks, an FAQ and registry links. Never any guest data. One per wedding, stored under the wedding_id; the site name is unique in the workspace (the wedding_site_name index).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tenant_id",
+    "wedding_id",
+    "site_name",
+    "published",
+    "public_event_ids",
+    "hotels",
+    "faq",
+    "registry",
+    "created_at"
+  ],
+  "properties": {
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The owning tenant. Compared to the context's tenant only; never selects the partition."
+    },
+    "wedding_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "site_name": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$",
+      "description": "The site's name in its public address: 3 to 40 lowercase letters, digits and hyphens (no underscores, so it never looks like an id)."
+    },
+    "published": {
+      "type": "boolean",
+      "description": "Whether the public page is on. Off until published; off is the generic not-found."
+    },
+    "welcome": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "travel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "description": "Travel notes: how to get there, parking, transport."
+    },
+    "public_event_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "description": "The wedding's events (issue #29) shown in the public schedule: name, time and place only."
+    },
+    "hotels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "hotel_id",
+          "name"
+        ],
+        "properties": {
+          "hotel_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "address": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "booking_url": {
+            "type": "string",
+            "maxLength": 500,
+            "pattern": "^https://[^\\s<>\"']+$"
+          },
+          "block_code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "book_by": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          }
+        }
+      },
+      "description": "Hotel blocks (at most 10, enforced by the site service)."
+    },
+    "faq": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "faq_id",
+          "question",
+          "answer"
+        ],
+        "properties": {
+          "faq_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "question": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      },
+      "description": "Questions and answers (at most 30, enforced by the site service)."
+    },
+    "registry": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "registry_id",
+          "label",
+          "url"
+        ],
+        "properties": {
+          "registry_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "url": {
+            "type": "string",
+            "maxLength": 500,
+            "pattern": "^https://[^\\s<>\"']+$"
+          }
+        }
+      },
+      "description": "Registry links (at most 10, enforced by the site service); https only."
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO 8601 UTC creation time, from the injected clock."
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO 8601 UTC time of the last change, when changed."
+    }
+  }
+}

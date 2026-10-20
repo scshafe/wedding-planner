@@ -17,6 +17,7 @@ import type { RateLimiter } from '../accounts/rate_limiter'
 import type { BudgetCategoryInput, BudgetService } from '../budget/budget_service'
 import type { RunOfShowInput, RunOfShowService } from '../run_of_show/run_of_show_service'
 import type { SeatingService, TableInput } from '../seating/seating_service'
+import { SITE_LIMITS, type SiteInput, type SiteService } from '../site/site_service'
 import type { ChecklistService, TaskInput } from '../checklist/checklist_service'
 import {
   type InstallmentInput,
@@ -191,6 +192,13 @@ export interface WeddingHandlerDeps {
   readonly runOfShow?: RunOfShowService
   /** Issue #46: the wedding's seating plan. Absent ⇒ the sub-routes are not mounted. */
   readonly seating?: SeatingService
+  /** Issue #47: the wedding's public website (editing). Absent ⇒ the sub-routes are not mounted. */
+  readonly site?: SiteService
+}
+
+/** Issue #47: what the public website read needs — the sites. */
+export interface PublicSiteDeps {
+  readonly sites: SiteService
 }
 
 /** Issue #30: what the public household RSVP route needs — the link resolver, the answers, the dietary note, a limiter. */
@@ -364,6 +372,8 @@ export interface ProductApiDeps {
   readonly runOfShow?: RunOfShowService
   /** Issue #46: each wedding's seating plan, under /t/:slug/weddings/:id/seating. */
   readonly seating?: SeatingService
+  /** Issue #47: each wedding's website (…/weddings/:id/site) and the public read /t/:slug/site/:name. */
+  readonly site?: PublicSiteDeps
   /**
    * Issue #13: where a request that ends in a 500 is recorded (code + location, never data), and what the operator
    * reads at /admin/errors. Absent ⇒ nothing is recorded (fixtures).
@@ -452,6 +462,7 @@ export class ProductApi {
   readonly #membership: MembershipService | undefined
   readonly #householdRsvp: HouseholdRsvpDeps | undefined
   readonly #checklist: ChecklistService | undefined
+  readonly #publicSite: PublicSiteDeps | undefined
   /** In-app feedback (issue #12), or undefined when not wired. */
   readonly #feedback: FeedbackService | undefined
   /** The server-error log (issue #13), or undefined when not wired. */
@@ -478,7 +489,9 @@ export class ProductApi {
       ...(deps.budget === undefined ? {} : { budget: deps.budget }),
       ...(deps.runOfShow === undefined ? {} : { runOfShow: deps.runOfShow }),
       ...(deps.seating === undefined ? {} : { seating: deps.seating }),
+      ...(deps.site === undefined ? {} : { site: deps.site.sites }),
     }
+    this.#publicSite = deps.site
     this.#householdRsvp = deps.householdRsvp
     this.#checklist = deps.checklist
     this.#guests = deps.guests
@@ -598,6 +611,16 @@ export class ProductApi {
       if (this.#membership !== undefined && segments.length === 4 && segments[2] === 'invitations' && segments[3] === 'accept') {
         if (req.method !== 'POST') throw methodNotAllowed()
         return handleInvitationAccept(context, req, this.#membership)
+      }
+
+      // /t/:slug/site/:name — a published wedding website's public content (issue #47). Unauthenticated by design;
+      // anything that is not a published site of THIS workspace is the masked 404. Not rate-limited: with no client
+      // identity a limit is shared by every guest, so tripping it would take the site down (ADR 0055).
+      if (this.#publicSite !== undefined && segments.length === 4 && segments[2] === 'site') {
+        if (req.method !== 'GET') throw routeNotFound()
+        const view = this.#publicSite.sites.publicView(context, segments[3] ?? '')
+        if (view === undefined) throw routeNotFound()
+        return { status: 200, body: view }
       }
 
       // /t/:slug/household-rsvp/:token — a household's RSVP page data (issue #30). Unauthenticated by design: the link's
@@ -865,6 +888,7 @@ function errorToResponse(error: WeddingPlannerError): ApiResponse {
     case 'PRODUCT.LIMIT_REACHED':
     case 'PRODUCT.RSVPS_CLOSED':
     case 'PRODUCT.SEATING_FULL':
+    case 'PRODUCT.SITE_NAME_TAKEN':
       return RESP_CONFLICT
     // FORGED_CONTEXT / FORGED_PRINCIPAL / CROSS_TENANT_WRITE / anything else: an internal invariant
     // violation a real request can never construct — a 500 bug, never a normal client path, never leaked.
@@ -901,6 +925,10 @@ function dispatchWeddings(
     throw methodNotAllowed()
   }
   const weddingId = segments[3]
+  // /t/:slug/weddings/:weddingId/site[/published] (issue #47).
+  if (deps.site !== undefined && weddingId !== undefined && segments[4] === 'site' && segments.length <= 6) {
+    return dispatchSite(context, principal, req, weddingId, segments[5], deps.site)
+  }
   // /t/:slug/weddings/:weddingId/seating[/tables[/:id] | /seats/:guestId | /households/:id] (issue #46).
   if (deps.seating !== undefined && weddingId !== undefined && segments[4] === 'seating' && segments.length <= 7) {
     return dispatchSeating(context, principal, req, weddingId, segments.slice(5), deps.seating)
@@ -1108,6 +1136,56 @@ function dispatchChecklist(
   }
   if (req.method === 'DELETE') return { status: 200, body: { removed: checklist.removeTask(context, principal, weddingId, id) } }
   throw methodNotAllowed()
+}
+
+/**
+ * The website routes of one wedding (issue #47): the planner and the couple edit. The wedding's boundary first.
+ */
+function dispatchSite(context: TenantContext, principal: Principal, req: ApiRequest, weddingId: string, sub: string | undefined, sites: SiteService): ApiResponse {
+  sites.assertReach(context, principal, weddingId)
+  if (sub === undefined) {
+    if (req.method === 'GET') return { status: 200, body: sites.editView(context, principal, weddingId) }
+    if (req.method === 'PUT') return { status: 200, body: { site: sites.save(context, principal, weddingId, siteInput(req)) } }
+    throw methodNotAllowed()
+  }
+  if (sub === 'published') {
+    if (req.method !== 'PUT') throw methodNotAllowed()
+    const published = parseObjectBody(req.rawBody).published
+    if (typeof published !== 'boolean') throw new ProductError('PRODUCT.BAD_REQUEST', 'published must be true or false.', {})
+    return { status: 200, body: { site: sites.setPublished(context, principal, weddingId, published) } }
+  }
+  throw routeNotFound()
+}
+
+/** A site body: `{site_name, welcome?, travel?, public_event_ids?, hotels?, faq?, registry?}`; lists bounded first. */
+function siteInput(req: ApiRequest): SiteInput {
+  const body = parseObjectBody(req.rawBody)
+  const ids = body.public_event_ids
+  if (ids !== undefined && (!Array.isArray(ids) || ids.length > SITE_LIMITS.public_events || ids.some((i) => typeof i !== 'string'))) {
+    throw new ProductError('PRODUCT.BAD_REQUEST', 'public_event_ids must be a list of event ids.', {})
+  }
+  const text = (o: Record<string, unknown>, key: string): { [k: string]: string } => {
+    const value = optionalString(o, key)
+    return value === undefined ? {} : { [key]: value }
+  }
+  const hotels = boundedList(body.hotels ?? [], SITE_LIMITS.hotels, 'hotels').map((h) => ({
+    name: requireString(h, 'name'),
+    ...text(h, 'address'),
+    ...text(h, 'booking_url'),
+    ...text(h, 'block_code'),
+    ...text(h, 'book_by'),
+  }))
+  const faq = boundedList(body.faq ?? [], SITE_LIMITS.faq, 'faq').map((f) => ({ question: requireString(f, 'question'), answer: requireString(f, 'answer') }))
+  const registry = boundedList(body.registry ?? [], SITE_LIMITS.registry, 'registry').map((r) => ({ label: requireString(r, 'label'), url: requireString(r, 'url') }))
+  return {
+    site_name: requireString(body, 'site_name'),
+    ...text(body, 'welcome'),
+    ...text(body, 'travel'),
+    ...(ids === undefined ? {} : { public_event_ids: ids as string[] }),
+    hotels,
+    faq,
+    registry,
+  }
 }
 
 /**
