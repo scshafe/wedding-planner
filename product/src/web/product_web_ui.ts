@@ -13,7 +13,7 @@ import type { BillingActivityEntry } from '../billing/billing_activity'
 import type { BillingSummary } from '../billing/billing_summary'
 import { constantTimeEqual, type CsrfGuard } from '../auth/csrf_guard'
 import type { ApiRequest } from '../http/api_message'
-import { splitPath } from '../http/path'
+import { queryParam, splitPath } from '../http/path'
 import type { ProductApi } from '../http/product_api'
 import type { StrategyGuidance } from '../strategy/strategy_guidance'
 import { WEDDING_LOGISTICS_FIELDS } from '../wedding/wedding_repository'
@@ -941,7 +941,9 @@ export class ProductWebUi {
                 : undefined
     if (res === undefined) return GENERIC_404
     if (res.status === 404 || res.status === 401 || res.status === 403) return this.#renderNonData(slug, res.status)
-    const notice: SeatingNotice = res.status === 200 || res.status === 201 ? (action === 'table-remove' ? 'removed' : 'saved') : res.status === 409 ? 'full' : 'invalid'
+    const removedNothing = action === 'table-remove' && (res.body as { removed?: boolean }).removed !== true
+    const notice: SeatingNotice =
+      res.status === 200 || res.status === 201 ? (action === 'table-remove' ? (removedNothing ? 'invalid' : 'removed') : 'saved') : res.status === 409 ? 'full' : 'invalid'
     const event = value('event_id')
     return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=seating${event.length === 0 ? '' : `&event=${encodeURIComponent(event)}`}&notice=${notice}`)
   }
@@ -1680,13 +1682,6 @@ function readSessionCookie(cookieHeader: string | undefined): string | undefined
   return readCookie(cookieHeader, SESSION_COOKIE)
 }
 
-/** Extract a single query parameter value from a path, or undefined. */
-function queryParam(path: string, name: string): string | undefined {
-  const q = path.indexOf('?')
-  if (q === -1) return undefined
-  const value = new URLSearchParams(path.slice(q + 1)).get(name)
-  return value === null ? undefined : value
-}
 
 /** Parse a urlencoded form body into a params map (empty when absent). */
 function parseForm(rawBody: string | undefined): URLSearchParams {

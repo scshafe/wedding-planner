@@ -50,7 +50,9 @@ usually do it.
 - JSON: `GET …/weddings/:id/seating[?event=<id>]`, `POST …/seating/tables`, `PUT|DELETE …/seating/tables/:tid`,
   `PUT …/seating/seats/:gid {table_id | null}` and `PUT …/seating/households/:hid {table_id}`.
 - Web: the seating page `?wedding=<id>&tab=seating[&event=<id>]`, the printable table list (`&print=1`), and a link
-  from the wedding page. Every form posts to `/t/<slug>/seating/<action>` and checks the per-session CSRF token
+  from the wedding page. The page has one "seat [guest] at [table]" form, never a table choice per guest. The
+  security review measured a 22 MB page for a couple at the limits (2,000 guests, 100 tables) with a choice per
+  guest. Every form posts to `/t/<slug>/seating/<action>` and checks the per-session CSRF token
   first.
 
 ## Consequences

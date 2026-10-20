@@ -68,7 +68,7 @@ import type { TenantContext, TenantContextResolver } from '../tenant/tenant_cont
 import type { TenantStore } from '../tenant/tenant_store'
 import type { CreateWeddingInput, WeddingLogisticsField, WeddingRepository } from '../wedding/wedding_repository'
 import type { ApiRequest, ApiResponse } from './api_message'
-import { splitPath } from './path'
+import { queryParam, splitPath } from './path'
 
 /**
  * @canonical product_api -- the pure HTTP handler: the 5-stage request pipeline + the route table.
@@ -1126,7 +1126,7 @@ function dispatchSeating(
   const [resource, id] = rest
   if (resource === undefined) {
     if (req.method !== 'GET') throw methodNotAllowed()
-    const event = queryValue(req.path, 'event')
+    const event = queryParam(req.path, 'event')
     return { status: 200, body: seating.view(context, principal, weddingId, event) }
   }
   if (resource === 'tables' && id === undefined) {
@@ -1158,12 +1158,6 @@ function tableInput(req: ApiRequest): TableInput {
   const capacity = body.capacity
   if (typeof capacity !== 'number') throw new ProductError('PRODUCT.BAD_REQUEST', 'capacity must be a whole number.', {})
   return { name: requireString(body, 'name'), capacity }
-}
-
-/** One query-string value of a path, or undefined. */
-function queryValue(path: string, name: string): string | undefined {
-  const at = path.indexOf('?')
-  return at === -1 ? undefined : (new URLSearchParams(path.slice(at + 1)).get(name) ?? undefined)
 }
 
 /**

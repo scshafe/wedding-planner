@@ -158,13 +158,15 @@ export class SeatingService implements GuestListHooks {
     this.#seatAll(context, wedding_id, [guest_id], table_id)
   }
 
-  /** Seat every guest of a household at a table: all of them or none (capacity). */
+  /**
+   * Seat every guest of a household at a table (moving any seated elsewhere): all of them or none (capacity). Returns
+   * how many took a new seat there.
+   */
   seatHousehold(context: TenantContext, principal: Principal, wedding_id: string, household_id: string, table_id: string): number {
     this.assertReach(context, principal, wedding_id)
     if (this.guests.household(context, wedding_id, household_id) === undefined) throw new ProductError('PRODUCT.NOT_FOUND', 'No such household on this wedding.', {})
     const members = this.guests.guestsOf(context, wedding_id).filter((g) => g.household_id === household_id).map((g) => g.guest_id)
-    this.#seatAll(context, wedding_id, members, table_id)
-    return members.length
+    return this.#seatAll(context, wedding_id, members, table_id)
   }
 
   /** The guest list's hook: removed guests lose their seats (same request, same transaction). */
@@ -173,7 +175,7 @@ export class SeatingService implements GuestListHooks {
   }
 
   /** Seat these guests at one table if it has room for those not already there; otherwise refuse and seat none. */
-  #seatAll(context: TenantContext, wedding_id: string, guest_ids: readonly string[], table_id: string): void {
+  #seatAll(context: TenantContext, wedding_id: string, guest_ids: readonly string[], table_id: string): number {
     const table = this.#table(context, wedding_id, table_id)
     const seats = this.#seatsOf(context, wedding_id)
     const already = new Set(seats.filter((s) => s.table_id === table_id).map((s) => s.guest_id))
@@ -186,6 +188,7 @@ export class SeatingService implements GuestListHooks {
       getSchemaRegistry().assertValid<SeatAssignment>('seat_assignment', seat)
       this.#seats.put(context, seat)
     }
+    return arriving.length
   }
 
   #tablesOf(context: TenantContext, wedding_id: string): SeatingTable[] {

@@ -37,6 +37,15 @@ const csrfOf = (page: HttpResult): string => /name="_csrf" value="([^"]+)"/.exec
 const NOT_FOUND = { status: 404, body: { error: 'not_found' } }
 
 describe('seating', () => {
+  it('the page grows with guests plus tables, not guests times tables', () => {
+    const w = setup()
+    for (let t = 0; t < 40; t++) w.api('POST', `/t/demo/weddings/${w.ours}/seating/tables`, w.bearer, { name: `Table ${'&'.repeat(50)} ${t}`, capacity: 10 })
+    for (let g = 0; g < 200; g++) w.api('POST', `/t/demo/weddings/${w.ours}/guests`, w.bearer, { household_id: w.household, first_name: `Guest${g}`, side: 'both' })
+    const page = w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=seating`, w.login({ role: 'planner' })))
+    expect(page.status).toBe(200)
+    expect(page.body.length).toBeLessThan(250_000)
+  })
+
   it('JSON: the couple manages its own seating; a full table is a 409; another wedding is the masked 404', () => {
     const w = setup()
     const table = (w.api('POST', `/t/demo/weddings/${w.ours}/seating/tables`, w.coupleBearer, { name: 'T1', capacity: 1 }).body as { table: { table_id: string } }).table.table_id

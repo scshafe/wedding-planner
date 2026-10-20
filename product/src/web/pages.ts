@@ -2207,6 +2207,7 @@ export function renderSeating(theme: Tenant['theme'], slug: string, wedding: Wed
     )
   }
   const hidden = (fields: Record<string, string>) => html`${csrfField(csrfToken)}${Object.entries(fields).map(([k, v]) => html`<input type="hidden" name="${k}" value="${v}">`)}`
+  // The table choice is rendered once per form, never once per guest: the page grows with guests plus tables.
   const tableSelect = html`<select name="table_id">${view.tables.map((t) => html`<option value="${t.table.table_id}">${`${t.table.name} (${t.free} free)`}</option>`)}</select>`
   const back = { wedding_id: w, event_id: view.event?.event_id ?? '' }
   return signedInShell(
@@ -2243,9 +2244,10 @@ export function renderSeating(theme: Tenant['theme'], slug: string, wedding: Wed
         ? html`<p class="note">Everyone attending has a seat.</p>`
         : view.tables.length === 0
           ? html`<p class="note">Add a table first.</p>`
-          : html`<ul>${view.unseated.map(
-              (g) => html`<li>${guestName(g)} <form class="inline" method="post" action="/t/${slug}/seating/seat-guest">${hidden({ ...back, guest_id: g.guest_id })}${tableSelect}<button type="submit">Seat</button></form></li>`,
-            )}</ul>
+          : html`<ul>${view.unseated.map((g) => html`<li>${guestName(g)}</li>`)}</ul>
+    <form method="post" action="/t/${slug}/seating/seat-guest">${hidden(back)}
+      <label>Seat <select name="guest_id">${view.unseated.map((g) => html`<option value="${g.guest_id}">${g.name}</option>`)}</select></label>
+      ${tableSelect}<button type="submit">Seat</button></form>
     <form method="post" action="/t/${slug}/seating/seat-household">${hidden(back)}
       <label>Seat a whole household <select name="household_id">${view.households.map((h) => html`<option value="${h.household_id}">${h.name}</option>`)}</select></label>
       ${tableSelect}<button type="submit">Seat them together</button></form>`
