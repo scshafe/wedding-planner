@@ -16,22 +16,32 @@ direction (target customer, pricing, business model) are the owner's call (`stat
 The job, in the planner's words: *"keep every wedding on track without chasing my couples, my
 vendors and 150 guests by hand."*
 
-## Where we are (2026-10-13)
+## Where we are (2026-10-19)
 
-A secure multi-tenant shell with almost no planning functionality yet. Tenant isolation, CSRF,
-themed white-label pages, a guest-question inbox with reply/resolve/reopen, and a simulated
-billing page all exist and are well tested (1006 tests). Missing are durable storage (all state
-is in memory and resets on every deploy), real sign-in (a role picker), most of the planning
-domain (a wedding has 7 fields; a guest is a phone handle) and any real AI (keyword matching).
+M1 is done. The product is a secure multi-tenant workspace that keeps its data:
+- durable SQLite storage, backed up with the stack, with rollback-safe migrations;
+- real accounts: email and password, reset through emailed links, invitations for teammates and couples, and the
+  workspace owner managing members;
+- a simulated email outbox and an operator console (`/admin`) for tenants, the outbox, in-app feedback and server
+  errors;
+- request logs that carry no personal data, and the build commit in `/healthz`.
+
+Tenant isolation, CSRF, themed white-label pages, the guest-question inbox and the simulated billing page carry
+over from before (1250 tests). Production runs in demo mode: the demo tenant keeps a clearly labeled role picker,
+and every other workspace signs in for real.
+
+Missing is most of the planning domain (a wedding has 7 fields; a guest is a messaging handle), which is M2
+onward, and any real AI: keyword matching only until M4's model port.
 
 ## Milestones
 
 Build them roughly in order. Within a milestone the triage agent sequences by dependency and
 value; an item that turns out larger than one PR is split into issues.
 
-### M1: Real foundations
+### M1: Real foundations — done (2026-10-19)
 
-Someone can use it for real and find their work there tomorrow.
+Someone can use it for real and find their work there tomorrow. Shipped as #8 (storage), #9 (outbox and
+operator console), #10 (accounts), #11 (invitations), #12 (feedback) and #13 (operability); ADRs 0039–0044.
 
 - **Durable storage.** A persistence port with a file-backed adapter (e.g. SQLite) under the
   stack's `./state` volume; schema migrations; the in-memory adapter stays for tests; the
@@ -43,8 +53,9 @@ Someone can use it for real and find their work there tomorrow.
 - **Invitations.** A planner invites teammates and a couple (one-time link via the outbox);
   roles: owner, planner, couple.
 - **In-app feedback.** A "Send feedback" form for planners and couples, stored durably and
-  visible to the operator. How it reaches the loop without exposing personal data in this
-  public repository is an owner decision.
+  visible to the operator. Owner decision (ADR 0045): it stays in the app. The operator reads it
+  in the console and files issues by hand; nothing users write goes to GitHub or an agent
+  automatically.
 - **Operability.** Structured request logs, an operator page of recent server errors, the build
   commit in `/healthz`.
 
