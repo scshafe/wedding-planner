@@ -4,7 +4,9 @@ import type { Clock } from '@wedding-planner/shared'
 
 import type { ApiRequest } from '../http/api_message'
 import { formatRequestLog, logMethod, routePattern } from '../operability/request_log'
+import { MAX_BODY_BYTES } from '../http/node_server'
 import type { ProductWebUi } from './product_web_ui'
+import { LARGE_TRANSFER_BYTES } from './transfer_budget'
 
 /**
  * @canonical product_web_server -- the thin Node `http` adapter for the combined web UI + JSON API.
@@ -14,7 +16,9 @@ import type { ProductWebUi } from './product_web_ui'
  * `MAX_BODY_BYTES` unless it is a signed-in document upload — -> `413`, refused up front when the declared
  * `content-length` is already over it), build an {@link ApiRequest} (lowercased headers, raw body and its bytes), hand
  * it to `ProductWebUi.handle`, and write the returned {@link HttpResult} verbatim (its explicit status, header map,
- * and string body or bytes). All routing,
+ * and string body or bytes). Issue #48: a large upload body takes one of a few places and must arrive within a
+ * deadline, and a large response is held against the process-wide budget until it is written (`ui.transfers`,
+ * transfer_budget.ts) — 503 when either is full. All routing,
  * tenant resolution, auth, theming, and rendering live in the pure handler, so this adapter needs no
  * test beyond a wiring smoke check. The JSON-only `node_server.ts` is left untouched for pure-API use.
  *
@@ -57,24 +61,46 @@ export function createProductWebUiServer(ui: ProductWebUi, logging?: RequestLogg
     let total = 0
     let aborted = false
     const headers = lowercaseHeaders(req.headers)
-    const limit = ui.bodyLimit(req.method ?? 'GET', req.url ?? '/', headers)
-    const tooLarge = (): void => {
+    let limit = MAX_BODY_BYTES
+    try {
+      limit = ui.bodyLimit(req.method ?? 'GET', req.url ?? '/', headers)
+    } catch {
+      // A storage failure while checking the session: the default limit (never a crash outside the handler).
+    }
+    const refuse = (status: number, error: string, extra: Record<string, string> = {}): void => {
       aborted = true
-      res.writeHead(413, { 'content-type': 'application/json', connection: 'close' })
-      res.end(JSON.stringify({ error: 'payload_too_large' }))
+      res.writeHead(status, { 'content-type': 'application/json', connection: 'close', ...extra })
+      res.end(JSON.stringify({ error }))
       req.destroy()
     }
     // A declared length over the limit is refused before a byte of the body is read.
     if (Number(headers['content-length'] ?? 0) > limit) {
-      tooLarge()
+      refuse(413, 'payload_too_large')
       return
+    }
+    if (limit > MAX_BODY_BYTES) {
+      // A large upload: one of a few places, and a deadline for the whole body.
+      const release = ui.transfers.holdUpload()
+      if (release === undefined) {
+        refuse(503, 'busy', { 'retry-after': '10' })
+        return
+      }
+      const deadline = setTimeout(() => {
+        if (!aborted && !res.headersSent) refuse(408, 'request_timeout')
+      }, ui.transfers.limits.upload_deadline_ms)
+      const done = (): void => {
+        clearTimeout(deadline)
+        release()
+      }
+      req.once('end', () => clearTimeout(deadline))
+      res.once('close', done)
     }
 
     req.on('data', (chunk: Buffer) => {
       if (aborted) return
       total += chunk.length
       if (total > limit) {
-        tooLarge()
+        refuse(413, 'payload_too_large')
         return
       }
       chunks.push(chunk)
@@ -84,14 +110,27 @@ export function createProductWebUiServer(ui: ProductWebUi, logging?: RequestLogg
       if (aborted) return
       try {
         const bytes = chunks.length === 0 ? undefined : Buffer.concat(chunks)
+        // A multipart body is binary: only its bytes are passed (no UTF-8 copy nobody reads).
+        const multipart = (headers['content-type'] ?? '').toLowerCase().startsWith('multipart/form-data')
         const apiReq: ApiRequest = {
           method: req.method ?? 'GET',
           path: req.url ?? '/',
           headers,
-          ...(bytes === undefined ? {} : { rawBody: bytes.toString('utf8'), bodyBytes: bytes }),
+          ...(bytes === undefined ? {} : multipart ? { bodyBytes: bytes } : { rawBody: bytes.toString('utf8') }),
         }
         const result = ui.handle(apiReq)
         if (res.headersSent) return
+        const size = result.bytes?.byteLength ?? Buffer.byteLength(result.body)
+        if (size >= LARGE_TRANSFER_BYTES) {
+          // Held until it is written or the connection closes; a response that does not fit is not held at all.
+          const release = ui.transfers.holdResponse(size)
+          if (release === undefined) {
+            res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '5', 'cache-control': 'no-store' })
+            res.end(JSON.stringify({ error: 'busy' }))
+            return
+          }
+          res.once('close', release)
+        }
         res.writeHead(result.status, result.headers)
         res.end(result.bytes ?? result.body)
         // Issue #10: work whose cost must not show in the response's timing runs after the response is written.

@@ -7,6 +7,7 @@ import type { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import { COLLECTIONS } from '../persistence/collections'
 import { GLOBAL_PARTITION, groupedKey, type RecordStore } from '../persistence/record_store'
 import { InMemoryRecordStore } from '../persistence/in_memory_record_store'
+import { RateLimiter, type RateLimitRule } from '../accounts/rate_limiter'
 import { ProductError } from '../product_error'
 import type { TenantContext } from '../tenant/tenant_context'
 import { TenantScopedRepository } from '../tenant/tenant_scoped_repository'
@@ -30,8 +31,8 @@ import type { WeddingRepository } from '../wedding/wedding_repository'
  * store (collection `document_content`, base64, one record per file, read one at a time and never listed), so they are
  * in the same SQLite file as the rest of the state and the stack's existing `state/app` backup covers them.
  *
- * Storage is bounded at every level, checked before anything is written: per file, per wedding (bytes and count), per
- * workspace and for the whole platform. The workspace and platform totals are counters kept in the same transaction
+ * Storage is bounded at every level, checked before anything is decoded or written (a file's size is exact from its
+ * base64 length): per file, per wedding (bytes and count), per workspace and for the whole platform. The workspace and platform totals are counters kept in the same transaction
  * as the upload or removal (a request is one transaction), so they are exact and O(1); the platform cap keeps
  * documents well inside the database's own size cap, so a full document store never stops other writes.
  *
@@ -51,6 +52,9 @@ export const DOCUMENT_LIMITS = Object.freeze({
 })
 
 export type DocumentLimits = { readonly [K in keyof typeof DOCUMENT_LIMITS]: number }
+
+/** Downloads per session: each reads and decodes up to 5 MiB, so one session cannot keep the server busy with them. */
+export const DOCUMENT_DOWNLOADS: RateLimitRule = Object.freeze({ limit: 60, windowSeconds: 60 })
 
 export const DOCUMENT_KINDS = ['contract', 'floor_plan', 'quote', 'other'] as const
 export type DocumentKind = WeddingDocument['kind']
@@ -147,6 +151,7 @@ export class DocumentService {
     private readonly ids: IdGenerator,
     store: RecordStore = new InMemoryRecordStore(),
     private readonly limits: DocumentLimits = DOCUMENT_LIMITS,
+    private readonly downloads: RateLimiter = new RateLimiter(clock),
   ) {
     this.#store = store
     this.#documents = new TenantScopedRepository<WeddingDocument>(liveness, (d) => groupedKey(d.wedding_id, d.document_id), COLLECTIONS.weddingDocument, store)
@@ -183,18 +188,20 @@ export class DocumentService {
     const filename = baseName(input.filename)
     assertPlainText([filename])
     if (filename.length === 0 || filename.length > 120) throw new ProductError('PRODUCT.BAD_REQUEST', 'The file needs a name of at most 120 characters.', {})
-    const bytes = decodeBase64(input.content_base64, this.limits.file_bytes)
+    // Every cap is checked on the exact size the base64 length gives, before any decoding.
+    const size = base64Size(input.content_base64, this.limits.file_bytes)
+    const existing = this.#documentsOf(context, wedding_id)
+    if (existing.length >= this.limits.wedding_files) throw new ProductError('PRODUCT.LIMIT_REACHED', 'This wedding has reached its number of documents.', {})
+    if (sumBytes(existing) + size > this.limits.wedding_bytes) throw new ProductError('PRODUCT.LIMIT_REACHED', "This wedding's document storage is full.", {})
+    const workspace = this.#workspaceUsage.read(context, USAGE_KEY) ?? { tenant_id: context.tenant_id, bytes: 0, files: 0 }
+    if (workspace.bytes + size > this.limits.workspace_bytes) throw new ProductError('PRODUCT.LIMIT_REACHED', "The workspace's document storage is full.", {})
+    const platform = this.#platformUsage()
+    if (platform.bytes + size > this.limits.platform_bytes) throw new ProductError('PRODUCT.LIMIT_REACHED', 'Document storage is full.', {})
+    const bytes = decodeBase64(input.content_base64, size)
     const type = sniffDocumentType(bytes)
     if (type === undefined || !extensionMatches(filename, type)) {
       throw new ProductError('PRODUCT.UNSUPPORTED_FILE', 'Only PDF, PNG and JPEG files are accepted, named for what they are.', {})
     }
-    const existing = this.#documentsOf(context, wedding_id)
-    if (existing.length >= this.limits.wedding_files) throw new ProductError('PRODUCT.LIMIT_REACHED', 'This wedding has reached its number of documents.', {})
-    if (sumBytes(existing) + bytes.length > this.limits.wedding_bytes) throw new ProductError('PRODUCT.LIMIT_REACHED', "This wedding's document storage is full.", {})
-    const workspace = this.#workspaceUsage.read(context, USAGE_KEY) ?? { tenant_id: context.tenant_id, bytes: 0, files: 0 }
-    if (workspace.bytes + bytes.length > this.limits.workspace_bytes) throw new ProductError('PRODUCT.LIMIT_REACHED', "The workspace's document storage is full.", {})
-    const platform = this.#platformUsage()
-    if (platform.bytes + bytes.length > this.limits.platform_bytes) throw new ProductError('PRODUCT.LIMIT_REACHED', 'Document storage is full.', {})
 
     const document: WeddingDocument = {
       document_id: this.ids.next('doc'),
@@ -255,6 +262,9 @@ export class DocumentService {
    */
   download(context: TenantContext, principal: Principal, wedding_id: string, document_id: string): DocumentDownload {
     this.assertReach(context, principal, wedding_id)
+    if (!this.downloads.attempt(`document-download:${context.tenant_id}:${principal.principal_id}`, DOCUMENT_DOWNLOADS)) {
+      throw new ProductError('PRODUCT.RATE_LIMITED', 'Too many downloads; try again in a minute.', {})
+    }
     const document = this.#document(context, wedding_id, document_id)
     if (principal.role !== 'planner' && !document.shared_with_couple) throw notFound()
     const content = this.#contents.read(context, groupedKey(wedding_id, document_id))
@@ -330,14 +340,25 @@ function baseName(filename: string): string {
 
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/
 
-/** Decode strict, padded base64 — its length is checked BEFORE any work, so an oversized body costs nothing. */
-function decodeBase64(text: string, maxBytes: number): Buffer {
+/**
+ * The exact decoded size of padded base64, from its length alone (no scan, no decoding), checked against the limit:
+ * an oversized or empty body costs nothing more.
+ */
+function base64Size(text: string, maxBytes: number): number {
   if (typeof text !== 'string' || text.length === 0) throw new ProductError('PRODUCT.BAD_REQUEST', 'The file is empty.', {})
   if (text.length > maxBase64Length(maxBytes)) throw new ProductError('PRODUCT.FILE_TOO_LARGE', 'A file is at most 5 MB.', {})
-  if (text.length % 4 !== 0 || !BASE64.test(text)) throw new ProductError('PRODUCT.BAD_REQUEST', 'content_base64 must be padded base64.', {})
+  if (text.length % 4 !== 0) throw new ProductError('PRODUCT.BAD_REQUEST', 'content_base64 must be padded base64.', {})
+  const size = (text.length / 4) * 3 - (text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0)
+  if (size <= 0) throw new ProductError('PRODUCT.BAD_REQUEST', 'The file is empty.', {})
+  if (size > maxBytes) throw new ProductError('PRODUCT.FILE_TOO_LARGE', 'A file is at most 5 MB.', {})
+  return size
+}
+
+/** Decode strict, padded base64 whose size {@link base64Size} already gave. */
+function decodeBase64(text: string, size: number): Buffer {
+  if (!BASE64.test(text)) throw new ProductError('PRODUCT.BAD_REQUEST', 'content_base64 must be padded base64.', {})
   const bytes = Buffer.from(text, 'base64')
-  if (bytes.length === 0) throw new ProductError('PRODUCT.BAD_REQUEST', 'The file is empty.', {})
-  if (bytes.length > maxBytes) throw new ProductError('PRODUCT.FILE_TOO_LARGE', 'A file is at most 5 MB.', {})
+  if (bytes.length !== size) throw new ProductError('PRODUCT.BAD_REQUEST', 'content_base64 must be padded base64.', {})
   return bytes
 }
 

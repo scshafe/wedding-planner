@@ -126,11 +126,14 @@ describe('DocumentService', () => {
     for (const content_base64 of ['not base64!', 'QUJD=', '====', '']) expect(codeOf(() => w.upload({ content_base64 }))).toBe('PRODUCT.BAD_REQUEST')
     expect(codeOf(() => w.upload({ title: ' ' }))).toBe('PRODUCT.BAD_REQUEST')
     expect(codeOf(() => w.upload({ title: 'A\u202Eb' }))).toBe('PRODUCT.BAD_REQUEST')
+    expect(codeOf(() => w.upload({ title: 'Lone \uD800 surrogate' }))).toBe('PRODUCT.BAD_REQUEST')
     expect(codeOf(() => w.upload({ filename: 'a\nb.pdf' }))).toBe('PRODUCT.BAD_REQUEST')
     expect(codeOf(() => w.upload({ kind: 'invoice' as never }))).toBe('PRODUCT.BAD_REQUEST')
     const theirVendor = w.vendors.addVendor(w.ctx, w.planner, w.theirs, { category: 'venue', business_name: 'Theirs', contract_status: 'none', installments: [] })
     expect(codeOf(() => w.upload({ vendor_id: theirVendor.vendor_id }))).toBe('PRODUCT.BAD_REQUEST')
     expect(w.documents.view(w.ctx, w.planner, w.ours).documents).toEqual([])
+    // A surrogate pair (an emoji) is well-formed text.
+    expect(w.upload({ title: 'Pair \uD83D\uDE00 ok' }).title).toBe('Pair \uD83D\uDE00 ok')
   })
 
   it('a file is at most 5 MB, checked on the base64 length before any decoding', () => {
@@ -161,6 +164,9 @@ describe('DocumentService', () => {
     expect(codeOf(upOther(60))).toBe('PRODUCT.LIMIT_REACHED')
     expect(codeOf(upOther(50))).toBe('NO_THROW')
     expect(codeOf(upOther(6))).toBe('PRODUCT.LIMIT_REACHED')
+    // A full store refuses before decoding: content that is not even base64 gets the cap, not a parse error.
+    expect(codeOf(upOther(6))).toBe('PRODUCT.LIMIT_REACHED')
+    expect(codeOf(() => w.documents.upload(w.other, w.otherPlanner, w.elsewhere, { title: 'T', kind: 'other', filename: 'f.pdf', content_base64: '!!!!' }))).toBe('PRODUCT.LIMIT_REACHED')
     // Removing frees the wedding, the workspace and the platform.
     expect(w.documents.remove(w.ctx, w.planner, w.ours, a.document_id)).toBe(true)
     expect(w.documents.remove(w.ctx, w.planner, w.ours, a.document_id)).toBe(false)

@@ -349,6 +349,7 @@ export { SIMULATED_MODEL_TASKS } from './model/simulated_tasks'
 export { MODEL_LIMITS, ModelService, type ModelUsageRecord, type ModelUsageView } from './model/model_service'
 // Files attached to a wedding or its vendors (issue #48, ADR 0056), and the upload form's parser.
 export {
+  DOCUMENT_DOWNLOADS,
   DOCUMENT_KINDS,
   DOCUMENT_LIMITS,
   type DocumentDownload,
@@ -362,6 +363,7 @@ export {
   sniffDocumentType,
 } from './documents/document_service'
 export { MULTIPART_LIMITS, type MultipartForm, multipartBoundary, parseMultipartForm } from './web/multipart_form'
+export { LARGE_TRANSFER_BYTES, TRANSFER_LIMITS, TransferBudget, type TransferLimits } from './web/transfer_budget'
 // A wedding's public website and the workspace's site names (issue #47, ADR 0055).
 export { type HotelInput, type PublicSiteView, SITE_LIMITS, SITE_NAME, type SiteEditView, type SiteInput, SiteService } from './site/site_service'
 // A wedding's seating plan: tables, seats, capacity (issue #46, ADR 0054).

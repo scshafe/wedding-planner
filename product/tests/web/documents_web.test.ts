@@ -139,20 +139,23 @@ describe('documents', () => {
     expect(w.ui.handle(get(`/t/demo/documents/download?wedding=${w.ours}&doc=${unshared}`, planner)).status).toBe(404)
   })
 
-  it('the larger body limit is only for an upload route with a live session', () => {
+  it("the larger body limit is only for the upload form, with a live planner session of the slug's workspace", () => {
     const w = setup()
     const planner = w.login({ role: 'planner' })
+    const couple = w.login({ role: 'couple', wedding_id: w.ours })
+    // Another workspace: the demo planner's session is not its planner.
+    expect(w.api('POST', '/admin/tenants', 'wd-operator-token-0123456789', { slug: 'acme', display_name: 'Acme', plan_tier: 'solo', theme: { brand_name: 'A', primary_color_hex: '#123456', accent_color_hex: '#654321', logo_ref: 'l' } }).status).toBe(201)
     const upload = '/t/demo/documents/upload'
-    const json = `/t/demo/weddings/${w.ours}/documents`
     expect(w.ui.bodyLimit('POST', upload, { cookie: planner })).toBe(DOCUMENT_UPLOAD_MAX_BODY_BYTES)
-    expect(w.ui.bodyLimit('POST', json, { authorization: `Bearer ${w.bearer}` })).toBe(DOCUMENT_UPLOAD_MAX_BODY_BYTES)
     for (const [method, path, headers] of [
       ['POST', upload, {}],
+      ['POST', upload, { cookie: couple }],
       ['POST', upload, { cookie: 'wp_session=made-up-token' }],
       ['POST', upload, { authorization: `Bearer ${w.bearer}` }],
-      ['POST', json, { cookie: planner }],
-      ['POST', json, { authorization: 'Bearer made-up-token' }],
-      ['PUT', json, { authorization: `Bearer ${w.bearer}` }],
+      ['POST', '/t/acme/documents/upload', { cookie: planner }],
+      ['POST', '/t/BAD_SLUG/documents/upload', { cookie: planner }],
+      ['POST', `/t/demo/weddings/${w.ours}/documents`, { authorization: `Bearer ${w.bearer}` }],
+      ['PUT', upload, { cookie: planner }],
       ['POST', '/t/demo/guests/create', { cookie: planner }],
     ] as const) {
       expect(w.ui.bodyLimit(method, path, headers)).toBe(MAX_BODY_BYTES)
@@ -163,9 +166,28 @@ describe('documents', () => {
     expect(w.ui.bodyLimit('POST', upload, { cookie: planner })).toBe(MAX_BODY_BYTES)
   })
 
+  it('a download is refused, before anything is read, while the large-response budget is full; downloads per session are limited', () => {
+    const w = setup()
+    const id = (w.api('POST', `/t/demo/weddings/${w.ours}/documents`, w.bearer, { title: 'T', kind: 'other', filename: 't.pdf', content_base64: PDF.toString('base64') }).body as { document: { document_id: string } }).document.document_id
+    const planner = w.login({ role: 'planner' })
+    const path = `/t/demo/documents/download?wedding=${w.ours}&doc=${id}`
+    const release = w.ui.transfers.holdResponse(w.ui.transfers.limits.response_bytes)
+    const busy = w.ui.handle(get(path, planner))
+    expect([busy.status, busy.headers['retry-after'], busy.bytes]).toEqual([503, '5', undefined])
+    release?.()
+    expect(w.ui.handle(get(path, planner)).status).toBe(200)
+    for (let i = 1; i < 60; i++) w.ui.handle(get(path, planner))
+    const limited = w.ui.handle(get(path, planner))
+    expect([limited.status, limited.headers['retry-after']]).toEqual([429, '60'])
+    // Another session has its own allowance.
+    expect(w.ui.handle(get(path, w.login({ role: 'planner' }))).status).toBe(200)
+  })
+
   it('the download name keeps the header safe whatever the title holds', () => {
     expect(attachmentDisposition('Plan; v2\r\nX: y.pdf')).toBe(`attachment; filename="Plan_ v2__X_ y.pdf"; filename*=UTF-8''Plan%3B%20v2%0D%0AX%3A%20y.pdf`)
     expect(attachmentDisposition("Ma'am (draft)*.png")).toBe(`attachment; filename="Ma_am (draft)_.png"; filename*=UTF-8''Ma%27am%20%28draft%29%2A.png`)
     expect(attachmentDisposition('Café.pdf')).toBe(`attachment; filename="Caf_.pdf"; filename*=UTF-8''Caf%C3%A9.pdf`)
+    // A lone surrogate (refused in titles anyway) cannot make the header throw.
+    expect(attachmentDisposition('a\uD800.pdf')).toBe(`attachment; filename="a_.pdf"; filename*=UTF-8''a%EF%BF%BD.pdf`)
   })
 })

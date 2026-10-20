@@ -11,6 +11,8 @@ import type { SeatingView } from '../seating/seating_service'
 import { type PublicSiteView, SITE_LIMITS, type SiteEditView } from '../site/site_service'
 import { DOCUMENT_LIMITS, type DocumentDownload, type DocumentsView } from '../documents/document_service'
 import { parseMultipartForm } from './multipart_form'
+import { TransferBudget } from './transfer_budget'
+import { toWellFormedText } from '../text/plain_text'
 import { MAX_BODY_BYTES } from '../http/node_server'
 import { toGuestCsv } from '../guests/guest_csv'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
@@ -166,6 +168,13 @@ export interface ProductWebUiDeps {
   readonly accounts?: { readonly isSimulatedSlug: (slug: string) => boolean; readonly newToken: () => string }
   /** Issue #13: where a web-layer fault (a constant 500 page) is recorded for the operator. */
   readonly errors?: Pick<ErrorLog, 'record'>
+  /**
+   * Issue #48: whether a session may send a large upload body to a workspace — a live PLANNER session of that
+   * workspace (by its normalized slug). Read before the body is; absent ⇒ no large uploads.
+   */
+  readonly uploadGate?: (sessionToken: string, slug: string) => boolean
+  /** Issue #48: the process-wide budget of large bodies in flight. Absent ⇒ a fresh default budget. */
+  readonly transfers?: TransferBudget
 }
 
 export class ProductWebUi {
@@ -175,6 +184,9 @@ export class ProductWebUi {
   readonly #operatorConsole: OperatorConsole | undefined
   readonly #accounts: ProductWebUiDeps['accounts']
   readonly #errors: ProductWebUiDeps['errors']
+  readonly #uploadGate: ProductWebUiDeps['uploadGate']
+  /** Issue #48: large bodies in flight (the edge holds them; the download page checks before reading). */
+  readonly transfers: TransferBudget
 
   constructor(deps: ProductWebUiDeps) {
     this.#api = deps.api
@@ -183,6 +195,8 @@ export class ProductWebUi {
     this.#operatorConsole =
       deps.operatorCsrf === undefined ? undefined : new OperatorConsole({ api: deps.api, csrf: deps.operatorCsrf })
     this.#accounts = deps.accounts
+    this.#uploadGate = deps.uploadGate
+    this.transfers = deps.transfers ?? new TransferBudget()
     this.#errors = deps.errors
   }
 
@@ -194,20 +208,18 @@ export class ProductWebUi {
   /** Run a request through the HTML front door. Never throws — any slip becomes the constant 500. */
   /**
    * Issue #48: the most body bytes the edge reads for a request, decided from its method, path and credential BEFORE
-   * the body is read. Everything gets `MAX_BODY_BYTES` except a document upload — the web form `POST
-   * /t/:slug/documents/upload` with the session cookie, or the JSON `POST /t/:slug/weddings/:id/documents` with a
-   * Bearer — whose credential is a LIVE session (the CSRF guard's `issueCsrf` answers that and reads no tenant data).
-   * So an anonymous client never makes the server hold more than the default; the pipeline still decides everything
-   * else (the tenant binding, the wedding's boundary, the planner's capability).
+   * the body is read. Everything gets `MAX_BODY_BYTES` except the web upload form, `POST /t/:slug/documents/upload`,
+   * whose session cookie is a live PLANNER session of that slug's workspace (`uploadGate`). So neither an anonymous
+   * client, a couple, nor another workspace's planner makes the server hold more than the default. The JSON route keeps
+   * the default: the form reaches it in-process, and a JSON body parsed at 7 MiB is a heap risk of its own.
    */
   bodyLimit(method: string, path: string, headers: Readonly<Record<string, string | undefined>>): number {
     if (method !== 'POST') return MAX_BODY_BYTES
     const s = splitPath(path)
-    const webForm = s.length === 4 && s[0] === 't' && s[2] === 'documents' && s[3] === 'upload'
-    const jsonRoute = s.length === 5 && s[0] === 't' && s[2] === 'weddings' && s[4] === 'documents'
-    if (!webForm && !jsonRoute) return MAX_BODY_BYTES
-    const token = webForm ? readSessionCookie(headers.cookie) : /^Bearer ([A-Za-z0-9_-]+)$/.exec(headers.authorization ?? '')?.[1]
-    return token !== undefined && this.#csrf.issueCsrf(token) !== undefined ? DOCUMENT_UPLOAD_MAX_BODY_BYTES : MAX_BODY_BYTES
+    if (!(s.length === 4 && s[0] === 't' && s[2] === 'documents' && s[3] === 'upload')) return MAX_BODY_BYTES
+    const slug = normalizeSlugForRoute(s[1] ?? '')
+    const token = readSessionCookie(headers.cookie)
+    return slug !== undefined && token !== undefined && this.#uploadGate?.(token, slug) === true ? DOCUMENT_UPLOAD_MAX_BODY_BYTES : MAX_BODY_BYTES
   }
 
   handle(req: ApiRequest): HttpResult {
@@ -1141,7 +1153,11 @@ export class ProductWebUi {
     const weddingId = queryParam(req.path, 'wedding') ?? ''
     const documentId = queryParam(req.path, 'doc') ?? ''
     if (weddingId.length === 0 || documentId.length === 0) return GENERIC_404
+    // Checked before a document is read: when the large-response budget is full, nothing is built (the edge would
+    // refuse to hold it anyway).
+    if (!this.transfers.canSend(DOCUMENT_LIMITS.file_bytes)) return busy(503, 'The server is busy. Try the download again in a moment.', '5')
     const res = this.#api.handle(bearerGet(`/t/${slug}/weddings/${encodeURIComponent(weddingId)}/documents/${encodeURIComponent(documentId)}`, token))
+    if (res.status === 429) return busy(429, 'Too many downloads. Try again in a minute.', '60')
     if (res.status !== 200) return this.#renderNonData(slug, res.status)
     const file = res.body as DocumentDownload
     if (typeof file.content_base64 !== 'string' || !DOWNLOAD_TYPES.has(file.content_type)) return ERROR_500
@@ -1931,6 +1947,15 @@ function readSessionCookie(cookieHeader: string | undefined): string | undefined
 }
 
 
+/** A small plain-text refusal with `Retry-After` (issue #48: a busy server, too many downloads). */
+function busy(status: number, text: string, retryAfter: string): HttpResult {
+  return {
+    status,
+    headers: { 'content-type': 'text/plain; charset=utf-8', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store', 'retry-after': retryAfter },
+    body: text,
+  }
+}
+
 /** The only types a download is sent as (issue #48): the accepted document types. */
 const DOWNLOAD_TYPES: ReadonlySet<string> = new Set(['application/pdf', 'image/png', 'image/jpeg'])
 
@@ -1940,7 +1965,8 @@ const DOWNLOAD_TYPES: ReadonlySet<string> = new Set(['application/pdf', 'image/p
  */
 export function attachmentDisposition(name: string): string {
   const ascii = name.replace(/[^A-Za-z0-9 ._()-]/g, '_').slice(0, 150) || 'document'
-  const exact = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
+  // toWellFormed: a lone surrogate would make encodeURIComponent throw (titles refuse them; this is the backstop).
+  const exact = encodeURIComponent(toWellFormedText(name)).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
   return `attachment; filename="${ascii}"; filename*=UTF-8''${exact}`
 }
 

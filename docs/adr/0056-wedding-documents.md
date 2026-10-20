@@ -49,7 +49,8 @@ Every bound is checked before anything is written:
 | One workspace | 100 MiB |
 | The platform | 256 MiB of files |
 
-- **How they are checked:** the base64 length is compared with the file limit before any decoding. The workspace and
+- **How they are checked:** the file's exact size comes from its base64 length and padding, so every cap is checked
+  before any scan or decoding, and an upload to a full store costs almost nothing. The workspace and
   platform totals are counters (`document_workspace_usage`, and the global `document_platform_usage`) kept in the same
   transaction as each upload and removal, so they are exact and cost one read each.
 - **Why a platform cap:** it keeps documents (about 341 MiB once base64-encoded) well inside the database's own 1 GiB
@@ -66,15 +67,26 @@ The boundary is the wedding's (`assertWeddingReach`).
   all the same not-found.
 - **Integrity:** the bytes are checked against the stored hash on download, so a damaged record is an error, never a
   wrong file.
+- **Download limit:** 60 downloads per session per minute. Each one reads and decodes up to 5 MiB, and a limit keyed
+  on the session, never on a public value, only slows that session.
 
 ### Uploads: the edge, then a bounded parser
 
 - **The edge's body limit is per request now.** `ProductWebUi.bodyLimit(method, path, headers)` is decided before the
-  body is read. Every request keeps the 1 MiB default except an upload route (`POST /t/:slug/documents/upload` with
-  the session cookie, or `POST /t/:slug/weddings/:id/documents` with a Bearer) whose credential is a live session.
-  That request gets 7 MiB: a 5 MiB file as base64, or as a form. An anonymous client therefore never makes the server
-  hold more than the default. A declared `content-length` over the limit is refused before any body is read.
-- **The web adapter passes the raw bytes as well** (`ApiRequest.bodyBytes`), because `rawBody` is decoded as UTF-8.
+  body is read:
+  - Every request keeps the 1 MiB default, except the web form `POST /t/:slug/documents/upload`.
+  - The form gets 7 MiB only when its session cookie is a live **planner** session of **that slug's** workspace
+    (`uploadGate`). An anonymous client, a couple, or another workspace's planner therefore never makes the server
+    hold more than the default.
+  - A declared `content-length` over the limit is refused before any body is read.
+  - A storage failure while checking the session falls back to the default, never a crash outside the handler.
+- **The JSON upload route keeps the 1 MiB default.** The form reaches it in-process, and parsing a 7 MiB JSON body is
+  a heap and event-loop risk of its own (security review). An API client can send files up to about 750 KB as base64
+  JSON. A raw-bytes route could come later if one needs more.
+- **Large uploads are limited.** At most 3 large upload bodies are received at once (503 with `Retry-After`
+  otherwise), and each must arrive within 60 seconds (408).
+- **The web adapter passes a multipart body's raw bytes** (`ApiRequest.bodyBytes`), not a UTF-8 copy nobody reads.
+  Every other body is the UTF-8 `rawBody`, as before.
 - **The form is `multipart/form-data`**, parsed by `multipart_form.ts`. The parser:
   - takes RFC 2046's boundary from the header;
   - does one forward pass with `Buffer.indexOf`;
@@ -83,6 +95,15 @@ The boundary is the wedding's (`assertWeddingReach`).
 
   CSRF is checked on the parsed form before anything else. A form that does not parse has no token, so it gets the
   masked 403. The file then goes to the JSON route as base64, so the JSON API stays the only data path.
+
+### Large responses: one budget for the process
+
+The security review showed that one couple session could pipeline 100 downloads of a 5 MiB document without reading
+them, and make the process hold over 500 MB: an out-of-memory kill of the 512 MiB container, for every tenant. So:
+- **The edge holds every response of at least 256 KiB** (a download, a big JSON body or page) against one 48 MiB
+  budget until it is written or its connection closes (`TransferBudget`).
+- **A response that does not fit is answered 503 with `Retry-After`**, and is not held.
+- **The download page checks the budget before reading a document**, so a full budget costs no reads or decoding.
 
 ### Downloads: never a page of this origin
 
@@ -112,7 +133,15 @@ bytes as base64 and decides who may have them. The UI sends the file (`HttpResul
   - The database, and so each backup copy, can grow by up to about 350 MB of documents.
   - SQLite does not shrink its file when documents are removed: the space is reused, and the file stays at its
     high-water mark.
-- **Over 7 MiB:** an upload is refused by the edge with the plain 413, not the page's notice. A file between 5 and
-  7 MiB gets the "at most 5 MB" notice.
+- **Over 7 MiB:** an upload is refused by the edge with a 413 and the connection closed. Behind the proxy, a browser
+  may show a reset rather than the 413. A file between 5 and 7 MiB gets the "at most 5 MB" notice.
+- **Snapshots:** each future schema migration first writes a `.pre-vN.sqlite` snapshot next to the database (ADR
+  0039). With documents, a snapshot can be up to about 350 MB, snapshots are not pruned, and they keep documents that
+  were later removed (`secure_delete` reaches only the live file). The owner should prune old snapshots after a
+  migration has proven good.
+- **The platform cap is shared:** three full workspaces (100 MiB each) would fill the 256 MiB cap for everyone. Near
+  the cap, a 409 while a planner's own wedding and workspace are under theirs reveals roughly how full the platform
+  is: an aggregate, coarse signal about other tenants (accepted). An operator alert or per-workspace reservations
+  could come with real usage.
 - **Vendor removal:** a vendor removed later leaves its documents on the wedding, shown without a vendor name.
 - **Not done:** previews, versioning and e-signatures (out of scope in the issue).
