@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { collection } from '../../src/persistence/record_store'
 import { SQLITE_MIGRATIONS, type SqliteMigration } from '../../src/persistence/sqlite_migrations'
-import { SqliteRecordStore } from '../../src/persistence/sqlite_record_store'
+import { LIST_BY_KEY_RANGE_SQL, SqliteRecordStore } from '../../src/persistence/sqlite_record_store'
 
 /**
  * The durable adapter's own behavior (issue #8, ADR 0039): data survives closing and reopening the file, the
@@ -87,6 +87,20 @@ describe('SqliteRecordStore', () => {
     const db = new DatabaseSync(path)
     expect(db.prepare('PRAGMA journal_mode').get()).toEqual({ journal_mode: 'delete' })
     db.close()
+  })
+
+  it('answers a key-prefix read from the unique index as a key range, in a UTF-8 database', () => {
+    const path = tempDb()
+    SqliteRecordStore.open({ path, clock }).close()
+    const db = new DatabaseSync(path)
+    // The range [`p/`, `p0`) is exact in UTF-8 byte order only.
+    expect(db.prepare('PRAGMA encoding').get()).toEqual({ encoding: 'UTF-8' })
+    const plan = (db.prepare(`EXPLAIN QUERY PLAN ${LIST_BY_KEY_RANGE_SQL}`).all('note', 'p', 'w1/', 'w10') as { detail: string }[])
+      .map((row) => row.detail)
+      .join(' | ')
+    db.close()
+    expect(plan).toMatch(/SEARCH records USING INDEX \S+ \(collection=\? AND partition=\? AND key>\? AND key<\?\)/)
+    expect(plan).not.toMatch(/SCAN records/)
   })
 
   it('refuses a database migrated by a newer build (PERSISTENCE.SCHEMA_TOO_NEW)', () => {

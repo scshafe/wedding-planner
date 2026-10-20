@@ -198,7 +198,7 @@ their own lifecycle:
   migrations.
 - Not done:
   - online backup through the SQLite backup API;
-  - dedicated tables or indexes, or a key-prefix range `list` (the existing unique index already serves one);
+  - dedicated tables or indexes (a key-prefix range `list` landed later: see the addendum);
   - multi-process writers;
   - pinning `@types/node` to Node 22, which CI's Node 22 run partly covers.
 
@@ -213,3 +213,29 @@ their own lifecycle:
 - **An async port with Postgres:** a second service in the stack, and an async rewrite of every handler that
   would break the synchronous critical sections the billing and dedup invariants rely on. Not justified at
   this scale.
+
+## Addendum (2026-10-19): `listByKeyPrefix`
+
+The guest list (issue #27) is the first store whose records belong to a parent inside the tenant (a wedding) and
+can be numerous: up to 2000 guests per wedding, with no bound on a tenant's weddings. Reading a wedding's guests
+with `list` decodes the whole tenant partition and filters it, so every guest-list request would cost
+O(every guest the tenant ever had), and so would every other per-wedding store M2 adds (events, RSVPs, checklist,
+vendors, budget).
+
+- **Decision:** the port gains `listByKeyPrefix(collection, partition, prefix)`, the records whose key starts with
+  `prefix`, in the same first-insertion order as `list`. A per-wedding store keys its records with
+  `groupedKey(wedding_id, id)` (`<wedding_id>/<id>`) in its `idOf` and every `read`/`delete`, and reads one wedding
+  with `TenantScopedRepository.listGroup(context, wedding_id)`, which keeps the partition, brand and liveness guards
+  of `list`. The helpers are the one place the format lives; a group id is non-empty and holds no `/`.
+- **The prefix must end with `/`** (PERSISTENCE.INVALID_KEY_PREFIX otherwise). That makes a prefix name exactly one
+  group (`w1/` never matches `w10/…`), and it gives SQLite an exact key range, `key >= 'p/' AND key < 'p0'` ('0' is
+  the byte after '/') in UTF-8 byte order. The existing `UNIQUE (collection, partition, key)` index answers that
+  range, so there is no migration and no new index; a test pins the database encoding (UTF-8) and the adapter's own
+  query plan (`LIST_BY_KEY_RANGE_SQL`).
+- **Existing stores are unchanged:** their keys and data stay as they are, including the ones that still list a
+  whole partition and filter by wedding (`guest_registry.ts`, `escalation_reply_log.ts`, the escalation resolution
+  log's `listForWedding`; the reply log's `:` composite key). Do not copy them. Re-keying one is a data migration,
+  done when its size calls for it.
+- **Not done:** `deleteByKeyPrefix` (deleting a wedding lists then deletes, per collection); a cross-wedding view
+  (the checklist's "overdue across weddings") reads the active weddings and then each group, never `list`.
+

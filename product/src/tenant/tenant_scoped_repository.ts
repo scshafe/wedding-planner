@@ -1,5 +1,5 @@
 import { InMemoryRecordStore } from '../persistence/in_memory_record_store'
-import type { Collection, RecordStore } from '../persistence/record_store'
+import { type Collection, keyPrefixOf, type RecordStore } from '../persistence/record_store'
 import { ProductError } from '../product_error'
 import { assertMintedContext, type TenantContext } from './tenant_context'
 import type { TenantLivenessCheck } from './tenant_store'
@@ -16,7 +16,7 @@ import type { TenantLivenessCheck } from './tenant_store'
  *     suspension stops working: PRODUCT.TENANT_NOT_USABLE). The context carries no cached authority.
  *   - `read` returns `T | undefined`: a foreign-tenant id and a never-existed id return the
  *     byte-identical `undefined` via the SAME code path, with no side effect — no existence oracle.
- *   - `list` returns only the context partition's records, ever.
+ *   - `list` returns only the context partition's records, ever; `listGroup` only one group of them.
  *   - `delete` removes by id WITHIN the context partition only; a foreign/missing id is a byte-identical
  *     no-op returning `false` via the same path (no cross-tenant reach, no existence oracle).
  *   - `put` stamps nothing; it COMPARES `record.tenant_id` to the context and vetoes a mismatch
@@ -86,6 +86,14 @@ export class TenantScopedRepository<T extends TenantOwned> {
   list(context: TenantContext): readonly T[] {
     this.guard(context)
     return this.#store.list(this.#collection, context.tenant_id)
+  }
+
+  /**
+   * This tenant's records of one group (keyed with `groupedKey(group_id, id)`): the group, not the whole partition.
+   */
+  listGroup(context: TenantContext, group_id: string): readonly T[] {
+    this.guard(context)
+    return this.#store.listByKeyPrefix(this.#collection, context.tenant_id, keyPrefixOf(group_id))
   }
 
   /**

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { InMemoryRecordStore, type RecordStore } from '@wedding-planner/product'
 
-import { collection, GLOBAL_PARTITION } from '../../src/persistence/record_store'
+import { collection, GLOBAL_PARTITION, groupedKey, keyPrefixOf } from '../../src/persistence/record_store'
 import { SqliteRecordStore } from '../../src/persistence/sqlite_record_store'
 
 /**
@@ -74,6 +74,70 @@ describe.each(ADAPTERS)('RecordStore contract (%s)', (_adapter, makeStore) => {
     store.put(NOTES, 'p', 'a', { id: 'a', text: 'back' })
     expect(store.list(NOTES, 'p').map((n) => n.id)).toEqual(['c', 'b', 'a'])
     expect(store.list(NOTES, 'empty')).toEqual([])
+  })
+
+  it('listByKeyPrefix returns one group in first-insertion order, never a sibling group or another partition', () => {
+    const store = makeStore()
+    store.put(NOTES, 'p', 'w1/b', { id: 'b', text: 'w1 b' })
+    store.put(NOTES, 'p', 'w10/a', { id: 'a', text: 'w10 a' }) // `w1/` must not match `w10/`
+    store.put(NOTES, 'p', 'w1/a', { id: 'a', text: 'w1 a' })
+    store.put(NOTES, 'p', 'w1', { id: 'w1', text: 'no slash' })
+    store.put(NOTES, 'p', 'w1.a', { id: 'w1.a', text: 'just below the slash' })
+    store.put(NOTES, 'p', 'w10', { id: 'w10', text: 'the range end itself' })
+    store.put(NOTES, 'p', 'w1/', { id: '', text: 'empty id' })
+    store.put(NOTES, 'q', 'w1/c', { id: 'c', text: 'other partition' })
+    store.put(OTHER, 'p', 'w1/d', { id: 'd', text: 'other collection' })
+    store.put(NOTES, 'p', 'w1/b', { id: 'b', text: 'w1 b replaced' }) // a replace keeps its position
+    expect(store.listByKeyPrefix(NOTES, 'p', 'w1/').map((n) => n.text)).toEqual(['w1 b replaced', 'w1 a', 'empty id'])
+    expect(store.listByKeyPrefix(NOTES, 'p', 'w10/').map((n) => n.text)).toEqual(['w10 a'])
+    expect(store.listByKeyPrefix(NOTES, 'p', 'w2/')).toEqual([])
+    expect(store.listByKeyPrefix(NOTES, 'empty', 'w1/')).toEqual([])
+    store.delete(NOTES, 'p', 'w1/b')
+    expect(store.listByKeyPrefix(NOTES, 'p', 'w1/').map((n) => n.text)).toEqual(['w1 a', 'empty id'])
+    store.put(NOTES, 'p', 'w1/b', { id: 'b', text: 'w1 b again' }) // delete-then-put moves to the group's end
+    expect(store.listByKeyPrefix(NOTES, 'p', 'w1/').map((n) => n.text)).toEqual(['w1 a', 'empty id', 'w1 b again'])
+  })
+
+  it('listByKeyPrefix reads a nested group, and sees a transaction\'s own writes and none of a rolled-back one', () => {
+    const store = makeStore()
+    store.put(NOTES, 'p', 'w1/e1/a', { id: 'a', text: 'nested' })
+    store.put(NOTES, 'p', 'w1/e2/a', { id: 'a', text: 'other event' })
+    expect(store.listByKeyPrefix(NOTES, 'p', 'w1/e1/').map((n) => n.text)).toEqual(['nested'])
+    expect(store.listByKeyPrefix(NOTES, 'p', 'w1/')).toHaveLength(2)
+    store.transaction(() => {
+      store.put(NOTES, 'p', 'g/in', { id: 'in', text: 'inside' })
+      expect(store.listByKeyPrefix(NOTES, 'p', 'g/').map((n) => n.text)).toEqual(['inside'])
+    })
+    expect(() =>
+      store.transaction(() => {
+        store.put(NOTES, 'p', 'g/gone', { id: 'gone', text: 'rolled back' })
+        throw new Error('fail')
+      }),
+    ).toThrow('fail')
+    expect(store.listByKeyPrefix(NOTES, 'p', 'g/').map((n) => n.text)).toEqual(['inside'])
+  })
+
+  it('listByKeyPrefix matches non-ASCII group ids exactly', () => {
+    const store = makeStore()
+    store.put(NOTES, 'p', 'é/1', { id: '1', text: 'e-acute' })
+    store.put(NOTES, 'p', 'é0/1', { id: '1', text: 'e-acute zero' })
+    store.put(NOTES, 'p', 'e/1', { id: '1', text: 'plain e' })
+    expect(store.listByKeyPrefix(NOTES, 'p', 'é/').map((n) => n.text)).toEqual(['e-acute'])
+  })
+
+  it('listByKeyPrefix refuses a prefix that is empty or does not end with / (PERSISTENCE.INVALID_KEY_PREFIX)', () => {
+    const store = makeStore()
+    for (const bad of ['', '/', 'w1', 'w1/x']) {
+      expect(() => store.listByKeyPrefix(NOTES, 'p', bad)).toThrow(expect.objectContaining({ code: 'PERSISTENCE.INVALID_KEY_PREFIX' }))
+    }
+  })
+
+  it('listByKeyPrefix reads fresh copies', () => {
+    const store = makeStore()
+    store.put(NOTES, 'p', 'g/a', { id: 'a', text: 'kept', tags: ['x'] })
+    const [first] = store.listByKeyPrefix(NOTES, 'p', 'g/') as Note[]
+    ;(first?.tags as string[]).push('mutated')
+    expect(store.get(NOTES, 'p', 'g/a')).toEqual({ id: 'a', text: 'kept', tags: ['x'] })
   })
 
   it('delete reports whether a record existed', () => {
@@ -187,6 +251,17 @@ describe.each(ADAPTERS)('RecordStore contract (%s)', (_adapter, makeStore) => {
     store.put(NOTES, 'p', 'a', { id: 'a', text: 'secret-text' })
     expect(JSON.stringify(store)).not.toContain('secret-text')
     expect(JSON.stringify({ ...store })).not.toContain('secret-text')
+  })
+})
+
+describe('groupedKey / keyPrefixOf', () => {
+  it('build `<group>/<id>` and its prefix, refusing an empty group or one holding / (PERSISTENCE.INVALID_KEY_PREFIX)', () => {
+    expect(groupedKey('wedding_1', 'guest_2')).toBe('wedding_1/guest_2')
+    expect(keyPrefixOf('wedding_1')).toBe('wedding_1/')
+    for (const bad of ['', 'a/b', '/']) {
+      expect(() => keyPrefixOf(bad)).toThrow(expect.objectContaining({ code: 'PERSISTENCE.INVALID_KEY_PREFIX' }))
+      expect(() => groupedKey(bad, 'x')).toThrow(expect.objectContaining({ code: 'PERSISTENCE.INVALID_KEY_PREFIX' }))
+    }
   })
 })
 

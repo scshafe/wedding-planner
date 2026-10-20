@@ -18,6 +18,10 @@ import { ProductError } from '../product_error'
  * Semantics both adapters guarantee (pinned by the shared contract suite, run against each):
  *   - `list` returns a partition's records in FIRST-INSERTION order; replacing a record keeps its position, and a
  *     deleted-then-reinserted key moves to the end (exactly `Map` semantics, which the in-memory stores had).
+ *   - `listByKeyPrefix` returns, in the same order, only the records whose key starts with a prefix ending in `/`.
+ *     A store that groups records under a parent keys them `<parent_id>/<id>` (a wedding's guests:
+ *     `<wedding_id>/<guest_id>`) and reads one group without decoding the whole partition — the SQLite adapter
+ *     answers it from the `(collection, partition, key)` unique index as a key range.
  *   - Every read returns a FRESH copy decoded from the stored JSON: mutating a returned record never changes the
  *     store, and a record holds only JSON values (no `undefined` keys, no Dates, no functions).
  *   - `transaction(fn)` is atomic: either every write `fn` made lands, or (when `fn` throws) none does and the
@@ -75,6 +79,12 @@ export interface RecordStore {
   get<T>(collection: Collection<T>, partition: string, key: string): T | undefined
   /** Every record in `(collection, partition)`, in first-insertion order. */
   list<T>(collection: Collection<T>, partition: string): T[]
+  /**
+   * The records in `(collection, partition)` whose key starts with `prefix`, in first-insertion order. `prefix` is
+   * non-empty and ends with `/` ({@link assertKeyPrefix}), so `w1/` never matches `w10/…`; a store builds it with
+   * {@link keyPrefixOf}.
+   */
+  listByKeyPrefix<T>(collection: Collection<T>, partition: string, prefix: string): T[]
   /** Insert or replace a record. A replaced record keeps its position in `list`. */
   put<T>(collection: Collection<T>, partition: string, key: string, record: T): void
   /** Remove a record. Returns whether one existed. */
@@ -83,6 +93,34 @@ export interface RecordStore {
   isEmpty<T>(collection: Collection<T>): boolean
   /** Run `fn` atomically (all of its writes or none). A nested call is a savepoint inside the outer one. */
   transaction<R>(fn: () => R): R
+}
+
+/**
+ * Refuse a key prefix that is empty or does not end with `/` (PERSISTENCE.INVALID_KEY_PREFIX). The trailing `/` makes
+ * a prefix name exactly one group, and gives the SQLite adapter an exact key range: [`p/`, `p0`).
+ */
+export function assertKeyPrefix(prefix: string): void {
+  if (prefix.length < 2 || !prefix.endsWith('/')) {
+    throw new ProductError('PERSISTENCE.INVALID_KEY_PREFIX', 'A key prefix is a non-empty group id followed by "/".', {})
+  }
+}
+
+/**
+ * @canonical grouped_key -- the key of a record grouped under a parent: `<group_id>/<id>`. A store that groups its
+ * records builds every key with this (its `idOf`, and each `read`/`delete`) and reads a group with
+ * {@link keyPrefixOf}, so the two cannot disagree. A group id is non-empty and holds no `/`
+ * (PERSISTENCE.INVALID_KEY_PREFIX), so one group's prefix never reaches into another.
+ */
+export function groupedKey(group_id: string, id: string): string {
+  return `${keyPrefixOf(group_id)}${id}`
+}
+
+/** The prefix that reads one group with `listByKeyPrefix`: `<group_id>/`. */
+export function keyPrefixOf(group_id: string): string {
+  if (group_id.length === 0 || group_id.includes('/')) {
+    throw new ProductError('PERSISTENCE.INVALID_KEY_PREFIX', 'A group id is non-empty and holds no "/".', {})
+  }
+  return `${group_id}/`
 }
 
 /** The narrow capability a request pipeline needs: run one request as one transaction. */

@@ -260,6 +260,7 @@ describe('no timing oracle in a reset request: known and unknown emails do ident
     const spy: RecordStore = {
       get: (c, p, k) => inner.get(c, p, k),
       list: (c, p) => inner.list(c, p),
+      listByKeyPrefix: (c, p, x) => inner.listByKeyPrefix(c, p, x),
       isEmpty: (c) => inner.isEmpty(c),
       transaction: (fn) => inner.transaction(fn),
       put: <T,>(c: Collection<T>, p: string, k: string, r: T) => {
