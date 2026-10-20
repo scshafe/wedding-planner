@@ -9,6 +9,7 @@ import { centsFromText, VENDOR_LIMITS, type VendorsView } from '../vendors/vendo
 import type { BudgetView } from '../budget/budget_service'
 import type { RunOfShowView } from '../run_of_show/run_of_show_service'
 import type { ModelUsageView } from '../model/model_service'
+import { COPILOT_LIMITS, type CopilotView } from '../copilot/copilot_service'
 import type { SeatingView } from '../seating/seating_service'
 import { type PublicSiteView, SITE_LIMITS, type SiteEditView } from '../site/site_service'
 import { DOCUMENT_LIMITS, type DocumentDownload, type DocumentsView } from '../documents/document_service'
@@ -60,6 +61,8 @@ import {
   renderSiteEditor,
   renderDocuments,
   type DocumentsNotice,
+  renderCopilot,
+  type CopilotNotice,
   renderPublicSite,
   type SiteNotice,
   BLANK_SITE_ROWS,
@@ -332,6 +335,11 @@ export class ProductWebUi {
         if (segments[3] === 'download' && req.method === 'GET') return this.#documentDownload(req, slug)
         if (req.method === 'POST') return segments[3] === 'upload' ? this.#documentUpload(req, slug) : this.#documentAction(req, slug, segments[3] ?? '')
       }
+      // /t/:slug/copilot/<action> (issue #61) — the assistant's FORM posts (CSRF-protected).
+      if (segments.length === 4 && segments[2] === 'copilot' && req.method === 'POST') {
+        if (slug === undefined) return GENERIC_404
+        return this.#copilotAction(req, slug, segments[3] ?? '')
+      }
       // /t/:slug/seating/<action> (issue #46) — the seating FORM posts (CSRF-protected).
       if (segments.length === 4 && segments[2] === 'seating' && req.method === 'POST') {
         if (slug === undefined) return GENERIC_404
@@ -439,6 +447,8 @@ export class ProductWebUi {
     if (weddingId !== undefined && queryParam(req.path, 'tab') === 'guests') return this.#guestListPage(req, slug, weddingId)
     // ?wedding=ID&tab=documents[&doc=ID] (issue #48): the wedding's documents.
     if (weddingId !== undefined && queryParam(req.path, 'tab') === 'documents') return this.#documentsPage(req, slug, weddingId)
+    // ?wedding=ID&tab=copilot (issue #61): the planner's assistant draft.
+    if (weddingId !== undefined && queryParam(req.path, 'tab') === 'copilot') return this.#copilotPage(req, slug, weddingId)
     // ?wedding=ID&tab=site (issue #47): edit the wedding's public website.
     if (weddingId !== undefined && queryParam(req.path, 'tab') === 'site') return this.#siteEditor(req, slug, weddingId)
     // ?wedding=ID&tab=seating[&event=ID][&print=1] (issue #46): the wedding's seating plan.
@@ -1050,6 +1060,50 @@ export class ProductWebUi {
         ? action === 'site-publish' ? (published ? 'published' : 'unpublished') : 'saved'
         : res.status === 409 ? 'taken' : res.status === 429 ? 'busy' : 'invalid'
     return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=site&notice=${notice}`)
+  }
+
+  /** GET /t/:slug?wedding=ID&tab=copilot (issue #61) — the wedding, then its draft; any non-200 is masked. */
+  #copilotPage(req: ApiRequest, slug: string, weddingId: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const id = encodeURIComponent(weddingId)
+    const weddingRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}`, token))
+    if (weddingRes.status !== 200) return this.#renderNonData(slug, weddingRes.status)
+    const copilotRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}/copilot`, token))
+    if (copilotRes.status !== 200) return this.#renderNonData(slug, copilotRes.status)
+    const theme = this.#themes.resolveActiveTheme(slug)
+    const csrf = this.#csrf.issueCsrf(token)
+    const wedding = readWedding(weddingRes.body)
+    if (theme === undefined || wedding === undefined) return GENERIC_404
+    if (csrf === undefined) return ERROR_500
+    const raw = queryParam(req.path, 'notice')
+    const notice = (['requested', 'kept', 'discarded', 'invalid', 'full', 'forbidden', 'changed'] as const).find((n) => n === raw)
+    return htmlResult(200, renderCopilot(theme, slug, wedding, copilotRes.body as CopilotView, csrf, notice))
+  }
+
+  /** POST /t/:slug/copilot/<draft-request|draft-accept|draft-discard> (issue #61) — CSRF first, then the JSON route. */
+  #copilotAction(req: ApiRequest, slug: string, action: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    const weddingId = (form.get('wedding_id') ?? '').trim()
+    const base = `/t/${slug}/weddings/${encodeURIComponent(weddingId)}/copilot`
+    // The kept ids are read once and bounded before they reach the JSON route.
+    const picked = (name: string, max: number) => form.getAll(name).slice(0, max + 1)
+    const res =
+      action === 'draft-request'
+        ? this.#api.handle(bearerJson('POST', base, token, {}))
+        : action === 'draft-accept'
+          ? this.#api.handle(bearerJson('POST', `${base}/accept`, token, { draft: form.get('draft') ?? '', task_ids: picked('task', COPILOT_LIMITS.tasks), item_ids: picked('item', COPILOT_LIMITS.items) }))
+          : action === 'draft-discard'
+            ? this.#api.handle(bearerJson('DELETE', base, token, {}))
+            : undefined
+    if (res === undefined) return GENERIC_404
+    if (res.status === 404 || res.status === 401) return this.#renderNonData(slug, res.status)
+    const ok = res.status === 200 || res.status === 202
+    const notice: CopilotNotice = ok
+      ? action === 'draft-request' ? 'requested' : action === 'draft-accept' ? 'kept' : 'discarded'
+      : res.status === 403 ? 'forbidden' : res.status === 409 ? (action === 'draft-accept' && isDraftChanged(res.body) ? 'changed' : 'full') : 'invalid'
+    return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=copilot&notice=${notice}`)
   }
 
   /** GET /t/:slug?wedding=ID&tab=seating (issue #46) — the wedding, then its seating plan; any non-200 is masked. */
@@ -1978,6 +2032,11 @@ export function attachmentDisposition(name: string): string {
   // toWellFormed: a lone surrogate would make encodeURIComponent throw (titles refuse them; this is the backstop).
   const exact = encodeURIComponent(toWellFormedText(name)).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
   return `attachment; filename="${ascii}"; filename*=UTF-8''${exact}`
+}
+
+/** Issue #61: whether a 409 from the copilot's accept route says the draft changed (not that a list is full). */
+function isDraftChanged(body: unknown): boolean {
+  return typeof body === 'object' && body !== null && (body as { error?: unknown }).error === 'draft_changed'
 }
 
 /** Parse a urlencoded form body into a params map (empty when absent). */

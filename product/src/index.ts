@@ -343,7 +343,7 @@ export {
 } from './checklist/checklist_service'
 export { CHECKLIST_TEMPLATE, type ChecklistOffset, type ChecklistTemplateItem, dateBefore, daysBetween, shiftDate } from './checklist/checklist_template'
 // The model port, its only (simulated) adapter, and the metered model service (issue #59, ADR 0057).
-export { defineModelTask, type ModelPort, type ModelRequest, type ModelResult, type ModelTaskDefinition, type ModelUsage } from './model/model_port'
+export { defineModelTask, MODEL_OUTPUT_CONTRACTS, type ModelOutputContract, type ModelPort, type ModelRequest, type ModelResult, type ModelTaskDefinition, type ModelUsage } from './model/model_port'
 export { estimateTokens, SIMULATED_MODEL, SIMULATED_PROVIDER_PRICE, SimulatedModelAdapter, type SimulatedTask } from './model/simulated_model_adapter'
 export { SIMULATED_MODEL_TASKS } from './model/simulated_tasks'
 export { MODEL_LIMITS, ModelService, type ModelUsageRecord, type ModelUsageView } from './model/model_service'
@@ -364,6 +364,10 @@ export {
 } from './documents/document_service'
 export { MULTIPART_LIMITS, type MultipartForm, multipartBoundary, parseMultipartForm } from './web/multipart_form'
 export { LARGE_TRANSFER_BYTES, TRANSFER_LIMITS, TransferBudget, type TransferLimits } from './web/transfer_budget'
+// Model calls made after the request (the outbox) and the planner copilot, their first kind (issue #61, ADR 0058).
+export { type DeadlineTimer, JOB_LIMITS, type JobKind, JobQueue } from './jobs/job_queue'
+export { checkDraft, COPILOT_DRAFT, COPILOT_JOB, COPILOT_LIMITS, type CopilotAcceptance, type CopilotAcceptResult, CopilotService, type CopilotView } from './copilot/copilot_service'
+export { type CopilotDraftInput, simulateCopilotDraft } from './copilot/copilot_simulation'
 // A wedding's public website and the workspace's site names (issue #47, ADR 0055).
 export { type HotelInput, type PublicSiteView, SITE_LIMITS, SITE_NAME, type SiteEditView, type SiteInput, SiteService } from './site/site_service'
 // A wedding's seating plan: tables, seats, capacity (issue #46, ADR 0054).

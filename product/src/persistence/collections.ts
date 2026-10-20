@@ -22,6 +22,8 @@ import type {
   WeddingSite,
   WeddingSiteName,
   WeddingDocument,
+  CopilotDraft,
+  Job,
 } from '@wedding-planner/shared'
 
 import type { AccountEmailIndex, UserAccount } from '../accounts/account_store'
@@ -32,6 +34,7 @@ import type { StoredOperatorSession } from '../auth/operator_credential'
 import type { StoredSession } from '../auth/session_store'
 import type { ModelUsageRecord } from '../model/model_service'
 import type { DocumentUsage, StoredDocumentContent, WorkspaceDocumentUsage } from '../documents/document_service'
+import type { QueuedJob } from '../jobs/job_queue'
 import type { StoredOutboxMessage } from '../email/simulated_email_adapter'
 import type { FeedbackSubmission } from '../feedback/feedback_service'
 import type { ServerError } from '../operability/error_log'
@@ -139,4 +142,10 @@ export const COLLECTIONS = Object.freeze({
   documentWorkspaceUsage: collection<WorkspaceDocumentUsage>('document_workspace_usage', 'tenant'),
   /** Key `documents`: how much document storage the platform uses, across workspaces (issue #48). */
   documentPlatformUsage: collection<DocumentUsage>('document_platform_usage', 'global'),
+  /** Key groupedKey(kind, subject_id): a model call to make after the request (issue #61, the outbox row). */
+  job: collection<Job>('job', 'tenant', 'job'),
+  /** Key `${tenant_id}:${job key}`: the live jobs the drain looks at (issue #61). Ids only, never tenant content. */
+  jobQueue: collection<QueuedJob>('job_queue', 'global'),
+  /** Key wedding_id: the planner copilot's draft (issue #61). */
+  copilotDraft: collection<CopilotDraft>('copilot_draft', 'tenant', 'copilot_draft'),
 })

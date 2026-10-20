@@ -115,4 +115,7 @@ export type {
   WeddingSite,
   WeddingSiteName,
   WeddingDocument,
+  CopilotDraftOutput,
+  CopilotDraft,
+  Job,
 } from './contracts/contract_types'

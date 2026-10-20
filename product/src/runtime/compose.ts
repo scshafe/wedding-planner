@@ -47,6 +47,8 @@ import { ProductWebUi } from '../web/product_web_ui'
 import { ThemeResolver } from '../web/theme_resolver'
 import { WeddingRepository } from '../wedding/wedding_repository'
 import { ModelService } from '../model/model_service'
+import { type DeadlineTimer, JobQueue } from '../jobs/job_queue'
+import { CopilotService } from '../copilot/copilot_service'
 import { ProductError } from '../product_error'
 import { SimulatedModelAdapter, type SimulatedTask } from '../model/simulated_model_adapter'
 import { SIMULATED_MODEL_TASKS } from '../model/simulated_tasks'
@@ -132,6 +134,11 @@ export interface ComposeProductSurfaceConfig {
    * uses is refused. There is deliberately no option for a real model: wiring one is an owner decision (ADR 0057).
    */
   readonly simulatedModelTasks?: Readonly<Record<string, SimulatedTask>>
+  /**
+   * Issue #61: the timer that bounds a model job's run. The entrypoint passes a real one; absent ⇒ no deadline (tests).
+   * Injected so the composition keeps no ambient time.
+   */
+  readonly jobTimer?: DeadlineTimer
 }
 
 /** A handle to the demo tenant seeded by THIS composition — present only when the seed ran (empty store). */
@@ -177,6 +184,8 @@ export interface ComposedSurface {
   readonly warmUp: () => void
   /** Issue #59: model calls (the simulated adapter only), validated and metered per workspace. */
   readonly model: ModelService
+  /** Issue #61: run the model jobs that are due (also started after each request); resolves with how many ran. */
+  readonly drainJobs: () => Promise<number>
 }
 
 /** The demo theme — an obvious offline placeholder (no real brand). Colors are lowercase 6-hex per contract. */
@@ -306,6 +315,12 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const guestList = new GuestListService(tenants, weddings, authorizer, clock, ids, store, GUEST_LIST_LIMITS, fanOutGuestListHooks(events, rsvpLinks, seating))
 
   const vendors = new VendorService(tenants, weddings, authorizer, clock, ids, store)
+  const checklist = new ChecklistService(tenants, weddings, authorizer, clock, ids, store)
+  const runOfShow = new RunOfShowService(tenants, weddings, authorizer, vendors, events, clock, ids, store)
+  // Issue #61: model calls made after the request that asked (the outbox), and the planner copilot, their first kind.
+  const jobs = new JobQueue(tenants, resolver, clock, ids, store, config.jobTimer, errors)
+  const copilot = new CopilotService(tenants, weddings, authorizer, events, vendors, checklist, runOfShow, model, jobs, clock, store)
+  jobs.register(copilot.jobKind())
 
   const api = new ProductApi({
     resolver,
@@ -324,12 +339,15 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     events,
     householdRsvp: { links: rsvpLinks, events, guestList, limiter },
     // Each wedding's checklist (issue #31): the planner's tasks, the couple's own to tick off.
-    checklist: new ChecklistService(tenants, weddings, authorizer, clock, ids, store),
+    checklist,
     // Each wedding's vendors and payment schedules (issue #33), and its budget (issue #34): tracked, never paid.
     vendors,
     budget: new BudgetService(tenants, weddings, authorizer, vendors, clock, ids, store),
     // Each wedding's run of show (issue #45): the day-of timeline and vendor call times.
-    runOfShow: new RunOfShowService(tenants, weddings, authorizer, vendors, events, clock, ids, store),
+    runOfShow,
+    // The planner copilot (issue #61): drafts through the model job queue, kept through the services above.
+    copilot,
+    jobs,
     seating,
     // Each wedding's public website (issue #47): edited by the planner and the couple, read by guests when published.
     site: { sites: new SiteService(tenants, weddings, authorizer, events, clock, ids, store, SITE_LIMITS, limiter) },
@@ -443,5 +461,5 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     operators.sweepExpired()
   })
 
-  return { ui, api, themes, operatorToken, demo, messaging, escalations, resolutions, email, warmUp: () => accounts.warm(), model }
+  return { ui, api, themes, operatorToken, demo, messaging, escalations, resolutions, email, warmUp: () => accounts.warm(), model, drainJobs: () => jobs.drain() }
 }

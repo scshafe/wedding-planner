@@ -34,6 +34,11 @@ import { WeddingPlannerError } from '@wedding-planner/shared'
  *   - MODEL.UNAVAILABLE              the adapter failed or did not answer
  *   - MODEL.INVALID_USAGE            the adapter's usage report is not whole numbers within bounds (untrusted input)
  *   - MODEL.INVALID_OUTPUT           the output does not satisfy the task's contract
+ * The job queue (issue #61, ADR 0058) raises JOB.<FAILURE_MODE>:
+ *   - JOB.UNKNOWN_KIND               no such kind of job is registered
+ *   - JOB.DUPLICATE_KIND             a kind is registered twice (a programming error, at composition)
+ *   - JOB.LEASE_EXPIRED              a job's last claim ran out (the process stopped mid-run every time)
+ *   - JOB.INTERNAL_ERROR             a job failed with an uncoded error (recorded as the job's last error)
  *   - PRODUCT.NO_OPERATOR            an /admin request carried no / an unknown operator token (Phase 15)
  *   - PRODUCT.FORGED_OPERATOR        an Operator reached a check without the OperatorCredentialStore's brand
  *   - PRODUCT.DUPLICATE_OPERATOR_TOKEN two seeded operator credential tokens collided

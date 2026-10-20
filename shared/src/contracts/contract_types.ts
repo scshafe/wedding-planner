@@ -90,3 +90,7 @@ export type { WeddingSite } from './generated/wedding_site'
 export type { WeddingSiteName } from './generated/wedding_site_name'
 // A file attached to a wedding or one of its vendors (issue #48). ADR 0056.
 export type { WeddingDocument } from './generated/wedding_document'
+// The planner copilot's model output and stored draft, and the model job queue (issue #61). ADR 0058.
+export type { CopilotDraftOutput } from './generated/copilot_draft_output'
+export type { CopilotDraft } from './generated/copilot_draft'
+export type { Job } from './generated/job'

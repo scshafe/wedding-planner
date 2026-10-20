@@ -1,3 +1,4 @@
+import { simulateCopilotDraft } from '../copilot/copilot_simulation'
 import type { SimulatedTask } from './simulated_model_adapter'
 
 /**
@@ -5,4 +6,7 @@ import type { SimulatedTask } from './simulated_model_adapter'
  * function per task the product asks for, keyed by the task's name in its `defineModelTask` definition. Each M4
  * feature adds its task here; its output contract lives under `product/schemas/`.
  */
-export const SIMULATED_MODEL_TASKS: Readonly<Record<string, SimulatedTask>> = Object.freeze({})
+export const SIMULATED_MODEL_TASKS: Readonly<Record<string, SimulatedTask>> = Object.freeze({
+  // The planner copilot's draft (issue #61).
+  copilot_draft: simulateCopilotDraft,
+})

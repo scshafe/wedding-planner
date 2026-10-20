@@ -56,6 +56,9 @@ export type ContractKey =
   | 'wedding_site'
   | 'wedding_site_name'
   | 'wedding_document'
+  | 'copilot_draft_output'
+  | 'copilot_draft'
+  | 'job'
 
 export interface ContractDefinition {
   /** Stable friendly key, e.g. 'grade_report'. */
@@ -297,6 +300,24 @@ export const CONTRACT_DEFINITIONS: readonly ContractDefinition[] = [
     key: 'wedding_document',
     schemaId: `${SCHEMA_ID_PREFIX}/wedding_document.json`,
     repoRelativePath: 'product/schemas/wedding_document_schema.json',
+    domain: 'product',
+  },
+  {
+    key: 'copilot_draft_output',
+    schemaId: `${SCHEMA_ID_PREFIX}/copilot_draft_output.json`,
+    repoRelativePath: 'product/schemas/copilot_draft_output_schema.json',
+    domain: 'product',
+  },
+  {
+    key: 'copilot_draft',
+    schemaId: `${SCHEMA_ID_PREFIX}/copilot_draft.json`,
+    repoRelativePath: 'product/schemas/copilot_draft_schema.json',
+    domain: 'product',
+  },
+  {
+    key: 'job',
+    schemaId: `${SCHEMA_ID_PREFIX}/job.json`,
+    repoRelativePath: 'product/schemas/job_schema.json',
     domain: 'product',
   },
 ] as const

@@ -189,6 +189,11 @@ export class RunOfShowService {
     }
   }
 
+  /** The wedding's items with no boundary check: for a caller that has already established reach (the copilot's job). */
+  itemsOf(context: TenantContext, wedding_id: string): RunOfShowItem[] {
+    return this.#itemsOf(context, wedding_id)
+  }
+
   #itemsOf(context: TenantContext, wedding_id: string): RunOfShowItem[] {
     return this.#items.listGroup(context, wedding_id).filter((i) => i.wedding_id === wedding_id)
   }

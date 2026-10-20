@@ -18,6 +18,8 @@ import type { BudgetCategoryInput, BudgetService } from '../budget/budget_servic
 import type { RunOfShowInput, RunOfShowService } from '../run_of_show/run_of_show_service'
 import type { ModelService } from '../model/model_service'
 import { DOCUMENT_KINDS, type DocumentKind, type DocumentService, type DocumentUpdateInput, type DocumentUploadInput } from '../documents/document_service'
+import { type CopilotAcceptance, COPILOT_LIMITS, type CopilotService } from '../copilot/copilot_service'
+import type { JobQueue } from '../jobs/job_queue'
 import type { SeatingService, TableInput } from '../seating/seating_service'
 import { SITE_LIMITS, type SiteInput, type SiteService } from '../site/site_service'
 import type { ChecklistService, TaskInput } from '../checklist/checklist_service'
@@ -116,6 +118,7 @@ const RESP_CONFLICT: ApiResponse = deepFreeze({ status: 409, body: { error: 'con
 /** Issue #48: a document over the size limit, and a file that is not an accepted type. */
 const RESP_FILE_TOO_LARGE: ApiResponse = deepFreeze({ status: 413, body: { error: 'file_too_large' } })
 const RESP_UNSUPPORTED_FILE: ApiResponse = deepFreeze({ status: 415, body: { error: 'unsupported_file' } })
+const RESP_DRAFT_CHANGED: ApiResponse = deepFreeze({ status: 409, body: { error: 'draft_changed' } })
 const RESP_METHOD_NOT_ALLOWED: ApiResponse = deepFreeze({ status: 405, body: { error: 'method_not_allowed' } })
 const RESP_INTERNAL: ApiResponse = deepFreeze({ status: 500, body: { error: 'internal_error' } })
 /** Issue #10: a rate-limited sign-in or reset request (keyed on what was submitted — no existence oracle). */
@@ -201,6 +204,8 @@ export interface WeddingHandlerDeps {
   readonly site?: SiteService
   /** Issue #48: the wedding's documents. Absent ⇒ the sub-routes are not mounted. */
   readonly documents?: DocumentService
+  /** Issue #61: the planner copilot. Absent ⇒ the sub-routes are not mounted. */
+  readonly copilot?: CopilotService
 }
 
 /** Issue #47: what the public website read needs — the sites. */
@@ -385,6 +390,10 @@ export interface ProductApiDeps {
   readonly site?: PublicSiteDeps
   /** Issue #48: each wedding's documents, under /t/:slug/weddings/:id/documents. */
   readonly documents?: DocumentService
+  /** Issue #61: the planner copilot, under /t/:slug/weddings/:id/copilot. */
+  readonly copilot?: CopilotService
+  /** Issue #61: the model job queue, drained after each request (deferred work). */
+  readonly jobs?: Pick<JobQueue, 'drain'>
   /**
    * Issue #13: where a request that ends in a 500 is recorded (code + location, never data), and what the operator
    * reads at /admin/errors. Absent ⇒ nothing is recorded (fixtures).
@@ -472,6 +481,7 @@ export class ProductApi {
   /** The team (issue #11), or undefined when not wired. */
   readonly #membership: MembershipService | undefined
   readonly #householdRsvp: HouseholdRsvpDeps | undefined
+  readonly #jobs: Pick<JobQueue, 'drain'> | undefined
   readonly #checklist: ChecklistService | undefined
   readonly #publicSite: PublicSiteDeps | undefined
   /** In-app feedback (issue #12), or undefined when not wired. */
@@ -502,7 +512,9 @@ export class ProductApi {
       ...(deps.seating === undefined ? {} : { seating: deps.seating }),
       ...(deps.site === undefined ? {} : { site: deps.site.sites }),
       ...(deps.documents === undefined ? {} : { documents: deps.documents }),
+      ...(deps.copilot === undefined ? {} : { copilot: deps.copilot }),
     }
+    this.#jobs = deps.jobs
     this.#publicSite = deps.site
     this.#householdRsvp = deps.householdRsvp
     this.#checklist = deps.checklist
@@ -535,6 +547,8 @@ export class ProductApi {
     } catch {
       // Deferred work never affects a response; a failure is retried on the next request's pass.
     }
+    // Issue #61: model jobs run here, after the response; the drain joins one already running and never rejects.
+    void this.#jobs?.drain().catch(() => undefined)
   }
 
   /**
@@ -907,6 +921,9 @@ function errorToResponse(error: WeddingPlannerError): ApiResponse {
       return RESP_FILE_TOO_LARGE
     case 'PRODUCT.UNSUPPORTED_FILE':
       return RESP_UNSUPPORTED_FILE
+    // Issue #61: the copilot draft changed since the planner looked (an honest 409 to the planner of the wedding).
+    case 'PRODUCT.DRAFT_CHANGED':
+      return RESP_DRAFT_CHANGED
     // FORGED_CONTEXT / FORGED_PRINCIPAL / CROSS_TENANT_WRITE / anything else: an internal invariant
     // violation a real request can never construct — a 500 bug, never a normal client path, never leaked.
     default:
@@ -953,6 +970,10 @@ function dispatchWeddings(
   // /t/:slug/weddings/:weddingId/documents[/:id] (issue #48).
   if (deps.documents !== undefined && weddingId !== undefined && segments[4] === 'documents' && segments.length <= 6) {
     return dispatchDocuments(context, principal, req, weddingId, segments[5], deps.documents)
+  }
+  // /t/:slug/weddings/:weddingId/copilot[/accept] (issue #61).
+  if (deps.copilot !== undefined && weddingId !== undefined && segments[4] === 'copilot' && segments.length <= 6) {
+    return dispatchCopilot(context, principal, req, weddingId, segments[5], deps.copilot)
   }
   // /t/:slug/weddings/:weddingId/run-of-show[/:id] (issue #45).
   if (deps.runOfShow !== undefined && weddingId !== undefined && segments[4] === 'run-of-show' && segments.length <= 6) {
@@ -1339,6 +1360,33 @@ function documentUpdateInput(req: ApiRequest): DocumentUpdateInput {
   const fields = documentFields(parseObjectBody(req.rawBody))
   if (fields.shared_with_couple === undefined) throw new ProductError('PRODUCT.BAD_REQUEST', 'shared_with_couple must be true or false.', {})
   return { ...fields, shared_with_couple: fields.shared_with_couple }
+}
+
+/**
+ * The copilot routes of one wedding (issue #61): the planner only — the wedding's boundary, then the capability, before a
+ * body is parsed. `POST …/copilot` asks for a draft (202: it is made after the response), `GET` reads it, `POST
+ * …/copilot/accept {task_ids, item_ids}` keeps some, `DELETE` throws it away.
+ */
+function dispatchCopilot(context: TenantContext, principal: Principal, req: ApiRequest, weddingId: string, sub: string | undefined, copilot: CopilotService): ApiResponse {
+  copilot.assertPlanner(context, principal, weddingId)
+  if (sub === undefined) {
+    if (req.method === 'GET') return { status: 200, body: copilot.view(context, principal, weddingId) }
+    if (req.method === 'POST') return { status: 202, body: { draft: copilot.request(context, principal, weddingId) } }
+    if (req.method === 'DELETE') return { status: 200, body: { removed: copilot.discard(context, principal, weddingId) } }
+    throw methodNotAllowed()
+  }
+  if (sub !== 'accept') throw routeNotFound()
+  if (req.method !== 'POST') throw methodNotAllowed()
+  const body = parseObjectBody(req.rawBody)
+  const ids = (key: string, max: number): string[] => {
+    const value = body[key] ?? []
+    if (!Array.isArray(value) || value.length > max || value.some((v) => typeof v !== 'string')) {
+      throw new ProductError('PRODUCT.BAD_REQUEST', `${key} must be a list of draft ids.`, {})
+    }
+    return value as string[]
+  }
+  const acceptance: CopilotAcceptance = { draft: requireString(body, 'draft'), task_ids: ids('task_ids', COPILOT_LIMITS.tasks), item_ids: ids('item_ids', COPILOT_LIMITS.items) }
+  return { status: 200, body: copilot.accept(context, principal, weddingId, acceptance) }
 }
 
 /** A run-of-show body: `{starts_at, title, owner, ends_at?, location?, owner_vendor_id?, vendor_call_time?, event_id?, notes?}`. */
