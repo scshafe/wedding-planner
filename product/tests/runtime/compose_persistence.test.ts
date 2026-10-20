@@ -129,6 +129,10 @@ describe('durable storage — data written before a restart is read back after i
     // The checklist (issue #31).
     expect(api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/tasks/apply-template`, { token })).status).toBe(200)
     expect(api1.handle(req('PUT', `/t/demo/weddings/${newWeddingId}`, { token, body: { event_date: '2028-09-02' } })).status).toBe(200)
+    // A vendor with a payment schedule (issue #33).
+    expect(
+      api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/vendors`, { token, body: { category: 'venue', business_name: 'The Hall', contract_status: 'signed', installments: [{ label: 'Deposit', amount_cents: 50000, due_date: '2028-01-15', deposit: true }] } })).status,
+    ).toBe(201)
     const provisioned = api1.handle(
       req('POST', '/admin/tenants', {
         token: OP,

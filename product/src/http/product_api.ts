@@ -15,6 +15,14 @@ import type { InvitedRole } from '../accounts/invitation_store'
 import type { MembershipService } from '../accounts/membership_service'
 import type { RateLimiter } from '../accounts/rate_limiter'
 import type { ChecklistService, TaskInput } from '../checklist/checklist_service'
+import {
+  type InstallmentInput,
+  VENDOR_CATEGORIES,
+  VENDOR_LIMITS,
+  type VendorCategory,
+  type VendorInput,
+  type VendorService,
+} from '../vendors/vendor_service'
 import type { RsvpLinkService } from '../rsvp/rsvp_link_service'
 import {
   HOUSEHOLD_ANSWER_LIMITS,
@@ -172,6 +180,8 @@ export interface WeddingHandlerDeps {
   readonly rsvpLinks?: RsvpLinkService
   /** Issue #31: the wedding's checklist. Absent ⇒ the sub-routes are not mounted. */
   readonly checklist?: ChecklistService
+  /** Issue #33: the wedding's vendors and payment schedules. Absent ⇒ the sub-routes are not mounted. */
+  readonly vendors?: VendorService
 }
 
 /** Issue #30: what the public household RSVP route needs — the link resolver, the answers, the dietary note, a limiter. */
@@ -337,6 +347,8 @@ export interface ProductApiDeps {
   readonly householdRsvp?: HouseholdRsvpDeps
   /** Issue #31: each wedding's checklist, under /t/:slug/weddings/:id/tasks. */
   readonly checklist?: ChecklistService
+  /** Issue #33: each wedding's vendors, under /t/:slug/weddings/:id/vendors. */
+  readonly vendors?: VendorService
   /**
    * Issue #13: where a request that ends in a 500 is recorded (code + location, never data), and what the operator
    * reads at /admin/errors. Absent ⇒ nothing is recorded (fixtures).
@@ -447,6 +459,7 @@ export class ProductApi {
       ...(deps.events === undefined ? {} : { events: deps.events }),
       ...(deps.householdRsvp === undefined ? {} : { rsvpLinks: deps.householdRsvp.links }),
       ...(deps.checklist === undefined ? {} : { checklist: deps.checklist }),
+      ...(deps.vendors === undefined ? {} : { vendors: deps.vendors }),
     }
     this.#householdRsvp = deps.householdRsvp
     this.#checklist = deps.checklist
@@ -869,6 +882,10 @@ function dispatchWeddings(
     throw methodNotAllowed()
   }
   const weddingId = segments[3]
+  // /t/:slug/weddings/:weddingId/vendors[/:id[/installments/:installmentId]] (issue #33).
+  if (deps.vendors !== undefined && weddingId !== undefined && segments[4] === 'vendors' && segments.length <= 8) {
+    return dispatchVendors(context, principal, req, weddingId, segments.slice(4), deps.vendors)
+  }
   // /t/:slug/weddings/:weddingId/tasks[/:id[/status] | /apply-template | /shift] (issue #31).
   if (deps.checklist !== undefined && weddingId !== undefined && segments[4] === 'tasks' && segments.length <= 7) {
     return dispatchChecklist(context, principal, req, weddingId, segments.slice(4), deps.checklist)
@@ -1060,6 +1077,88 @@ function dispatchChecklist(
   }
   if (req.method === 'DELETE') return { status: 200, body: { removed: checklist.removeTask(context, principal, weddingId, id) } }
   throw methodNotAllowed()
+}
+
+/**
+ * The vendor routes of one wedding (issue #33). The wedding's boundary first; the planner's capability before a body
+ * is parsed (the couple only reads, and sees only the vendors the planner shares).
+ */
+function dispatchVendors(
+  context: TenantContext,
+  principal: Principal,
+  req: ApiRequest,
+  weddingId: string,
+  rest: readonly string[],
+  vendors: VendorService,
+): ApiResponse {
+  vendors.assertReach(context, principal, weddingId)
+  const [, id, sub, installmentId] = rest
+  if (id === undefined && req.method === 'GET') return { status: 200, body: vendors.view(context, principal, weddingId) }
+  if (principal.role !== 'planner') throw forbidden()
+  if (id === undefined) {
+    if (req.method !== 'POST') throw methodNotAllowed()
+    return { status: 201, body: { vendor: vendors.addVendor(context, principal, weddingId, vendorInput(req)) } }
+  }
+  if (sub === 'installments' && installmentId !== undefined && rest.length === 4) {
+    if (req.method !== 'PUT') throw methodNotAllowed()
+    const paid = parseObjectBody(req.rawBody).paid
+    if (typeof paid !== 'boolean') throw new ProductError('PRODUCT.BAD_REQUEST', 'paid must be true or false.', {})
+    return { status: 200, body: { vendor: vendors.setInstallmentPaid(context, principal, weddingId, id, installmentId, paid) } }
+  }
+  if (sub !== undefined) throw routeNotFound()
+  if (req.method === 'PUT') return { status: 200, body: { vendor: vendors.updateVendor(context, principal, weddingId, id, vendorInput(req)) } }
+  if (req.method === 'DELETE') return { status: 200, body: { removed: vendors.removeVendor(context, principal, weddingId, id) } }
+  throw methodNotAllowed()
+}
+
+/**
+ * A vendor body. `installments` is the whole schedule: `[{installment_id?, label, amount_cents, due_date, deposit?,
+ * paid?}]`, bounded before any per-item work; amounts are integer cents.
+ */
+function vendorInput(req: ApiRequest): VendorInput {
+  const body = parseObjectBody(req.rawBody)
+  const category = body.category
+  if (typeof category !== 'string' || !(VENDOR_CATEGORIES as readonly string[]).includes(category)) {
+    throw new ProductError('PRODUCT.BAD_REQUEST', 'category must be one of the vendor categories.', {})
+  }
+  const contract = body.contract_status
+  if (contract !== 'none' && contract !== 'sent' && contract !== 'signed' && contract !== 'cancelled') {
+    throw new ProductError('PRODUCT.BAD_REQUEST', 'contract_status must be none, sent, signed or cancelled.', {})
+  }
+  const shared = body.shared_with_couple
+  if (shared !== undefined && typeof shared !== 'boolean') throw new ProductError('PRODUCT.BAD_REQUEST', 'shared_with_couple must be true or false.', {})
+  const installments = boundedList(body.installments ?? [], VENDOR_LIMITS.installments, 'installments').map((i): InstallmentInput => {
+    const amount = i.amount_cents
+    if (typeof amount !== 'number') throw new ProductError('PRODUCT.BAD_REQUEST', 'amount_cents must be a whole number of cents.', {})
+    for (const flag of ['deposit', 'paid'] as const) {
+      if (i[flag] !== undefined && typeof i[flag] !== 'boolean') throw new ProductError('PRODUCT.BAD_REQUEST', `${flag} must be true or false.`, {})
+    }
+    const id = optionalString(i, 'installment_id')
+    return {
+      label: requireString(i, 'label'),
+      amount_cents: amount,
+      due_date: requireString(i, 'due_date'),
+      ...(id === undefined ? {} : { installment_id: id }),
+      ...(i.deposit === undefined ? {} : { deposit: i.deposit as boolean }),
+      ...(i.paid === undefined ? {} : { paid: i.paid as boolean }),
+    }
+  })
+  const pick = (key: string): { [k: string]: string } => {
+    const value = optionalString(body, key)
+    return value === undefined ? {} : { [key]: value }
+  }
+  return {
+    category: category as VendorCategory,
+    business_name: requireString(body, 'business_name'),
+    contract_status: contract,
+    installments,
+    ...(shared === undefined ? {} : { shared_with_couple: shared }),
+    ...pick('category_other'),
+    ...pick('contact_name'),
+    ...pick('email'),
+    ...pick('phone'),
+    ...pick('notes'),
+  }
 }
 
 /** A task body: `{title, due_date, assignee, notes?}`. */

@@ -107,4 +107,5 @@ export type {
   RsvpLink,
   WeddingTask,
   ChecklistDateMove,
+  WeddingVendor,
 } from './contracts/contract_types'
