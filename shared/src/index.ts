@@ -118,4 +118,6 @@ export type {
   CopilotDraftOutput,
   CopilotDraft,
   Job,
+  GuestAnswerOutput,
+  PendingGuestQuestion,
 } from './contracts/contract_types'

@@ -170,7 +170,23 @@ export class SiteService {
     const holder = this.#names.read(context, site_name)
     if (holder === undefined) return undefined
     const site = this.#site(context, holder.wedding_id)
-    if (site === undefined || !site.published || site.site_name !== site_name) return undefined
+    if (site === undefined || site.site_name !== site_name) return undefined
+    return this.#published(context, site)
+  }
+
+  /**
+   * The same public content, by wedding (issue #60: what the guest concierge may answer from), or undefined while the
+   * site is unpublished or the wedding cancelled. No principal: the caller has already resolved the wedding from
+   * trusted state (a guest's binding).
+   */
+  publishedSiteOf(context: TenantContext, wedding_id: string): PublicSiteView | undefined {
+    const site = this.#site(context, wedding_id)
+    return site === undefined ? undefined : this.#published(context, site)
+  }
+
+  /** The allow-listed public view of a published site of a live wedding, else undefined. */
+  #published(context: TenantContext, site: WeddingSite): PublicSiteView | undefined {
+    if (!site.published) return undefined
     const wedding = this.weddings.get(context, site.wedding_id)
     if (wedding === undefined || wedding.status === 'cancelled') return undefined
     const shown = new Set(site.public_event_ids)

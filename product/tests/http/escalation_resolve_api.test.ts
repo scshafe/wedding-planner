@@ -6,7 +6,6 @@ import {
   type ApiRequest,
   type ApiResponse,
   BillingLedger,
-  DeterministicGuestQaResponder,
   EscalationLog,
   EscalationReplyLog,
   EscalationResolutionLog,
@@ -24,6 +23,8 @@ import {
   WeddingAuthorizer,
   WeddingRepository,
 } from '@wedding-planner/product'
+
+import { conciergeWorld } from '../support/concierge_world'
 
 /**
  * Phase 27 — `POST /t/:slug/escalations` marks an escalation handled (resolved/dismissed) into a SEPARATE
@@ -43,6 +44,8 @@ const THEME: Tenant['theme'] = {
 const WH = 'wh-secret'
 
 interface World {
+  /** Run the concierge jobs an inbound message queued (issue #60). */
+  drain: () => Promise<number>
   api: ProductApi
 }
 
@@ -62,6 +65,19 @@ function makeWorld(): World {
   const replies = new EscalationReplyLog(store, new SequentialIdGenerator('seedRep'), clock)
   const messaging = new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS'))
   const guestAuthorizer = new GuestAuthorizer()
+  const cwReceipts = new InboundReceiptLog(store, new SequentialIdGenerator('seedIR'))
+  const cw = conciergeWorld({
+    tenants: store,
+    resolver: resolver,
+    clock: clock,
+    weddings: weddings,
+    registry: registry,
+    receipts: cwReceipts,
+    service: messaging,
+    escalations: escalations,
+    resolutions: resolutions,
+    replies: replies,
+  })
   const api = new ProductApi({
     resolver,
     sessionStore: sessions,
@@ -71,20 +87,10 @@ function makeWorld(): World {
     operators: new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret']),
     onboarding: new OnboardingService(store, billing),
     webhookCredentials: new ProviderWebhookCredentialStore(new SequentialIdGenerator('seedWH'), [WH]),
-    messaging: {
-      port: adapter,
-      receipts: new InboundReceiptLog(store, new SequentialIdGenerator('seedIR')),
-      registry,
-      weddings,
-      responder: new DeterministicGuestQaResponder(),
-      service: messaging,
-      escalations,
-      resolutions,
-      replies,
-    },
+    messaging: { port: adapter, receipts: cwReceipts, registry: registry, weddings: weddings, concierge: cw.concierge },
     escalations: { escalations, resolutions, replies, authorizer: guestAuthorizer, service: messaging },
   })
-  return { api }
+  return { api, drain: cw.drain }
 }
 
 function req(method: string, path: string, opts: { token?: string; body?: unknown } = {}): ApiRequest {
@@ -113,7 +119,7 @@ function registerGuest(w: World, slug: string, plannerToken: string, ref: string
 }
 
 /** Drive an UNANSWERABLE inbound (a parking question, no parking_info) -> records an escalation; return its id. */
-function escalate(w: World, slug: string, plannerToken: string, ref: string, providerRef: string): string {
+async function escalate(w: World, slug: string, plannerToken: string, ref: string, providerRef: string): Promise<string> {
   const res = w.api.handle({
     method: 'POST',
     path: `/t/${slug}/messaging/inbound`,
@@ -121,6 +127,8 @@ function escalate(w: World, slug: string, plannerToken: string, ref: string, pro
     rawBody: JSON.stringify({ channel: 'sms', from_ref: ref, text: 'where do I park?', provider_message_ref: providerRef }),
   })
   expect(res.status).toBe(202)
+  // Issue #60: the concierge files the question in a job after the response.
+  await w.drain()
   // Read the escalation back (as a planner) to learn its server-minted escalation_id.
   const listed = w.api.handle(req('GET', `/t/${slug}/escalations`, { token: plannerToken }))
   const row = (listed.body as { escalations: GuestEscalation[] }).escalations.find((e) => e.provider_message_ref === providerRef)
@@ -152,11 +160,11 @@ describe('escalation resolve/dismiss mutation', () => {
     w = makeWorld()
   })
 
-  it('a planner resolves any tenant escalation; the resolution appears in the list scoped to it', () => {
+  it('a planner resolves any tenant escalation; the resolution appears in the list scoped to it', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
 
     const res = resolve(w, 'alpha', planner, escId, 'dismissed')
     expect(res.status).toBe(200)
@@ -167,24 +175,24 @@ describe('escalation resolve/dismiss mutation', () => {
     expect(resolutions[0]).toMatchObject({ escalation_id: escId, wedding_id: wedA, status: 'dismissed', resolved_by: 'planner' })
   })
 
-  it('a couple resolves ONLY their bound wedding escalation', () => {
+  it('a couple resolves ONLY their bound wedding escalation', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
 
     const coupleA = login(w, 'alpha', { role: 'couple', wedding_id: wedA })
     expect(resolve(w, 'alpha', coupleA, escId).body).toEqual({ resolved: true })
     expect(listResolutions(w, 'alpha', coupleA)[0]).toMatchObject({ escalation_id: escId, resolved_by: 'couple' })
   })
 
-  it('F1: a couple resolving an ABSENT id and a SIBLING-WEDDING id get the BYTE-IDENTICAL {resolved:false}', () => {
+  it('F1: a couple resolving an ABSENT id and a SIBLING-WEDDING id get the BYTE-IDENTICAL {resolved:false}', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     const wedB = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
     registerGuest(w, 'alpha', planner, 'sms:+2', wedB)
-    const escB = escalate(w, 'alpha', planner, 'sms:+2', 'pm_B') // an escalation in wedding B
+    const escB = await escalate(w, 'alpha', planner, 'sms:+2', 'pm_B') // an escalation in wedding B
 
     const coupleA = login(w, 'alpha', { role: 'couple', wedding_id: wedA })
     const absent = resolve(w, 'alpha', coupleA, 'escalation_does_not_exist')
@@ -196,12 +204,12 @@ describe('escalation resolve/dismiss mutation', () => {
     expect(foreign.body).toEqual({ resolved: false })
   })
 
-  it('F2: a couple resolving a SIBLING-WEDDING escalation writes NO record', () => {
+  it('F2: a couple resolving a SIBLING-WEDDING escalation writes NO record', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     const wedB = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+2', wedB)
-    const escB = escalate(w, 'alpha', planner, 'sms:+2', 'pm_B')
+    const escB = await escalate(w, 'alpha', planner, 'sms:+2', 'pm_B')
 
     const coupleA = login(w, 'alpha', { role: 'couple', wedding_id: wedA })
     resolve(w, 'alpha', coupleA, escB)
@@ -209,11 +217,11 @@ describe('escalation resolve/dismiss mutation', () => {
     expect(listResolutions(w, 'alpha', planner)).toEqual([])
   })
 
-  it('a body-smuggled wedding_id/resolved_by is inert — the record uses the escalation + the principal', () => {
+  it('a body-smuggled wedding_id/resolved_by is inert — the record uses the escalation + the principal', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
 
     const coupleA = login(w, 'alpha', { role: 'couple', wedding_id: wedA })
     const res = w.api.handle(
@@ -227,11 +235,11 @@ describe('escalation resolve/dismiss mutation', () => {
     expect(stored).toMatchObject({ escalation_id: escId, wedding_id: wedA, resolved_by: 'couple' }) // from trusted state, not the body
   })
 
-  it('is idempotent by escalation_id (first-writer-wins): a re-resolve/dismiss keeps the original record + status', () => {
+  it('is idempotent by escalation_id (first-writer-wins): a re-resolve/dismiss keeps the original record + status', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
 
     expect(resolve(w, 'alpha', planner, escId, 'resolved').body).toEqual({ resolved: true })
     // A later DISMISS is a no-op return-existing → still {resolved:true}, one record, original status sticks.
@@ -241,25 +249,25 @@ describe('escalation resolve/dismiss mutation', () => {
     expect(resolutions[0]!.status).toBe('resolved')
   })
 
-  it('a bad/absent status is a masked 400 — for a PRESENT and an ABSENT escalation_id alike (no existence oracle)', () => {
+  it('a bad/absent status is a masked 400 — for a PRESENT and an ABSENT escalation_id alike (no existence oracle)', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
 
     expect(w.api.handle(req('POST', '/t/alpha/escalations', { token: planner, body: { escalation_id: escId, status: 'nope' } })).status).toBe(400)
     expect(w.api.handle(req('POST', '/t/alpha/escalations', { token: planner, body: { escalation_id: 'absent', status: 'nope' } })).status).toBe(400)
     expect(w.api.handle(req('POST', '/t/alpha/escalations', { token: planner, body: { escalation_id: escId } })).status).toBe(400)
   })
 
-  it('F4: a couple bound to wedding A never sees wedding B resolution in the resolutions array', () => {
+  it('F4: a couple bound to wedding A never sees wedding B resolution in the resolutions array', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     const wedB = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
     registerGuest(w, 'alpha', planner, 'sms:+2', wedB)
-    const escA = escalate(w, 'alpha', planner, 'sms:+1', 'pm_A')
-    const escB = escalate(w, 'alpha', planner, 'sms:+2', 'pm_B')
+    const escA = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_A')
+    const escB = await escalate(w, 'alpha', planner, 'sms:+2', 'pm_B')
     resolve(w, 'alpha', planner, escA)
     resolve(w, 'alpha', planner, escB)
 
@@ -268,11 +276,11 @@ describe('escalation resolve/dismiss mutation', () => {
     expect(seen.map((r) => r.escalation_id)).toEqual([escA]) // only A's, never B's
   })
 
-  it('is tenant-isolated: a beta planner cannot resolve an alpha escalation (absent in beta) → {resolved:false}', () => {
+  it('is tenant-isolated: a beta planner cannot resolve an alpha escalation (absent in beta) → {resolved:false}', async () => {
     const plannerA = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', plannerA)
     registerGuest(w, 'alpha', plannerA, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', plannerA, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', plannerA, 'sms:+1', 'pm_1')
 
     const plannerB = login(w, 'beta', { role: 'planner' })
     expect(resolve(w, 'beta', plannerB, escId).body).toEqual({ resolved: false })
@@ -286,11 +294,11 @@ describe('escalation REOPEN transition (Phase 36)', () => {
     w = makeWorld()
   })
 
-  it('a planner reopens a HANDLED escalation back to open; the transition history accretes a reopened row', () => {
+  it('a planner reopens a HANDLED escalation back to open; the transition history accretes a reopened row', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
 
     expect(resolve(w, 'alpha', planner, escId, 'resolved').body).toEqual({ resolved: true })
     expect(effectiveStatus(w, 'alpha', planner, escId)).toBe('resolved')
@@ -302,23 +310,23 @@ describe('escalation REOPEN transition (Phase 36)', () => {
     expect(rows.find((r) => r.status === 'reopened')!.seq).toBe(1) // above the high-water mark, never thread.length
   })
 
-  it('reopen of an OPEN escalation is an idempotent no-op (out of direction) — no row, still {resolved:true}', () => {
+  it('reopen of an OPEN escalation is an idempotent no-op (out of direction) — no row, still {resolved:true}', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
 
     expect(resolve(w, 'alpha', planner, escId, 'reopened').body).toEqual({ resolved: true }) // already open
     expect(listResolutions(w, 'alpha', planner)).toHaveLength(0) // nothing recorded
     expect(effectiveStatus(w, 'alpha', planner, escId)).toBe('open')
   })
 
-  it('NO-ORACLE: a couple reopening an ABSENT id and a SIBLING-WEDDING id get the byte-identical {resolved:false}, no write', () => {
+  it('NO-ORACLE: a couple reopening an ABSENT id and a SIBLING-WEDDING id get the byte-identical {resolved:false}, no write', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     const wedB = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+2', wedB)
-    const escB = escalate(w, 'alpha', planner, 'sms:+2', 'pm_B')
+    const escB = await escalate(w, 'alpha', planner, 'sms:+2', 'pm_B')
     resolve(w, 'alpha', planner, escB, 'resolved') // a handled escalation in wedding B
 
     const coupleA = login(w, 'alpha', { role: 'couple', wedding_id: wedA })
@@ -330,11 +338,11 @@ describe('escalation REOPEN transition (Phase 36)', () => {
     expect(listResolutions(w, 'alpha', planner).filter((r) => r.escalation_id === escB).map((r) => r.status)).toEqual(['resolved'])
   })
 
-  it('reopen is in the masked-400 enum: a non-enum status still 400s INDEPENDENT of existence', () => {
+  it('reopen is in the masked-400 enum: a non-enum status still 400s INDEPENDENT of existence', async () => {
     const planner = login(w, 'alpha', { role: 'planner' })
     const wedA = makeWedding(w, 'alpha', planner)
     registerGuest(w, 'alpha', planner, 'sms:+1', wedA)
-    const escId = escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
+    const escId = await escalate(w, 'alpha', planner, 'sms:+1', 'pm_1')
     // reopened is accepted (200); only a genuinely unknown status 400s.
     expect(resolve(w, 'alpha', planner, escId, 'reopened').status).toBe(200)
     expect(resolve(w, 'alpha', planner, escId, 'archived').status).toBe(400)

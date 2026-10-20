@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/pending_guest_question.json",
+  "title": "PendingGuestQuestion",
+  "description": "A guest's question waiting for the concierge's job (issue #60, ADR 0059): written by the inbound edge, read when the job runs, deleted when it finishes. Keyed by question_id, a hash of the provider's message ref (which has no length limit). Tenant-scoped; the global job index never holds it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["question_id", "tenant_id", "wedding_id", "provider_message_ref", "sender_ref", "channel", "body", "received_at"],
+  "properties": {
+    "question_id": { "type": "string", "pattern": "^q[0-9a-f]{40}$" },
+    "tenant_id": { "type": "string", "minLength": 1, "description": "The owning tenant. Compared to the context's tenant only; never selects the partition." },
+    "wedding_id": { "type": "string", "minLength": 1, "description": "The wedding the guest was bound to when the message came in." },
+    "provider_message_ref": { "type": "string", "minLength": 1, "description": "The provider's opaque handle, as received (dedupe and reconciliation only)." },
+    "sender_ref": { "type": "string", "minLength": 1, "description": "The guest's opaque sender handle (the registry binding's key)." },
+    "channel": { "enum": ["email", "sms", "whatsapp", "postal", "phone"] },
+    "body": { "type": "string", "minLength": 1, "description": "The message, untrusted. Escalated as-is; the model sees a shortened copy as data." },
+    "received_at": { "type": "string", "minLength": 1 }
+  }
+}

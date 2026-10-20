@@ -1,7 +1,6 @@
 import {
   deepFreeze,
   getSchemaRegistry,
-  type GuestEscalation,
   type InboundWebhook,
   type StrategyGenome,
   type Tenant,
@@ -58,11 +57,10 @@ import { buildBillingSummary } from '../billing/billing_summary'
 import type { PlanTier } from '../billing/price_book'
 import type { OnboardingService } from '../onboarding/onboarding_service'
 import type { TransactionRunner } from '../persistence/record_store'
-import type { GuestQaResponder } from '../messaging/guest_qa_responder'
-import { projectGuestVisibleFacts } from '../messaging/guest_qa_responder'
+import type { ConciergeService } from '../concierge/concierge_service'
 import type { EscalationLog } from '../messaging/escalation_log'
 import type { EscalationReplyLog } from '../messaging/escalation_reply_log'
-import type { EffectiveEscalationStatus, EscalationResolutionLog } from '../messaging/escalation_resolution_log'
+import type { EscalationResolutionLog } from '../messaging/escalation_resolution_log'
 import type { GuestRegistry } from '../messaging/guest_registry'
 import type { InboundReceiptLog } from '../messaging/inbound_receipt_log'
 import type { MessagingPort } from '../messaging/messaging_port'
@@ -251,32 +249,19 @@ export const OUTBOX_PAGE_SIZE = 100
 
 /**
  * The narrow bag handed to the provider-webhook inbound handler (Phase 19) — DELIBERATELY excludes the webhook
- * credential store (auth already passed in the pipeline). It carries exactly the collaborators the inbound
- * reply path orchestrates: the provider `port` (untrusted→domain normalize), the per-tenant inbound dedupe
- * `receipts`, the guest `registry` (segmentation), the tenant-scoped `weddings` (the bound facts), the
- * deterministic `responder`, the metered `service` (the only path that bills), and the `escalations` inbox
- * (Phase 26 — an `escalated` question is recorded here so the couple/planner can read it; `refused`/`answered`
- * are never recorded).
+ * credential store (auth already passed in the pipeline). It carries exactly what the edge needs: the provider `port`
+ * (untrusted→domain normalize), the per-tenant inbound dedupe `receipts`, the guest `registry` (segmentation), the
+ * tenant-scoped `weddings` (the bound wedding exists), and the guest `concierge` (issue #60), which refuses a surprise
+ * probe at once and otherwise answers or escalates in a job after the response (it holds the metered service and the
+ * escalation inbox itself).
  */
 export interface MessagingHandlerDeps {
   readonly port: MessagingPort
   readonly receipts: InboundReceiptLog
   readonly registry: GuestRegistry
   readonly weddings: WeddingRepository
-  readonly responder: GuestQaResponder
-  readonly service: MessagingService
-  readonly escalations: EscalationLog
-  /**
-   * Phase 35/37 — guest-reply → thread correlation + AUTO-REOPEN. The inbound edge READS `effectiveStatus` to
-   * decide whether an `escalated` follow-up threads into the guest's most-recent OPEN escalation, and (Phase 37)
-   * WRITES a `reopened` `transition` when the most-recent is effective-RESOLVED — auto-reopening it so the
-   * follow-up threads in rather than spawning a fresh escalation. Narrowed to exactly those two methods
-   * (`effectiveStatus` read + `transition` write — the only resolution-log capability the inbound path needs;
-   * it never reads the rows or lists), keeping the surface minimal. The full `replies` log is the thread write
-   * target (`recordGuestReply`) + the re-delivery guard (`guestTurnByProviderRef`).
-   */
-  readonly resolutions: Pick<EscalationResolutionLog, 'effectiveStatus' | 'transition'>
-  readonly replies: EscalationReplyLog
+  /** Issue #60: the guest concierge's edge decision (refuse now, or answer/escalate in a job). */
+  readonly concierge: Pick<ConciergeService, 'receive'>
 }
 
 /**
@@ -2167,25 +2152,18 @@ function dispatchMessaging(
 }
 
 /**
- * POST /t/:slug/messaging/inbound — a guest texted in. Validate the wire shape (honest 400 to the trusted
- * provider, post-auth so not a pre-auth oracle), normalize via the provider port, then run the reply path:
- *   1. PER-TENANT idempotent receive (doddy P0): a ref already SUCCESSFULLY REPLIED TO is a no-op — early-return
- *      the uniform 202, no second reply, no second charge.
- *   2. Resolve the guest binding (segmentation): an unregistered/foreign ref -> uniform 202, no reply (no oracle).
- *   3. Load the bound wedding through the SCOPED repo (context + wedding_id — two gates): absent -> uniform 202.
- *   4. Decide from ONLY the guest-visible projection; on `answered`, send the reply through the METER with a
- *      PLATFORM-MINTED idempotency_key (never the untrusted provider ref), then mark the ref replied AFTER the
- *      send succeeds (doddy P1: commit-after-success — a send failure stays retryable and the ack stays 202).
- *      On `escalated` (a question we could not answer), record it in the `escalations` inbox so the couple/
- *      planner can read it (Phase 26) — idempotent by provider_message_ref, so a re-delivery records exactly
- *      one. Phase 35: an `escalated` follow-up from a guest who already has an OPEN escalation in their bound
- *      wedding THREADS into it (a `sender:'guest'` turn) instead of opening a new escalation — gated by the
- *      §B0 process-once reads so a re-delivery is never duplicated; routing is invisible to the guest (still
- *      202) and carries no send/charge. `refused` records NOTHING (the fact-independent surprise outcome;
- *      recording it would persist surprise-probe content — see escalation_log.ts). EVERY branch still returns
- *      the SAME uniform 202.
- * Identity is sourced from trusted state ONLY — the registry's stored recipient_ref + the bound wedding_id,
- * never a body field — so a body-smuggled guest_id/wedding_id is inert.
+ * POST /t/:slug/messaging/inbound — a guest texted in. Validate the wire shape (honest 400 to the trusted provider,
+ * post-auth so not a pre-auth oracle), normalize via the provider port, then:
+ *   1. PER-TENANT idempotent receive (doddy P0): a ref already SUCCESSFULLY REPLIED TO is a no-op — the uniform 202,
+ *      no second reply, no second charge.
+ *   2. Resolve the guest binding (segmentation): an unregistered/foreign ref -> uniform 202, nothing else (no oracle).
+ *   3. The bound wedding must exist, read through the SCOPED repo (context + wedding_id — two gates).
+ *   4. The guest concierge (issue #60, ADR 0059) decides: a surprise probe is REFUSED here — fact-independent,
+ *      recording nothing; anything else is stored and a job answers it after this response (from the allow-listed
+ *      facts, through the model port, metered, commit-after-success) or files it in the inbox (the Phase 26/35/37
+ *      threading, process-once by the ref).
+ * EVERY branch returns the SAME uniform 202. Identity is sourced from trusted state ONLY — the registry's stored
+ * recipient_ref + the bound wedding_id, never a body field — so a body-smuggled guest_id/wedding_id is inert.
  */
 function handleInbound(context: TenantContext, req: ApiRequest, deps: MessagingHandlerDeps): ApiResponse {
   const body = parseObjectBody(req.rawBody)
@@ -2206,146 +2184,10 @@ function handleInbound(context: TenantContext, req: ApiRequest, deps: MessagingH
   const wedding = deps.weddings.get(context, binding.wedding_id)
   if (wedding === undefined) return RESP_ACCEPTED
 
-  // (4) Decide from the guest-visible projection ONLY; reply (metered) only when we can answer.
-  const outcome = deps.responder.respond(projectGuestVisibleFacts(wedding), message.body)
-  if (outcome.action === 'answered' && outcome.reply_text !== undefined) {
-    const replyId = deps.receipts.mintReplyId()
-    try {
-      deps.service.send(context.tenant_id, {
-        channel: message.channel,
-        recipient_ref: binding.recipient_ref,
-        body: outcome.reply_text,
-        idempotency_key: replyId,
-      })
-    } catch (error) {
-      // A send failure is a DROPPED reply, never a 500 oracle and never a suppressed message: the ref is NOT
-      // marked replied (so a re-delivery can retry), and the synchronous ack stays the uniform 202. Only the
-      // send's own structured failures are swallowed here; an unexpected error still surfaces as a 500 bug.
-      if (error instanceof WeddingPlannerError) return RESP_ACCEPTED
-      throw error
-    }
-    // Commit-after-success: only now is the ref a no-op for future re-deliveries.
-    deps.receipts.markReplied(context, message.provider_message_ref, replyId)
-  } else if (outcome.action === 'escalated') {
-    // Phase 35/37 — guest-reply → thread correlation, with AUTO-REOPEN. An `escalated` follow-up from a guest
-    // who already has a conversation in their CURRENTLY-BOUND wedding lands in THAT escalation's thread (a
-    // `sender:'guest'` turn) instead of opening a new one. The target is chosen by EFFECTIVE STATUS, PREFERRING
-    // an open conversation, then a RESOLVED one to auto-reopen, else opening fresh:
-    //   - effective-OPEN exists  → thread into it (Phase 35);
-    //   - else effective-RESOLVED → AUTO-REOPEN it (a `reopened` transition, attributed `resolved_by:'guest'`)
-    //                              then thread into it (Phase 37 — the resolved conversation becomes live again);
-    //   - else (only effective-DISMISSED, or none) → open a FRESH escalation (Phase 26).
-    // DISMISSED is deliberately NOT a reopen candidate (an operator dismissal is a final "no" to the guest —
-    // see escalation_resolution_log.ts); the policy lives in the SELECTOR (it only ever returns open/resolved),
-    // NOT in `transition()`'s direction rule (which would permit reopening a dismissed one). The target is
-    // inferred ENTIRELY from trusted state (the live binding's wedding_id + the registry-vetoed sender_ref),
-    // never the inbound body. Every branch is a server-side write invisible to the guest (uniform 202) and
-    // carries NO send / NO charge — a guest turn (and the reopen it may trigger) is a RECEIVED message we file
-    // into the conversation; only an OPERATOR console reply bills.
-    //
-    // PROCESS-ONCE gate (§B0): the split routing makes a per-thread ref-scan insufficient, because the
-    // selector's output can change between provider re-deliveries (a freshly-recorded escalation is OPEN, so a
-    // re-delivery of the SAME message would otherwise thread into it; a since-resolved escalation would drop a
-    // re-delivered follow-up to a fresh escalation; and now a since-AUTO-REOPENED escalation would re-select a
-    // different tier — open instead of resolved). So gate on TWO "already processed?" reads BEFORE routing:
-    const ref = message.provider_message_ref
-    if (
-      deps.escalations.getByProviderRef(context, ref) === undefined && // (1) ref didn't already CREATE an escalation
-      deps.replies.guestTurnByProviderRef(context, ref) === undefined // (2) ref didn't already land as a guest turn
-    ) {
-      // OPEN is strictly preferred over RESOLVED (the `??`), never compared by recency across tiers — so the
-      // operator-manual-reopen "two opens" case threads into the most-recent open and opens nothing new.
-      const openTarget = mostRecentEscalationForGuest(context, deps, binding.wedding_id, message.sender_ref, 'open')
-      const target =
-        openTarget ?? mostRecentEscalationForGuest(context, deps, binding.wedding_id, message.sender_ref, 'resolved')
-      if (target !== undefined) {
-        // Phase 37: if we fell through to a RESOLVED target (no open conversation), AUTO-REOPEN it FIRST so it
-        // returns to the Open inbox and the Phase-28/36 reply gate (`effectiveStatus !== 'open'`) re-admits
-        // billed operator replies — THEN thread the guest turn into it. The reopen-BEFORE-thread order is
-        // load-bearing: a threaded guest turn is never observed on a still-effective-resolved escalation, and
-        // the two writes are inseparable inside this one §B0-gated, synchronous critical section. escalation_id/
-        // wedding_id are COPIED from the live `target` (never the body); `by:'guest'` is a server literal — the
-        // honest provenance of the follow-up. `transition()` is directional-idempotent (a second `reopened`
-        // from effective-open is a no-op) and contract-valid (the enum now includes `guest`), so it can neither
-        // double-append nor throw a 400 — the 202 stays uniform.
-        if (openTarget === undefined) {
-          deps.resolutions.transition(context, {
-            escalation_id: target.escalation_id,
-            wedding_id: target.wedding_id,
-            status: 'reopened',
-            by: 'guest',
-          })
-        }
-        // Thread the follow-up. recordGuestReply allocates the slot above the thread's high-water mark and dedups
-        // by ref; the schema body has no maxLength so a long guest message can never fail validation here (no 500
-        // oracle), exactly as escalation.record cannot.
-        deps.replies.recordGuestReply(context, {
-          escalation_id: target.escalation_id,
-          wedding_id: target.wedding_id,
-          provider_message_ref: ref,
-          body: message.body,
-        })
-      } else {
-        // A new conversation (no open or resolved escalation to continue — only dismissed, or none): record the
-        // unanswerable question for the couple/planner inbox (Phase 26). Idempotent by provider_message_ref;
-        // sourced from TRUSTED state + the validated message ONLY, never the raw body. NOT swallowed to 202:
-        // record() cannot be provoked to throw by guest input that passed the inbound edge (its `text`
-        // constraint matches inbound_webhook.text), so a throw is a genuine bug.
-        deps.escalations.record(context, {
-          wedding_id: binding.wedding_id,
-          from_ref: message.sender_ref,
-          text: message.body,
-          received_at: message.received_at,
-          provider_message_ref: ref,
-          channel: message.channel, // Phase 28: the reply-routing snapshot — a console reply sends back over this.
-        })
-      }
-    }
-  }
+  // (4) The concierge decides (issue #60): a surprise probe is refused here, fact-independently, recording nothing;
+  //     anything else is stored and answered — or filed in the inbox — by a job after this response.
+  deps.concierge.receive(context, message, binding.wedding_id)
   return RESP_ACCEPTED
-}
-
-/**
- * Phase 35/37 — the guest-reply correlation selector. Returns the guest's MOST-RECENT escalation with the given
- * EFFECTIVE `status` in their CURRENTLY-BOUND wedding, or `undefined` if none. Called twice by the inbound edge:
- * with `'open'` (thread into an active conversation — Phase 35) and, on a miss, with `'resolved'` (the
- * auto-reopen candidate — Phase 37). DISMISSED is never passed (an operator dismissal is final to the guest), so
- * the reopen-candidate policy is enforced HERE, not in `transition()`'s permissive direction rule.
- *
- * The DUAL match (from_ref AND wedding_id) is the cross-wedding mis-segmentation defense (doddy): a
- * `recipient_ref` re-bound from wedding A to B carries stale A-escalations, but filtering candidates by
- * `binding.wedding_id` (the CURRENT trusted binding) excludes them, so a re-bound guest's message can only ever
- * reach an escalation in their current wedding. Both axes are TRUSTED state (the live binding + the recorded
- * escalation), never the inbound body. Effective status is the same fold the inbox uses. All reads are
- * tenant-scoped by the minted context.
- *
- * The `received_at` max-by pick breaks ties on `escalation_id`. For the `'open'` tier the choice is immaterial
- * (all candidates are that guest's open conversation). For the `'resolved'` tier the pick IS the conversation
- * being reopened — recency selects the guest's latest resolved thread to continue (still deterministic; ties
- * remain immaterial).
- */
-function mostRecentEscalationForGuest(
-  context: TenantContext,
-  deps: MessagingHandlerDeps,
-  wedding_id: string,
-  from_ref: string,
-  status: EffectiveEscalationStatus,
-): GuestEscalation | undefined {
-  const candidates = deps.escalations
-    .listForWedding(context, wedding_id)
-    .filter((escalation) => escalation.from_ref === from_ref)
-    .filter((escalation) => deps.resolutions.effectiveStatus(context, escalation.escalation_id) === status)
-  let best: GuestEscalation | undefined
-  for (const escalation of candidates) {
-    if (
-      best === undefined ||
-      escalation.received_at > best.received_at ||
-      (escalation.received_at === best.received_at && escalation.escalation_id > best.escalation_id)
-    ) {
-      best = escalation
-    }
-  }
-  return best
 }
 
 function dispatchAdmin(req: ApiRequest, segments: readonly string[], deps: AdminHandlerDeps): ApiResponse {

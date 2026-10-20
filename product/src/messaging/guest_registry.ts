@@ -40,7 +40,7 @@ import type { RecipientRef } from './messaging_port'
  * planner-only (the tenant-global `recipient_ref` 409 is a cross-wedding existence oracle — see
  * guest_authorizer.ts); couple-register is a documented deferral.
  *
- * related: tenant_scoped_repository.ts (the inherited isolation), guest_qa_responder.ts (the consumer of the
+ * related: tenant_scoped_repository.ts (the inherited isolation), concierge_service.ts (the consumer of the
  * bound wedding's facts), messaging_port.ts (RecipientRef / the inbound from_ref).
  */
 

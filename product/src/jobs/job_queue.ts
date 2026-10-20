@@ -55,6 +55,8 @@ export type JobLimits = { readonly [K in keyof typeof JOB_LIMITS]: number }
 /** What a kind of job does. `execute` runs outside any transaction; `wanted`, `complete` and `failed` inside one. */
 export interface JobKind<R> {
   readonly kind: string
+  /** A job per event rather than per long-lived subject (one per guest message): its row is removed when it ends. */
+  readonly ephemeral?: boolean
   /** Whether the job is still worth running (say, its draft was discarded); `false` ends it without running. */
   wanted?(context: TenantContext, job: Job): boolean
   /** Read what the job needs (fresh) and do the slow part; the checked result. */
@@ -292,8 +294,11 @@ export class JobQueue {
   }
 
   #finish(context: TenantContext, job: Job, status: 'done' | 'failed', code?: string): void {
-    this.#put(context, { ...withoutTiming(job), status, ...(code === undefined ? {} : { last_error: code }), updated_at: this.clock.now() })
-    this.#unindex(context.tenant_id, groupedKey(job.kind, job.subject_id))
+    const key = groupedKey(job.kind, job.subject_id)
+    // An ephemeral kind's row goes when the job ends (its outcome lives elsewhere: a reply sent, an escalation filed).
+    if (this.#kinds.get(job.kind)?.ephemeral === true) this.#jobs.delete(context, key)
+    else this.#put(context, { ...withoutTiming(job), status, ...(code === undefined ? {} : { last_error: code }), updated_at: this.clock.now() })
+    this.#unindex(context.tenant_id, key)
   }
 
   /** Whether the stored job is still the claim `job` ran under. */

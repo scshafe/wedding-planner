@@ -5,7 +5,6 @@ import {
   GuestAuthorizer,
   type ApiRequest,
   BillingLedger,
-  DeterministicGuestQaResponder,
   EscalationLog,
   EscalationReplyLog,
   EscalationResolutionLog,
@@ -23,6 +22,8 @@ import {
   WeddingAuthorizer,
   WeddingRepository,
 } from '@wedding-planner/product'
+
+import { conciergeWorld } from '../support/concierge_world'
 
 /**
  * Phase 21 + Phase 24 — the JSON guest API (`GET/POST/DELETE /t/:slug/guests`). The opaque recipient_ref
@@ -44,6 +45,8 @@ const THEME: Tenant['theme'] = {
 }
 
 interface World {
+  /** Run the concierge jobs an inbound message queued (issue #60). */
+  drain: () => Promise<number>
   api: ProductApi
 }
 
@@ -57,6 +60,23 @@ function makeWorld(): World {
   const registry = new GuestRegistry(store)
   const billing = new BillingLedger(new ManualClock('2027-03-01T00:00:00.000Z'), new SequentialIdGenerator('seedB'))
   const adapter = new SimulatedMessagingAdapter(new ManualClock('2027-05-01T00:00:00.000Z'), new SequentialIdGenerator('seedM'))
+  const cwReceipts = new InboundReceiptLog(store, new SequentialIdGenerator('seedIR'))
+  const cwService = new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS'))
+  const cwEscalations = new EscalationLog(store, new SequentialIdGenerator('seedEsc'))
+  const cwResolutions = new EscalationResolutionLog(store, new SequentialIdGenerator('seedRes'), new ManualClock('2027-03-01T00:00:00.000Z'))
+  const cwReplies = new EscalationReplyLog(store, new SequentialIdGenerator('seedRep'), new ManualClock('2027-03-01T00:00:00.000Z'))
+  const cw = conciergeWorld({
+    tenants: store,
+    resolver: resolver,
+    clock: new ManualClock('2027-03-01T00:00:00.000Z'),
+    weddings: weddings,
+    registry: registry,
+    receipts: cwReceipts,
+    service: cwService,
+    escalations: cwEscalations,
+    resolutions: cwResolutions,
+    replies: cwReplies,
+  })
   const api = new ProductApi({
     resolver,
     sessionStore: sessions,
@@ -66,19 +86,9 @@ function makeWorld(): World {
     operators: new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret']),
     onboarding: new OnboardingService(store, billing),
     webhookCredentials: new ProviderWebhookCredentialStore(new SequentialIdGenerator('seedWH'), ['wh-secret']),
-    messaging: {
-      port: adapter,
-      receipts: new InboundReceiptLog(store, new SequentialIdGenerator('seedIR')),
-      registry,
-      weddings,
-      responder: new DeterministicGuestQaResponder(),
-      service: new MessagingService(adapter, store, billing, new SequentialIdGenerator('seedMS')),
-      escalations: new EscalationLog(store, new SequentialIdGenerator('seedEsc')),
-      resolutions: new EscalationResolutionLog(store, new SequentialIdGenerator('seedRes'), new ManualClock('2027-03-01T00:00:00.000Z')),
-      replies: new EscalationReplyLog(store, new SequentialIdGenerator('seedRep'), new ManualClock('2027-03-01T00:00:00.000Z')),
-    },
+    messaging: { port: adapter, receipts: cwReceipts, registry: registry, weddings: weddings, concierge: cw.concierge },
   })
-  return { api }
+  return { api, drain: cw.drain }
 }
 
 function req(method: string, path: string, opts: { token?: string; body?: unknown } = {}): ApiRequest {

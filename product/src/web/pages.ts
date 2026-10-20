@@ -1033,7 +1033,7 @@ export function renderDetail(
     <p class="note">They get their own sign-in and see only this wedding.</p>
   </div>`
   // Guest-visible logistics facts — rendered (escaped via `html`) only when the planner/couple has set them.
-  // These are exactly the facts the guest-messaging responder answers from (see guest_qa_responder.ts).
+  // These are exactly the facts the guest concierge answers from (see concierge_facts.ts).
   const logistics: SafeHtml[] = []
   if (wedding.ceremony_time !== undefined) logistics.push(html`<p>Ceremony: <strong>${wedding.ceremony_time}</strong></p>`)
   if (wedding.venue_name !== undefined) logistics.push(html`<p>Venue: <strong>${wedding.venue_name}</strong></p>`)

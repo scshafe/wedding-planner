@@ -6,7 +6,6 @@ import {
   type ApiRequest,
   type ApiResponse,
   BillingLedger,
-  DeterministicGuestQaResponder,
   EscalationLog,
   EscalationReplyLog,
   EscalationResolutionLog,
@@ -25,6 +24,8 @@ import {
   WeddingAuthorizer,
   WeddingRepository,
 } from '@wedding-planner/product'
+
+import { conciergeWorld } from '../support/concierge_world'
 
 /**
  * THE KEYSTONE — the guest inbound edge (Phase 19). A guest texts in; the platform meters a reply ONLY for a
@@ -46,6 +47,8 @@ const WH = 'wh-secret'
 const REF = 'sms:+15550100'
 
 interface World {
+  /** Run the concierge jobs an inbound message queued (issue #60). */
+  drain: () => Promise<number>
   api: ProductApi
   service: MessagingService
   registry: GuestRegistry
@@ -74,6 +77,19 @@ function makeWorld(): World {
   const escalations = new EscalationLog(store, new SequentialIdGenerator('seedEsc'))
   const resolutions = new EscalationResolutionLog(store, new SequentialIdGenerator('seedRes'), clock)
   const replies = new EscalationReplyLog(store, new SequentialIdGenerator('seedRep'), clock)
+  const cwReceipts = new InboundReceiptLog(store, new SequentialIdGenerator('seedIR'))
+  const cw = conciergeWorld({
+    tenants: store,
+    resolver: resolver,
+    clock: clock,
+    weddings: weddings,
+    registry: registry,
+    receipts: cwReceipts,
+    service: service,
+    escalations: escalations,
+    resolutions: resolutions,
+    replies: replies,
+  })
   const api = new ProductApi({
     resolver,
     sessionStore: new SessionStore(new SequentialIdGenerator('seedS')),
@@ -83,20 +99,11 @@ function makeWorld(): World {
     operators: new OperatorCredentialStore(new SequentialIdGenerator('seedO'), ['op-secret']),
     onboarding: new OnboardingService(store, billing),
     webhookCredentials: new ProviderWebhookCredentialStore(new SequentialIdGenerator('seedWH'), [WH]),
-    messaging: {
-      port: adapter,
-      receipts: new InboundReceiptLog(store, new SequentialIdGenerator('seedIR')),
-      registry,
-      weddings,
-      responder: new DeterministicGuestQaResponder(),
-      service,
-      escalations,
-      resolutions,
-      replies,
-    },
+    messaging: { port: adapter, receipts: cwReceipts, registry: registry, weddings: weddings, concierge: cw.concierge },
   })
   return {
     api,
+    drain: cw.drain,
     service,
     registry,
     escalations,
@@ -111,6 +118,13 @@ function makeWorld(): World {
   }
 }
 
+/** Deliver an inbound message and run the concierge job it queued (issue #60: answers and escalations happen there). */
+async function deliver(w: World, req: ApiRequest): Promise<ApiResponse> {
+  const res = w.api.handle(req)
+  await w.drain()
+  return res
+}
+
 /** Register a guest on tenant alpha bound to a freshly-created wedding; return the wedding id. */
 function seedGuestOnAlpha(w: World, ref = REF): string {
   const wedding = w.weddings.create(w.ctxA, { couple_display_name: 'Alex & Sam', event_date: '2027-09-18' })
@@ -120,7 +134,7 @@ function seedGuestOnAlpha(w: World, ref = REF): string {
 
 function inbound(slug: string, body: Record<string, unknown>, token = WH): ApiRequest {
   const headers: Record<string, string | undefined> = { authorization: `Bearer ${token}` }
-  return { method: 'POST', path: `/t/${slug}/messaging/inbound`, headers, rawBody: JSON.stringify(body) }
+  return { method: 'POST', path: `/t/${slug}/messaging/inbound`, headers, rawBody: JSON.stringify(body)}
 }
 
 function payload(over: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
@@ -136,101 +150,101 @@ function payload(over: Partial<Record<string, unknown>> = {}): Record<string, un
 const ACCEPTED: ApiResponse = { status: 202, body: { status: 'accepted' } }
 
 describe('the guest inbound edge — keystone', () => {
-  it('a registered guest asking an answerable question -> 202 AND exactly one metered reply (the meter fires)', () => {
+  it('a registered guest asking an answerable question -> 202 AND exactly one metered reply (the meter fires)', async () => {
     const w = makeWorld()
     seedGuestOnAlpha(w)
-    expect(w.api.handle(inbound('alpha', payload()))).toEqual(ACCEPTED)
+    expect(await deliver(w, inbound('alpha', payload()))).toEqual(ACCEPTED)
     const usage = w.service.usageView(w.tenantAId)
     expect(usage.message_count).toBe(1)
     expect(usage.billed_total_cents).toBeGreaterThan(0)
     expect(usage.records[0]?.channel).toBe('sms')
   })
 
-  it('P0 — re-delivery of the same provider_message_ref does NOT double-charge (idempotent receive)', () => {
+  it('P0 — re-delivery of the same provider_message_ref does NOT double-charge (idempotent receive)', async () => {
     const w = makeWorld()
     seedGuestOnAlpha(w)
-    expect(w.api.handle(inbound('alpha', payload()))).toEqual(ACCEPTED)
+    expect(await deliver(w, inbound('alpha', payload()))).toEqual(ACCEPTED)
     // Same provider_message_ref again -> uniform 202, but no second metered send.
-    expect(w.api.handle(inbound('alpha', payload()))).toEqual(ACCEPTED)
+    expect(await deliver(w, inbound('alpha', payload()))).toEqual(ACCEPTED)
     expect(w.service.usageView(w.tenantAId).message_count).toBe(1)
   })
 
-  it('a genuinely fresh provider_message_ref for a registered guest re-charges (documented residual)', () => {
+  it('a genuinely fresh provider_message_ref for a registered guest re-charges (documented residual)', async () => {
     const w = makeWorld()
     seedGuestOnAlpha(w)
-    w.api.handle(inbound('alpha', payload({ provider_message_ref: 'pmr_1' })))
-    w.api.handle(inbound('alpha', payload({ provider_message_ref: 'pmr_2' })))
+    await deliver(w, inbound('alpha', payload({ provider_message_ref: 'pmr_1' })))
+    await deliver(w, inbound('alpha', payload({ provider_message_ref: 'pmr_2' })))
     // Two distinct provider refs = two distinct messages = two metered replies (the provider's trust level).
     expect(w.service.usageView(w.tenantAId).message_count).toBe(2)
   })
 
-  it('P1 segmentation — a ref registered on B, presented on A, yields no reply and charges nothing on either', () => {
+  it('P1 segmentation — a ref registered on B, presented on A, yields no reply and charges nothing on either', async () => {
     const w = makeWorld()
     // Register the ref ONLY on tenant B.
     const wedB = w.weddings.create(w.ctxB, { couple_display_name: 'Bo & Cy', event_date: '2028-01-01' })
     w.registry.register(w.ctxB, { recipient_ref: REF, wedding_id: wedB.wedding_id, guest_id: 'guest_b' })
     // The same ref texts tenant A's route -> A has no binding for it -> uniform 202, no reply.
-    expect(w.api.handle(inbound('alpha', payload()))).toEqual(ACCEPTED)
+    expect(await deliver(w, inbound('alpha', payload()))).toEqual(ACCEPTED)
     expect(w.service.usageView(w.tenantAId).message_count).toBe(0)
     expect(w.service.usageView(w.tenantBId).message_count).toBe(0)
   })
 
-  it('an unregistered ref -> 202, no reply, no meter entry (no oracle for which numbers are known)', () => {
+  it('an unregistered ref -> 202, no reply, no meter entry (no oracle for which numbers are known)', async () => {
     const w = makeWorld()
     seedGuestOnAlpha(w, 'sms:+15550999') // a DIFFERENT ref is registered
-    expect(w.api.handle(inbound('alpha', payload({ from_ref: 'sms:+15550100' })))).toEqual(ACCEPTED)
+    expect(await deliver(w, inbound('alpha', payload({ from_ref: 'sms:+15550100' })))).toEqual(ACCEPTED)
     expect(w.service.usageView(w.tenantAId).message_count).toBe(0)
   })
 
-  it('a registered guest asking a NON-answerable question escalates -> 202, no reply, no meter', () => {
+  it('a registered guest asking a NON-answerable question escalates -> 202, no reply, no meter', async () => {
     const w = makeWorld()
     seedGuestOnAlpha(w)
-    expect(w.api.handle(inbound('alpha', payload({ text: 'Can I bring my dog?' })))).toEqual(ACCEPTED)
+    expect(await deliver(w, inbound('alpha', payload({ text: 'Can I bring my dog?' })))).toEqual(ACCEPTED)
     expect(w.service.usageView(w.tenantAId).message_count).toBe(0)
   })
 
-  it('Phase 22 — a logistics question answered from a SET fact -> 202 AND exactly one metered reply', () => {
+  it('Phase 22 — a logistics question answered from a SET fact -> 202 AND exactly one metered reply', async () => {
     const w = makeWorld()
     // Seed a guest bound to a wedding that HAS a dress code set.
     const wedding = w.weddings.create(w.ctxA, { couple_display_name: 'Alex & Sam', event_date: '2027-09-18', dress_code: 'Black tie' })
     w.registry.register(w.ctxA, { recipient_ref: REF, wedding_id: wedding.wedding_id, guest_id: 'guest_1' })
-    expect(w.api.handle(inbound('alpha', payload({ text: 'what should I wear?' })))).toEqual(ACCEPTED)
+    expect(await deliver(w, inbound('alpha', payload({ text: 'what should I wear?' })))).toEqual(ACCEPTED)
     expect(w.service.usageView(w.tenantAId).message_count).toBe(1)
   })
 
-  it('Phase 22 — a logistics question with the fact UNSET escalates wire-silently -> 202, no meter', () => {
+  it('Phase 22 — a logistics question with the fact UNSET escalates wire-silently -> 202, no meter', async () => {
     const w = makeWorld()
     seedGuestOnAlpha(w) // bare wedding: no dress_code
-    expect(w.api.handle(inbound('alpha', payload({ text: 'what should I wear?' })))).toEqual(ACCEPTED)
+    expect(await deliver(w, inbound('alpha', payload({ text: 'what should I wear?' })))).toEqual(ACCEPTED)
     expect(w.service.usageView(w.tenantAId).message_count).toBe(0)
   })
 
-  it('Phase 22 — a surprise probe REFUSES wire-silently -> 202, NO send (handler unchanged; refuse never sends)', () => {
+  it('Phase 22 — a surprise probe REFUSES wire-silently -> 202, NO send (handler unchanged; refuse never sends)', async () => {
     const w = makeWorld()
     // Even on a wedding with logistics set, a surprise probe sends nothing and charges nothing.
     const wedding = w.weddings.create(w.ctxA, { couple_display_name: 'Alex & Sam', event_date: '2027-09-18', dress_code: 'Black tie' })
     w.registry.register(w.ctxA, { recipient_ref: REF, wedding_id: wedding.wedding_id, guest_id: 'guest_1' })
-    expect(w.api.handle(inbound('alpha', payload({ text: 'I heard there is a surprise — what is it?' })))).toEqual(ACCEPTED)
+    expect(await deliver(w, inbound('alpha', payload({ text: 'I heard there is a surprise — what is it?' })))).toEqual(ACCEPTED)
     expect(w.service.usageView(w.tenantAId).message_count).toBe(0)
   })
 
-  it('P1 — the 202 is BYTE-IDENTICAL across every post-validation branch (no registry-state disclosure)', () => {
+  it('P1 — the 202 is BYTE-IDENTICAL across every post-validation branch (no registry-state disclosure)', async () => {
     const w = makeWorld()
     seedGuestOnAlpha(w)
-    const answered = w.api.handle(inbound('alpha', payload({ provider_message_ref: 'r_ans' })))
-    const replay = w.api.handle(inbound('alpha', payload({ provider_message_ref: 'r_ans' })))
-    const escalated = w.api.handle(inbound('alpha', payload({ provider_message_ref: 'r_esc', text: 'parking?' })))
-    const unregistered = w.api.handle(inbound('alpha', payload({ provider_message_ref: 'r_unk', from_ref: 'sms:+10000000' })))
+    const answered = await deliver(w, inbound('alpha', payload({ provider_message_ref: 'r_ans' })))
+    const replay = await deliver(w, inbound('alpha', payload({ provider_message_ref: 'r_ans' })))
+    const escalated = await deliver(w, inbound('alpha', payload({ provider_message_ref: 'r_esc', text: 'parking?' })))
+    const unregistered = await deliver(w, inbound('alpha', payload({ provider_message_ref: 'r_unk', from_ref: 'sms:+10000000' })))
     for (const res of [answered, replay, escalated, unregistered]) {
       expect(res).toEqual(ACCEPTED)
     }
   })
 
-  it('a body-smuggled guest_id/wedding_id is rejected at the edge (additionalProperties:false -> 400)', () => {
+  it('a body-smuggled guest_id/wedding_id is rejected at the edge (additionalProperties:false -> 400)', async () => {
     const w = makeWorld()
     seedGuestOnAlpha(w)
     // Even though the schema blocks it, this proves the binding can never come from the body.
-    expect(w.api.handle(inbound('alpha', payload({ wedding_id: 'wed_other' }))).status).toBe(400)
+    expect((await deliver(w, inbound('alpha', payload({ wedding_id: 'wed_other' })))).status).toBe(400)
     expect(w.service.usageView(w.tenantAId).message_count).toBe(0)
   })
 
@@ -239,10 +253,10 @@ describe('the guest inbound edge — keystone', () => {
   // `answered` or `refused` question records NOTHING. The wire stays the uniform 202 throughout.
   // -------------------------------------------------------------------------------------------------
 
-  it('Phase 26 — an ESCALATED question records exactly one escalation, sourced from trusted state', () => {
+  it('Phase 26 — an ESCALATED question records exactly one escalation, sourced from trusted state', async () => {
     const w = makeWorld()
     const weddingId = seedGuestOnAlpha(w) // bare wedding: no parking_info -> a parking question escalates
-    expect(w.api.handle(inbound('alpha', payload({ text: 'where do I park?', provider_message_ref: 'pm_esc' })))).toEqual(ACCEPTED)
+    expect(await deliver(w, inbound('alpha', payload({ text: 'where do I park?', provider_message_ref: 'pm_esc' })))).toEqual(ACCEPTED)
     const recorded = w.escalations.list(w.ctxA)
     expect(recorded).toHaveLength(1)
     expect(recorded[0]).toMatchObject({
@@ -254,28 +268,28 @@ describe('the guest inbound edge — keystone', () => {
     })
   })
 
-  it('Phase 26 — an ANSWERED question records NO escalation (only unanswerable ones land in the inbox)', () => {
+  it('Phase 26 — an ANSWERED question records NO escalation (only unanswerable ones land in the inbox)', async () => {
     const w = makeWorld()
     seedGuestOnAlpha(w)
-    expect(w.api.handle(inbound('alpha', payload({ text: 'when is the wedding?' })))).toEqual(ACCEPTED)
+    expect(await deliver(w, inbound('alpha', payload({ text: 'when is the wedding?' })))).toEqual(ACCEPTED)
     expect(w.service.usageView(w.tenantAId).message_count).toBe(1) // answered + metered
     expect(w.escalations.list(w.ctxA)).toHaveLength(0)
   })
 
-  it('Phase 26 — a REFUSED surprise probe records NO escalation (fact-independent; never persisted)', () => {
+  it('Phase 26 — a REFUSED surprise probe records NO escalation (fact-independent; never persisted)', async () => {
     const w = makeWorld()
     const wedding = w.weddings.create(w.ctxA, { couple_display_name: 'Alex & Sam', event_date: '2027-09-18', dress_code: 'Black tie' })
     w.registry.register(w.ctxA, { recipient_ref: REF, wedding_id: wedding.wedding_id, guest_id: 'guest_1' })
-    expect(w.api.handle(inbound('alpha', payload({ text: 'what is the surprise?' })))).toEqual(ACCEPTED)
+    expect(await deliver(w, inbound('alpha', payload({ text: 'what is the surprise?' })))).toEqual(ACCEPTED)
     expect(w.escalations.list(w.ctxA)).toHaveLength(0) // refused is NOT recorded
   })
 
-  it('Phase 26 — re-delivery of an escalated ref records exactly one escalation (idempotent by ref)', () => {
+  it('Phase 26 — re-delivery of an escalated ref records exactly one escalation (idempotent by ref)', async () => {
     const w = makeWorld()
     seedGuestOnAlpha(w)
     const req = inbound('alpha', payload({ text: 'where do I park?', provider_message_ref: 'pm_dup' }))
-    expect(w.api.handle(req)).toEqual(ACCEPTED)
-    expect(w.api.handle(req)).toEqual(ACCEPTED) // same ref again
+    expect(await deliver(w, req)).toEqual(ACCEPTED)
+    expect(await deliver(w, req)).toEqual(ACCEPTED) // same ref again
     expect(w.escalations.list(w.ctxA)).toHaveLength(1)
   })
 })
@@ -285,11 +299,11 @@ const ESC1 = { text: 'Can I bring my dog?', provider_message_ref: 'pmr_e1' }
 const ESC2 = { text: 'Do you have a gift list?', provider_message_ref: 'pmr_e2' }
 
 describe('Phase 35 — guest-reply → thread correlation', () => {
-  it('a follow-up escalation from a guest with an OPEN escalation THREADS into it (sender:guest, no new escalation, no send)', () => {
+  it('a follow-up escalation from a guest with an OPEN escalation THREADS into it (sender:guest, no new escalation, no send)', async () => {
     const w = makeWorld()
     seedGuestOnAlpha(w)
-    expect(w.api.handle(inbound('alpha', payload(ESC1)))).toEqual(ACCEPTED) // opens E1
-    expect(w.api.handle(inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED) // threads into E1
+    expect(await deliver(w, inbound('alpha', payload(ESC1)))).toEqual(ACCEPTED) // opens E1
+    expect(await deliver(w, inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED) // threads into E1
     expect(w.escalations.list(w.ctxA)).toHaveLength(1) // NOT a second escalation
     const thread = w.replies.list(w.ctxA)
     expect(thread).toHaveLength(1)
@@ -298,33 +312,33 @@ describe('Phase 35 — guest-reply → thread correlation', () => {
     expect(w.service.usageView(w.tenantAId).message_count).toBe(0) // a guest turn is RECEIVED — no metered send
   })
 
-  it('§B0 the COMMON break: re-delivery of a freshly-escalated message does NOT spawn a spurious guest turn', () => {
+  it('§B0 the COMMON break: re-delivery of a freshly-escalated message does NOT spawn a spurious guest turn', async () => {
     const w = makeWorld()
     seedGuestOnAlpha(w)
-    expect(w.api.handle(inbound('alpha', payload(ESC1)))).toEqual(ACCEPTED) // opens E1 (now OPEN)
-    expect(w.api.handle(inbound('alpha', payload(ESC1)))).toEqual(ACCEPTED) // SAME ref re-delivered
+    expect(await deliver(w, inbound('alpha', payload(ESC1)))).toEqual(ACCEPTED) // opens E1 (now OPEN)
+    expect(await deliver(w, inbound('alpha', payload(ESC1)))).toEqual(ACCEPTED) // SAME ref re-delivered
     expect(w.escalations.list(w.ctxA)).toHaveLength(1)
     expect(w.replies.list(w.ctxA)).toHaveLength(0) // the gate no-ops it; NOT threaded into E1
   })
 
-  it('re-delivery of a THREADED follow-up is idempotent (one guest turn)', () => {
+  it('re-delivery of a THREADED follow-up is idempotent (one guest turn)', async () => {
     const w = makeWorld()
     seedGuestOnAlpha(w)
-    w.api.handle(inbound('alpha', payload(ESC1))) // E1
-    w.api.handle(inbound('alpha', payload(ESC2))) // threads
-    w.api.handle(inbound('alpha', payload(ESC2))) // re-delivery of the follow-up
+    await deliver(w, inbound('alpha', payload(ESC1))) // E1
+    await deliver(w, inbound('alpha', payload(ESC2))) // threads
+    await deliver(w, inbound('alpha', payload(ESC2))) // re-delivery of the follow-up
     expect(w.replies.list(w.ctxA)).toHaveLength(1)
   })
 
-  it('Phase 37: a RESOLVED escalation is AUTO-REOPENED by a guest follow-up — it threads in (no fresh escalation, no send)', () => {
+  it('Phase 37: a RESOLVED escalation is AUTO-REOPENED by a guest follow-up — it threads in (no fresh escalation, no send)', async () => {
     const w = makeWorld()
     const weddingId = seedGuestOnAlpha(w)
-    w.api.handle(inbound('alpha', payload(ESC1))) // E1
+    await deliver(w, inbound('alpha', payload(ESC1))) // E1
     const e1 = w.escalations.list(w.ctxA)[0]!
     w.resolutions.transition(w.ctxA, { escalation_id: e1.escalation_id, wedding_id: weddingId, status: 'resolved', by: 'couple' })
     expect(w.resolutions.effectiveStatus(w.ctxA, e1.escalation_id)).toBe('resolved')
     // The guest follow-up reopens E1 and threads in — NOT a fresh escalation (Phase 37, the migrated Phase-35 case).
-    expect(w.api.handle(inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED)
+    expect(await deliver(w, inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED)
     expect(w.escalations.list(w.ctxA)).toHaveLength(1) // E1 reopened, not a second escalation
     expect(w.resolutions.effectiveStatus(w.ctxA, e1.escalation_id)).toBe('open') // effective-open again
     // The reopen row is attributed to the guest (honest provenance for an inbound auto-reopen).
@@ -336,13 +350,13 @@ describe('Phase 35 — guest-reply → thread correlation', () => {
     expect(w.service.usageView(w.tenantAId).message_count).toBe(0)
   })
 
-  it('Phase 37: a DISMISSED escalation is NOT reopened — a guest follow-up opens a FRESH escalation (operator dismissal is final)', () => {
+  it('Phase 37: a DISMISSED escalation is NOT reopened — a guest follow-up opens a FRESH escalation (operator dismissal is final)', async () => {
     const w = makeWorld()
     const weddingId = seedGuestOnAlpha(w)
-    w.api.handle(inbound('alpha', payload(ESC1))) // E1
+    await deliver(w, inbound('alpha', payload(ESC1))) // E1
     const e1 = w.escalations.list(w.ctxA)[0]!
     w.resolutions.transition(w.ctxA, { escalation_id: e1.escalation_id, wedding_id: weddingId, status: 'dismissed', by: 'couple' })
-    expect(w.api.handle(inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED)
+    expect(await deliver(w, inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED)
     expect(w.escalations.list(w.ctxA)).toHaveLength(2) // a fresh escalation, NOT a reopen of the dismissed one
     expect(w.replies.list(w.ctxA)).toHaveLength(0) // not threaded
     // The SELECTOR policy (independent of transition()'s permissive direction rule): NO `reopened` row is
@@ -351,22 +365,22 @@ describe('Phase 35 — guest-reply → thread correlation', () => {
     expect(w.resolutions.list(w.ctxA).filter((r) => r.escalation_id === e1.escalation_id).some((r) => r.status === 'reopened')).toBe(false)
   })
 
-  it('Phase 37 §B0: re-delivery of the auto-reopen follow-up is processed ONCE — exactly one reopened row and one guest turn', () => {
+  it('Phase 37 §B0: re-delivery of the auto-reopen follow-up is processed ONCE — exactly one reopened row and one guest turn', async () => {
     const w = makeWorld()
     const weddingId = seedGuestOnAlpha(w)
-    w.api.handle(inbound('alpha', payload(ESC1))) // E1
+    await deliver(w, inbound('alpha', payload(ESC1))) // E1
     const e1 = w.escalations.list(w.ctxA)[0]!
     w.resolutions.transition(w.ctxA, { escalation_id: e1.escalation_id, wedding_id: weddingId, status: 'resolved', by: 'couple' })
-    w.api.handle(inbound('alpha', payload(ESC2))) // auto-reopen + thread (E1 is now effective-open)
+    await deliver(w, inbound('alpha', payload(ESC2))) // auto-reopen + thread (E1 is now effective-open)
     // The SAME follow-up re-delivered AFTER the auto-reopen — now a DIFFERENT selector tier (open, not resolved)
     // — must still no-op via the §B0 guard (guestTurnByProviderRef), never double-reopen / double-thread.
-    w.api.handle(inbound('alpha', payload(ESC2)))
+    await deliver(w, inbound('alpha', payload(ESC2)))
     expect(w.escalations.list(w.ctxA)).toHaveLength(1) // no fresh escalation
     expect(w.resolutions.list(w.ctxA).filter((r) => r.escalation_id === e1.escalation_id && r.status === 'reopened')).toHaveLength(1) // EXACTLY one reopen
     expect(w.replies.list(w.ctxA).filter((r) => r.provider_message_ref === ESC2.provider_message_ref)).toHaveLength(1) // one guest turn
   })
 
-  it('Phase 37: OPEN is preferred over RESOLVED — with both present, the follow-up threads into the OPEN one and reopens nothing', () => {
+  it('Phase 37: OPEN is preferred over RESOLVED — with both present, the follow-up threads into the OPEN one and reopens nothing', async () => {
     const w = makeWorld()
     const weddingId = seedGuestOnAlpha(w)
     // Construct the cross-tier state directly: E1 resolved, E2 open (post-Phase-37 a follow-up would reopen E1,
@@ -374,7 +388,7 @@ describe('Phase 35 — guest-reply → thread correlation', () => {
     const e1 = w.escalations.record(w.ctxA, { wedding_id: weddingId, from_ref: REF, text: 'q1', received_at: '2027-03-01T00:00:00.000Z', provider_message_ref: 'pmr_pre1', channel: 'sms' })
     const e2 = w.escalations.record(w.ctxA, { wedding_id: weddingId, from_ref: REF, text: 'q2', received_at: '2027-03-01T00:00:01.000Z', provider_message_ref: 'pmr_pre2', channel: 'sms' })
     w.resolutions.transition(w.ctxA, { escalation_id: e1.escalation_id, wedding_id: weddingId, status: 'resolved', by: 'couple' })
-    expect(w.api.handle(inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED)
+    expect(await deliver(w, inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED)
     expect(w.escalations.list(w.ctxA)).toHaveLength(2) // no fresh escalation, no reopen
     const thread = w.replies.list(w.ctxA)
     expect(thread).toHaveLength(1)
@@ -382,28 +396,28 @@ describe('Phase 35 — guest-reply → thread correlation', () => {
     expect(w.resolutions.effectiveStatus(w.ctxA, e1.escalation_id)).toBe('resolved') // E1 untouched (never reopened)
   })
 
-  it('Phase 37 (arch P2-C): no inbound path writes a resolved/dismissed row attributed to guest — `guest` appears ONLY on reopened', () => {
+  it('Phase 37 (arch P2-C): no inbound path writes a resolved/dismissed row attributed to guest — `guest` appears ONLY on reopened', async () => {
     const w = makeWorld()
     const weddingId = seedGuestOnAlpha(w)
-    w.api.handle(inbound('alpha', payload(ESC1)))
+    await deliver(w, inbound('alpha', payload(ESC1)))
     const e1 = w.escalations.list(w.ctxA)[0]!
     w.resolutions.transition(w.ctxA, { escalation_id: e1.escalation_id, wedding_id: weddingId, status: 'resolved', by: 'couple' })
-    w.api.handle(inbound('alpha', payload(ESC2))) // auto-reopen writes a `guest` row
+    await deliver(w, inbound('alpha', payload(ESC2))) // auto-reopen writes a `guest` row
     const guestRows = w.resolutions.list(w.ctxA).filter((r) => r.resolved_by === 'guest')
     expect(guestRows.length).toBeGreaterThan(0) // the auto-reopen did attribute to guest
     expect(guestRows.every((r) => r.status === 'reopened')).toBe(true) // ...and ONLY on a reopened row
   })
 
-  it('Phase 36: after an operator REOPENS a resolved escalation, a guest follow-up threads INTO it (effective-open), not a fresh one', () => {
+  it('Phase 36: after an operator REOPENS a resolved escalation, a guest follow-up threads INTO it (effective-open), not a fresh one', async () => {
     const w = makeWorld()
     const weddingId = seedGuestOnAlpha(w)
-    w.api.handle(inbound('alpha', payload(ESC1))) // E1 opens
+    await deliver(w, inbound('alpha', payload(ESC1))) // E1 opens
     const e1 = w.escalations.list(w.ctxA)[0]!
     // Operator resolves, then reopens (the explicit Phase-36 action) → E1 is effective-open again.
     w.resolutions.transition(w.ctxA, { escalation_id: e1.escalation_id, wedding_id: weddingId, status: 'resolved', by: 'couple' })
     w.resolutions.transition(w.ctxA, { escalation_id: e1.escalation_id, wedding_id: weddingId, status: 'reopened', by: 'couple' })
     // A new guest follow-up now threads into the reopened E1 (the existing selector matches effective-open).
-    expect(w.api.handle(inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED)
+    expect(await deliver(w, inbound('alpha', payload(ESC2)))).toEqual(ACCEPTED)
     expect(w.escalations.list(w.ctxA)).toHaveLength(1) // NO fresh escalation
     const thread = w.replies.list(w.ctxA).filter((r) => r.escalation_id === e1.escalation_id)
     expect(thread).toHaveLength(1)
@@ -411,38 +425,38 @@ describe('Phase 35 — guest-reply → thread correlation', () => {
     expect(w.service.usageView(w.tenantAId).message_count).toBe(0) // a guest turn carries NO send/charge
   })
 
-  it('§B0 the CROSS-RESOLVE break: a threaded follow-up re-delivered AFTER its escalation is resolved is a no-op (not a fresh escalation)', () => {
+  it('§B0 the CROSS-RESOLVE break: a threaded follow-up re-delivered AFTER its escalation is resolved is a no-op (not a fresh escalation)', async () => {
     const w = makeWorld()
     const weddingId = seedGuestOnAlpha(w)
-    w.api.handle(inbound('alpha', payload(ESC1))) // E1
-    w.api.handle(inbound('alpha', payload(ESC2))) // threads ESC2 into E1
+    await deliver(w, inbound('alpha', payload(ESC1))) // E1
+    await deliver(w, inbound('alpha', payload(ESC2))) // threads ESC2 into E1
     const e1 = w.escalations.list(w.ctxA)[0]
     w.resolutions.transition(w.ctxA, { escalation_id: e1!.escalation_id, wedding_id: weddingId, status: 'resolved', by: 'couple' })
-    w.api.handle(inbound('alpha', payload(ESC2))) // re-delivery of the threaded follow-up after resolve
+    await deliver(w, inbound('alpha', payload(ESC2))) // re-delivery of the threaded follow-up after resolve
     expect(w.escalations.list(w.ctxA)).toHaveLength(1) // guestTurnByProviderRef no-ops it — NO duplicate escalation
     expect(w.replies.list(w.ctxA)).toHaveLength(1)
   })
 
-  it('cross-wedding re-bind: after a guest moves A->B, a follow-up opens a FRESH escalation in B (never threads into A)', () => {
+  it('cross-wedding re-bind: after a guest moves A->B, a follow-up opens a FRESH escalation in B (never threads into A)', async () => {
     const w = makeWorld()
     const weddingA = seedGuestOnAlpha(w)
-    w.api.handle(inbound('alpha', payload(ESC1))) // E1 OPEN in wedding A
+    await deliver(w, inbound('alpha', payload(ESC1))) // E1 OPEN in wedding A
     // Re-bind the same ref from wedding A to a new wedding B (remove then register — register rejects a dup ref).
     const weddingB = w.weddings.create(w.ctxA, { couple_display_name: 'Bee & Cee', event_date: '2028-02-02' })
     expect(w.registry.remove(w.ctxA, REF)).toBe(true)
     w.registry.register(w.ctxA, { recipient_ref: REF, wedding_id: weddingB.wedding_id, guest_id: 'guest_2' })
-    w.api.handle(inbound('alpha', payload(ESC2))) // now bound to B
+    await deliver(w, inbound('alpha', payload(ESC2))) // now bound to B
     expect(w.replies.list(w.ctxA)).toHaveLength(0) // NEVER threaded into A's open E1
     const fresh = w.escalations.list(w.ctxA).find((e) => e.provider_message_ref === ESC2.provider_message_ref)
     expect(fresh?.wedding_id).toBe(weddingB.wedding_id) // the new escalation is in wedding B
     expect(weddingB.wedding_id).not.toBe(weddingA)
   })
 
-  it('an ANSWERED follow-up still sends a metered reply and does NOT thread (deferral pinned)', () => {
+  it('an ANSWERED follow-up still sends a metered reply and does NOT thread (deferral pinned)', async () => {
     const w = makeWorld()
     seedGuestOnAlpha(w)
-    w.api.handle(inbound('alpha', payload(ESC1))) // opens E1
-    expect(w.api.handle(inbound('alpha', payload({ text: 'when is the wedding?', provider_message_ref: 'pmr_ans' })))).toEqual(ACCEPTED)
+    await deliver(w, inbound('alpha', payload(ESC1))) // opens E1
+    expect(await deliver(w, inbound('alpha', payload({ text: 'when is the wedding?', provider_message_ref: 'pmr_ans' })))).toEqual(ACCEPTED)
     expect(w.service.usageView(w.tenantAId).message_count).toBe(1) // answered + metered
     expect(w.replies.list(w.ctxA)).toHaveLength(0) // an auto-answer is NOT threaded
     expect(w.escalations.list(w.ctxA)).toHaveLength(1) // E1 stays open, unchanged

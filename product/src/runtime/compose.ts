@@ -32,7 +32,6 @@ import { RsvpLinkService } from '../rsvp/rsvp_link_service'
 import { EscalationLog } from '../messaging/escalation_log'
 import { EscalationReplyLog } from '../messaging/escalation_reply_log'
 import { EscalationResolutionLog } from '../messaging/escalation_resolution_log'
-import { DeterministicGuestQaResponder } from '../messaging/guest_qa_responder'
 import { GuestRegistry } from '../messaging/guest_registry'
 import { InboundReceiptLog } from '../messaging/inbound_receipt_log'
 import { MessagingService } from '../messaging/messaging_service'
@@ -49,6 +48,7 @@ import { WeddingRepository } from '../wedding/wedding_repository'
 import { ModelService } from '../model/model_service'
 import { type DeadlineTimer, JobQueue } from '../jobs/job_queue'
 import { CopilotService } from '../copilot/copilot_service'
+import { ConciergeService } from '../concierge/concierge_service'
 import { ProductError } from '../product_error'
 import { SimulatedModelAdapter, type SimulatedTask } from '../model/simulated_model_adapter'
 import { SIMULATED_MODEL_TASKS } from '../model/simulated_tasks'
@@ -291,7 +291,6 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const guestRegistry = new GuestRegistry(tenants, store)
   const guestAuthorizer = new GuestAuthorizer()
   const inboundReceipts = new InboundReceiptLog(tenants, ids, store)
-  const guestResponder = new DeterministicGuestQaResponder()
   // The escalation inbox (Phase 26): an `escalated` question is recorded here and read by the couple (their
   // wedding) / planner (whole tenant). ONE instance — the inbound capture writes it, the read surface reads it.
   const escalations = new EscalationLog(tenants, ids, store)
@@ -321,6 +320,11 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const jobs = new JobQueue(tenants, resolver, clock, ids, store, config.jobTimer, errors)
   const copilot = new CopilotService(tenants, weddings, authorizer, events, vendors, checklist, runOfShow, model, jobs, clock, store)
   jobs.register(copilot.jobKind())
+  // Issue #60: the guest concierge — answers from the allow-listed facts (and the published website), through the job
+  // queue; the escalation logs are the SAME instances the inbox surface reads and replies through.
+  const sites = new SiteService(tenants, weddings, authorizer, events, clock, ids, store, SITE_LIMITS, limiter)
+  const concierge = new ConciergeService(tenants, guestRegistry, weddings, sites, model, jobs, inboundReceipts, messaging, { escalations, resolutions, replies }, store)
+  jobs.register(concierge.jobKind())
 
   const api = new ProductApi({
     resolver,
@@ -350,7 +354,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     jobs,
     seating,
     // Each wedding's public website (issue #47): edited by the planner and the couple, read by guests when published.
-    site: { sites: new SiteService(tenants, weddings, authorizer, events, clock, ids, store, SITE_LIMITS, limiter) },
+    site: { sites },
     // Each wedding's documents (issue #48): the bytes in the same store, so the stack's state backup covers them.
     documents: new DocumentService(tenants, weddings, authorizer, vendors, clock, ids, store, DOCUMENT_LIMITS, limiter),
     // In-app feedback (issue #12): stored in the shared store, read by the operator at /admin/feedback.
@@ -364,16 +368,8 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
       receipts: inboundReceipts,
       registry: guestRegistry,
       weddings,
-      responder: guestResponder,
-      service: messaging,
-      escalations,
-      // Phase 35/37 — guest-reply → thread correlation + AUTO-REOPEN: the SAME resolution + reply log instances
-      // the escalation read/resolve/reply surface uses, so an inbound `escalated` follow-up can thread into the
-      // guest's most-recent OPEN escalation, or AUTO-REOPEN their most-recent RESOLVED one and thread into that
-      // (resolutions = the effective-status fold READ + the `reopened` transition WRITE; replies = the thread
-      // write target + the re-delivery guard) instead of opening a new escalation.
-      resolutions,
-      replies,
+      // Issue #60: the guest concierge decides (refuse now, or answer/escalate in a job after the response).
+      concierge,
     },
     // The escalation inbox READ + RESOLVE + REPLY surface (Phase 26 + 27 + 28 + 34) — the SAME log instances the
     // inbound capture / resolve / reply mutations write to, read-scoped by the guest authorizer's manageScope

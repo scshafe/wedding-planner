@@ -153,7 +153,7 @@ export {
 
 // The guest channel (Phase 19): a guest is an UNTRUSTED actor (never a session Principal), bound to ONE
 // wedding by an opaque sender ref via the GuestRegistry (the segmentation gate, inheriting tenant isolation),
-// and answered by a product-side deterministic GuestQaResponder (no loop import; deny-by-fact-classification).
+// and answered by the guest concierge (issue #60; no loop import; deny-by-fact-classification).
 export { GuestRegistry, type GuestBinding, type RegisterGuestInput } from './messaging/guest_registry'
 export { InboundReceiptLog } from './messaging/inbound_receipt_log'
 // The escalation inbox (Phase 26): an `escalated` guest question (one the platform could not answer) is recorded
@@ -168,14 +168,12 @@ export {
   type EffectiveEscalationStatus,
 } from './messaging/escalation_resolution_log'
 export { EscalationReplyLog, type RecordReplyInput } from './messaging/escalation_reply_log'
-export {
-  type GuestQaResponder,
-  type GuestQaOutcome,
-  type GuestQaAction,
-  type GuestVisibleFacts,
-  DeterministicGuestQaResponder,
-  projectGuestVisibleFacts,
-} from './messaging/guest_qa_responder'
+// How an unanswered guest question reaches the inbox (Phases 26/35/37), and the guest concierge that answers the rest
+// from the allow-listed facts through the job queue (issue #60, ADR 0059).
+export { type EscalationFilingDeps, fileGuestEscalation } from './messaging/escalation_filing'
+export { CONCIERGE_JOB, ConciergeService, GUEST_ANSWER, isSurpriseProbe, MAX_QUESTION_FOR_MODEL, questionId } from './concierge/concierge_service'
+export { type ConciergeFacts, conciergeFactKeys, MAX_ANSWER_KEYS, MAX_REPLY_LENGTH, projectConciergeFacts, renderConciergeAnswer, SINGLE_FACT_KEYS } from './concierge/concierge_facts'
+export { type GuestAnswerInput, keysHeld, simulateGuestAnswer } from './concierge/concierge_simulation'
 
 // The composition root (Phase 16): wires every dependency into one running web front door from INJECTED
 // primitives (clock/ids/operator token), so the deployable entrypoint stays a thin impure shell. The

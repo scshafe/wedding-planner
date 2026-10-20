@@ -59,6 +59,8 @@ export type ContractKey =
   | 'copilot_draft_output'
   | 'copilot_draft'
   | 'job'
+  | 'guest_answer_output'
+  | 'pending_guest_question'
 
 export interface ContractDefinition {
   /** Stable friendly key, e.g. 'grade_report'. */
@@ -318,6 +320,18 @@ export const CONTRACT_DEFINITIONS: readonly ContractDefinition[] = [
     key: 'job',
     schemaId: `${SCHEMA_ID_PREFIX}/job.json`,
     repoRelativePath: 'product/schemas/job_schema.json',
+    domain: 'product',
+  },
+  {
+    key: 'guest_answer_output',
+    schemaId: `${SCHEMA_ID_PREFIX}/guest_answer_output.json`,
+    repoRelativePath: 'product/schemas/guest_answer_output_schema.json',
+    domain: 'product',
+  },
+  {
+    key: 'pending_guest_question',
+    schemaId: `${SCHEMA_ID_PREFIX}/pending_guest_question.json`,
+    repoRelativePath: 'product/schemas/pending_guest_question_schema.json',
     domain: 'product',
   },
 ] as const
