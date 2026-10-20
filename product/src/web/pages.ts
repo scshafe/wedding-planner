@@ -23,6 +23,7 @@ import type { RunOfShowLine, RunOfShowView } from '../run_of_show/run_of_show_se
 import type { SeatedGuest, SeatingView } from '../seating/seating_service'
 import type { PublicSiteView, SiteEditView } from '../site/site_service'
 import type { ModelUsageView } from '../model/model_service'
+import { DOCUMENT_KINDS, type DocumentKind, type DocumentLine, type DocumentsView } from '../documents/document_service'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -1052,7 +1053,7 @@ export function renderDetail(
     <p>Status: <span class="status">${wedding.status}</span></p>
     <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=guests">Guest list →</a></p>
     ${checklistLine}
-    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=vendors">Vendors →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=budget">Budget →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=run-of-show">Run of show →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=seating">Seating →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=site">Website →</a></p>
+    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=vendors">Vendors →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=budget">Budget →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=run-of-show">Run of show →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=seating">Seating →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=site">Website →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=documents">Documents →</a></p>
     <p class="note">Wedding id: <code>${wedding.wedding_id}</code> · created ${wedding.created_at}</p>
     <p class="note">Active strategy: <a href="/t/${slug}/strategy">the platform’s data-optimized planning defaults</a> (applied to every wedding in this workspace).</p>
   </div>
@@ -2401,3 +2402,88 @@ export function renderPublicSite(theme: Tenant['theme'], slug: string, view: Pub
   )
 }
 
+export type DocumentsNotice = 'uploaded' | 'saved' | 'removed' | 'invalid' | 'too_large' | 'unsupported' | 'full' | 'forbidden'
+
+const DOCUMENTS_NOTICES: Readonly<Record<DocumentsNotice, string>> = Object.freeze({
+  uploaded: 'Uploaded.',
+  saved: 'Saved.',
+  removed: 'Removed.',
+  invalid: 'That could not be saved. A document needs a title and a file.',
+  too_large: 'A file is at most 5 MB.',
+  unsupported: 'Only PDF, PNG and JPEG files are accepted, named for what they are (.pdf, .png, .jpg).',
+  full: 'Document storage is full for this wedding. Remove a document first.',
+  forbidden: 'Only the planner manages documents.',
+})
+
+const DOCUMENT_KIND_LABELS: Readonly<Record<DocumentKind, string>> = Object.freeze({ contract: 'Contract', floor_plan: 'Floor plan', quote: 'Quote', other: 'Other' })
+
+/** `120 KB`, `2.4 MB`. */
+function fileSize(bytes: number): string {
+  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/**
+ * A wedding's documents (issue #48): each downloads as a file (`/t/<slug>/documents/download`). The couple sees the
+ * documents the planner shares; the planner uploads (a multipart form), and edits one document at a time (`&doc=<id>`).
+ */
+export function renderDocuments(
+  theme: Tenant['theme'],
+  slug: string,
+  wedding: Wedding,
+  view: DocumentsView,
+  csrfToken: string,
+  notice?: DocumentsNotice,
+  editDocumentId?: string,
+): string {
+  const w = wedding.wedding_id
+  const hidden = (fields: Record<string, string>) => html`${csrfField(csrfToken)}${Object.entries(fields).map(([k, v]) => html`<input type="hidden" name="${k}" value="${v}">`)}`
+  const kindSelect = (id: string, kind?: DocumentKind) =>
+    html`<select id="${id}" name="kind">${DOCUMENT_KINDS.map((k) => (k === (kind ?? 'contract') ? html`<option value="${k}" selected>${DOCUMENT_KIND_LABELS[k]}</option>` : html`<option value="${k}">${DOCUMENT_KIND_LABELS[k]}</option>`))}</select>`
+  const vendorSelect = (id: string, vendorId?: string) =>
+    html`<select id="${id}" name="vendor_id"><option value="">The wedding</option>${view.vendors.map((v) =>
+      v.vendor_id === vendorId ? html`<option value="${v.vendor_id}" selected>${v.business_name}</option>` : html`<option value="${v.vendor_id}">${v.business_name}</option>`,
+    )}</select>`
+  const row = (d: DocumentLine) => {
+    const details = [DOCUMENT_KIND_LABELS[d.kind], ...(d.vendor_name === undefined ? [] : [d.vendor_name]), fileSize(d.size_bytes), ...(d.shared_with_couple === true ? ['shared with the couple'] : [])].join(' · ')
+    return html`<li><a href="/t/${slug}/documents/download?wedding=${w}&amp;doc=${d.document_id}">${d.title}</a> <span class="note">${details}</span>${
+      view.can_manage ? html` · <a href="/t/${slug}?wedding=${w}&amp;tab=documents&amp;doc=${d.document_id}">Edit</a>` : html``
+    }</li>`
+  }
+  const list = view.documents.length === 0 ? html`<p class="note">No documents yet.</p>` : html`<ul>${view.documents.map(row)}</ul>`
+  const editing = editDocumentId === undefined || !view.can_manage ? undefined : view.documents.find((d) => d.document_id === editDocumentId)
+  const usage = view.usage === undefined ? html`` : html`<p class="note">${`${fileSize(view.usage.bytes)} of ${fileSize(view.usage.limit_bytes)} used · ${view.usage.files} of ${view.usage.limit_files} documents`}</p>`
+  return signedInShell(
+    theme,
+    slug,
+    'Documents',
+    html`<p><a href="/t/${slug}?wedding=${w}">← ${wedding.couple_display_name}</a></p>
+  <h2>Documents</h2>
+  ${notice === undefined ? html`` : html`<p class="note">${DOCUMENTS_NOTICES[notice]}</p>`}
+  <div class="card">${list}${usage}</div>
+  ${
+    !view.can_manage
+      ? html``
+      : editing !== undefined
+        ? html`<div class="card"><h3>${`Edit: ${editing.title}`}</h3>
+    <p class="note">${`Uploaded as ${editing.filename ?? ''}`}</p>
+    <form method="post" action="/t/${slug}/documents/doc-save">${hidden({ wedding_id: w, document_id: editing.document_id })}
+      <label for="d_title">Title</label><input id="d_title" name="title" maxlength="120" required value="${editing.title}">
+      <label for="d_kind">Kind</label>${kindSelect('d_kind', editing.kind)}
+      <label for="d_vendor">Belongs to</label>${vendorSelect('d_vendor', editing.vendor_id)}
+      <label><input type="checkbox" name="shared_with_couple" value="true"${editing.shared_with_couple === true ? html` checked` : html``}> Share with the couple</label>
+      <p><button type="submit">Save</button></p></form>
+    <form method="post" action="/t/${slug}/documents/doc-remove">${hidden({ wedding_id: w, document_id: editing.document_id })}<button type="submit">Remove</button></form>
+    <p><a href="/t/${slug}?wedding=${w}&amp;tab=documents">Done</a></p></div>`
+        : html`<div class="card"><h3>Upload a document</h3>
+    <p class="note">PDF, PNG or JPEG, at most 5 MB. The couple sees it only when you share it; a vendor the couple is not shared is not named to them.</p>
+    <form method="post" action="/t/${slug}/documents/upload" enctype="multipart/form-data">${hidden({ wedding_id: w })}
+      <label for="u_title">Title</label><input id="u_title" name="title" maxlength="120" required>
+      <label for="u_kind">Kind</label>${kindSelect('u_kind')}
+      <label for="u_vendor">Belongs to</label>${vendorSelect('u_vendor')}
+      <label><input type="checkbox" name="shared_with_couple" value="true"> Share with the couple</label>
+      <label for="u_file">File</label><input id="u_file" name="file" type="file" required accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg">
+      <p><button type="submit">Upload</button></p></form></div>`
+  }`,
+    'wedding',
+  )
+}

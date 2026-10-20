@@ -68,5 +68,6 @@
 - [Run of show](run-of-show.md) — #45 / ADR 0053: timeline lines with vendor arrivals; couple sees unshared vendors by category
 - [Seating plan](seating-plan.md) — #46 / ADR 0054: one seat per guest, hard capacity, plan per event; guest-list hook fans out to seating
 - [Wedding website](wedding-website.md) — #47 / ADR 0055: public allow-listed page per wedding, unique site names (changes rate-limited), https links, public reads never rate-limited
+- [Wedding documents](wedding-documents.md) — #48 / ADR 0056: bytes in the store (never listed), type by signature, caps with counters, per-request body limit, attachment-only downloads
 - [Guest list CSV](guest-list-csv.md) — #28 / ADR 0047: export neutralizes formulas; import plans every row, applies all-or-nothing, matches by household + name
 - [Model port](model-port.md) — #59 / ADR 0057: tasks defined in code, async port run outside transactions, output validated + never trusted, usage metered per task (cost hidden from tenants), simulated adapter ONLY (owner decision)

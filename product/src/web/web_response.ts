@@ -21,6 +21,8 @@ export interface HttpResult {
   readonly status: number
   readonly headers: Readonly<Record<string, string>>
   readonly body: string
+  /** When set, the adapter writes these bytes instead of `body` (a document download, issue #48). */
+  readonly bytes?: Uint8Array
 }
 
 /**

@@ -22,6 +22,11 @@ export interface ApiRequest {
   readonly headers: Readonly<Record<string, string | undefined>>
   /** The raw request body, or `undefined` when there is none. Parsed inside the handler. */
   readonly rawBody?: string
+  /**
+   * The same body as bytes (the web adapter sets it): what a binary form needs, since `rawBody` is decoded as UTF-8.
+   * Only the document upload form reads it (issue #48).
+   */
+  readonly bodyBytes?: Uint8Array
 }
 
 /** A response, as plain data. The adapter serializes `body` as JSON and writes `status`. */

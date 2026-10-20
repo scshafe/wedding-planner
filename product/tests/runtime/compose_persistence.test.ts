@@ -153,6 +153,9 @@ describe('durable storage — data written before a restart is read back after i
     const ctx = new TenantContextResolver(new TenantStore(new ManualClock('2027-05-01T00:00:00.000Z'), new SequentialIdGenerator('ctx'), first.store)).resolveBySlug('demo')
     // (The test task borrows an existing contract for its output shape.)
     await first.surface.model.run(ctx, defineModelTask({ task: 'census_echo', instructions: 'Echo.', output_contract: 'wedding_site_name' }), {})
+    // A document, its bytes and the storage counters (issue #48).
+    const pdf = Buffer.from('%PDF-1.4\n%%EOF\n').toString('base64')
+    expect(api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/documents`, { token, body: { title: 'Contract', kind: 'contract', filename: 'contract.pdf', content_base64: pdf } })).status).toBe(201)
     const provisioned = api1.handle(
       req('POST', '/admin/tenants', {
         token: OP,

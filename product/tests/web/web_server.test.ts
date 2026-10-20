@@ -7,7 +7,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   GuestAuthorizer,
   GuestRegistry,
+  composeProductSurface,
   createProductWebUiServer,
+  MAX_BODY_BYTES,
   BillingLedger,
   OnboardingService,
   OperatorCredentialStore,
@@ -112,3 +114,46 @@ describe('web_server (integration)', () => {
     expect(await weddings.json()).toEqual({ error: 'unauthorized' })
   })
 })
+
+describe('web_server body limits (issue #48)', () => {
+  let server: Server
+  let base: string
+  let cookie: string
+
+  beforeEach(async () => {
+    const surface = composeProductSurface({
+      clock: new ManualClock('2028-01-10T12:00:00.000Z'),
+      ids: new SequentialIdGenerator('bl'),
+      operatorToken: 'bl-operator-token-0123456789',
+      providerWebhookToken: 'bl-webhook-token-0123456789',
+      demoSlug: 'demo',
+      passwordCost: { N: 16, r: 1, p: 1 },
+    })
+    const login = surface.ui.handle({ method: 'POST', path: '/t/demo/login', headers: { 'content-type': 'application/x-www-form-urlencoded' }, rawBody: 'role=planner' })
+    cookie = `wp_session=${/wp_session=([^;]+)/.exec(login.headers['set-cookie'] ?? '')?.[1]}`
+    server = createProductWebUiServer(surface.ui)
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as AddressInfo
+    base = `http://127.0.0.1:${port}`
+  })
+
+  afterEach(async () => {
+    await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())))
+  })
+
+  const twoMiB = (): string => `--b\r\nContent-Disposition: form-data; name="file"; filename="a.pdf"\r\n\r\n${'x'.repeat(2 * 1024 * 1024)}\r\n--b--\r\n`
+
+  it('an ordinary route keeps the default limit', async () => {
+    const res = await fetch(`${base}/t/demo/guests/create`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', cookie }, body: 'a'.repeat(MAX_BODY_BYTES + 1) })
+    expect(res.status).toBe(413)
+  })
+
+  it('an upload is read past the default only with a live session', async () => {
+    const headers = { 'content-type': 'multipart/form-data; boundary=b' }
+    expect((await fetch(`${base}/t/demo/documents/upload`, { method: 'POST', headers, body: twoMiB() })).status).toBe(413)
+    expect((await fetch(`${base}/t/demo/documents/upload`, { method: 'POST', headers: { ...headers, cookie: 'wp_session=made-up' }, body: twoMiB() })).status).toBe(413)
+    // Read in full, then refused by the form's CSRF check (no token in this body): the limit did not stop it.
+    expect((await fetch(`${base}/t/demo/documents/upload`, { method: 'POST', headers: { ...headers, cookie }, body: twoMiB() })).status).toBe(403)
+  })
+})
+

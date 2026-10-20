@@ -21,6 +21,7 @@ import type {
   SeatAssignment,
   WeddingSite,
   WeddingSiteName,
+  WeddingDocument,
 } from '@wedding-planner/shared'
 
 import type { AccountEmailIndex, UserAccount } from '../accounts/account_store'
@@ -30,6 +31,7 @@ import type { PendingReset } from '../accounts/pending_reset_queue'
 import type { StoredOperatorSession } from '../auth/operator_credential'
 import type { StoredSession } from '../auth/session_store'
 import type { ModelUsageRecord } from '../model/model_service'
+import type { DocumentUsage, StoredDocumentContent, WorkspaceDocumentUsage } from '../documents/document_service'
 import type { StoredOutboxMessage } from '../email/simulated_email_adapter'
 import type { FeedbackSubmission } from '../feedback/feedback_service'
 import type { ServerError } from '../operability/error_log'
@@ -129,4 +131,12 @@ export const COLLECTIONS = Object.freeze({
   weddingSiteName: collection<WeddingSiteName>('wedding_site_name', 'tenant', 'wedding_site_name'),
   /** Key `YYYY-MM`: the workspace's model calls and tokens that month (issue #59). */
   modelUsage: collection<ModelUsageRecord>('model_usage', 'tenant'),
+  /** Key groupedKey(wedding_id, document_id): a wedding's documents, their metadata (issue #48). */
+  weddingDocument: collection<WeddingDocument>('wedding_document', 'tenant', 'wedding_document'),
+  /** Key groupedKey(wedding_id, document_id): a document's bytes, base64 (issue #48). Read one at a time, never listed. */
+  documentContent: collection<StoredDocumentContent>('document_content', 'tenant'),
+  /** Key `documents`: how much document storage the workspace uses (issue #48). */
+  documentWorkspaceUsage: collection<WorkspaceDocumentUsage>('document_workspace_usage', 'tenant'),
+  /** Key `documents`: how much document storage the platform uses, across workspaces (issue #48). */
+  documentPlatformUsage: collection<DocumentUsage>('document_platform_usage', 'global'),
 })

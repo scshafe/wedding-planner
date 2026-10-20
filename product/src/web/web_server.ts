@@ -4,16 +4,17 @@ import type { Clock } from '@wedding-planner/shared'
 
 import type { ApiRequest } from '../http/api_message'
 import { formatRequestLog, logMethod, routePattern } from '../operability/request_log'
-import { MAX_BODY_BYTES } from '../http/node_server'
 import type { ProductWebUi } from './product_web_ui'
 
 /**
  * @canonical product_web_server -- the thin Node `http` adapter for the combined web UI + JSON API.
  *
  * The single deployed front door for Phase 14. Like the JSON-only `createProductApiServer`, it does only
- * socket mechanics and NO policy: read the body (capped at {@link MAX_BODY_BYTES} -> `413`), build an
- * {@link ApiRequest} (lowercased headers, raw body), hand it to `ProductWebUi.handle`, and write the
- * returned {@link HttpResult} verbatim (its explicit status, header map, and string body). All routing,
+ * socket mechanics and NO policy: read the body (capped at the limit `ProductWebUi.bodyLimit` names for the request —
+ * `MAX_BODY_BYTES` unless it is a signed-in document upload — -> `413`, refused up front when the declared
+ * `content-length` is already over it), build an {@link ApiRequest} (lowercased headers, raw body and its bytes), hand
+ * it to `ProductWebUi.handle`, and write the returned {@link HttpResult} verbatim (its explicit status, header map,
+ * and string body or bytes). All routing,
  * tenant resolution, auth, theming, and rendering live in the pure handler, so this adapter needs no
  * test beyond a wiring smoke check. The JSON-only `node_server.ts` is left untouched for pure-API use.
  *
@@ -55,15 +56,25 @@ export function createProductWebUiServer(ui: ProductWebUi, logging?: RequestLogg
     const chunks: Buffer[] = []
     let total = 0
     let aborted = false
+    const headers = lowercaseHeaders(req.headers)
+    const limit = ui.bodyLimit(req.method ?? 'GET', req.url ?? '/', headers)
+    const tooLarge = (): void => {
+      aborted = true
+      res.writeHead(413, { 'content-type': 'application/json', connection: 'close' })
+      res.end(JSON.stringify({ error: 'payload_too_large' }))
+      req.destroy()
+    }
+    // A declared length over the limit is refused before a byte of the body is read.
+    if (Number(headers['content-length'] ?? 0) > limit) {
+      tooLarge()
+      return
+    }
 
     req.on('data', (chunk: Buffer) => {
       if (aborted) return
       total += chunk.length
-      if (total > MAX_BODY_BYTES) {
-        aborted = true
-        res.writeHead(413, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: 'payload_too_large' }))
-        req.destroy()
+      if (total > limit) {
+        tooLarge()
         return
       }
       chunks.push(chunk)
@@ -72,17 +83,17 @@ export function createProductWebUiServer(ui: ProductWebUi, logging?: RequestLogg
     req.on('end', () => {
       if (aborted) return
       try {
-        const rawBody = chunks.length === 0 ? undefined : Buffer.concat(chunks).toString('utf8')
+        const bytes = chunks.length === 0 ? undefined : Buffer.concat(chunks)
         const apiReq: ApiRequest = {
           method: req.method ?? 'GET',
           path: req.url ?? '/',
-          headers: lowercaseHeaders(req.headers),
-          rawBody,
+          headers,
+          ...(bytes === undefined ? {} : { rawBody: bytes.toString('utf8'), bodyBytes: bytes }),
         }
         const result = ui.handle(apiReq)
         if (res.headersSent) return
         res.writeHead(result.status, result.headers)
-        res.end(result.body)
+        res.end(result.bytes ?? result.body)
         // Issue #10: work whose cost must not show in the response's timing runs after the response is written.
         setImmediate(() => ui.runDeferredWork())
       } catch {
