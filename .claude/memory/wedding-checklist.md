@@ -14,6 +14,8 @@ Since issue #31 (2026-10-19): `product/src/checklist/{checklist_service,checklis
   rule (and `tasksOf` per wedding, never a tenant-wide list).
 - The planner does everything; the couple only `setStatus` on assignee=couple tasks. Other couple calls are
   PRODUCT.FORBIDDEN (honest 403 on its own wedding), shown as a notice on the page.
+- #32 `dueAcrossWeddings` (GET /t/<slug>/due-tasks, ?view=due, home card): planning+active weddings only, overdue
+  = due < today, due soon = today..today+7 inclusive; planner only (couple 403 for any method).
 - A date move is SERVER state (`checklist_date_move`, noted by the API's wedding update): the offer and the shift use
   it, never a URL parameter (a crafted `moved=` link once let a couple trigger a 10-year shift). Shift = by the
   recorded move, then forget it; keep = forget it.

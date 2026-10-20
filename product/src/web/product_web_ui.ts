@@ -2,7 +2,7 @@ import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Wed
 
 import type { TeamView } from '../accounts/membership_service'
 import type { GuestEventRsvp, HouseholdAnswer, HouseholdRsvpView, WeddingEventsView } from '../wedding_events/wedding_event_service'
-import type { ChecklistView } from '../checklist/checklist_service'
+import type { ChecklistView, DueAcrossWeddings } from '../checklist/checklist_service'
 import { toGuestCsv } from '../guests/guest_csv'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
@@ -40,6 +40,7 @@ import {
   renderGuestList,
   renderHouseholdRsvp,
   renderChecklist,
+  renderDueTasks,
   type ChecklistNotice,
   type HouseholdRsvpNotice,
   renderRsvpLinkMade,
@@ -324,6 +325,8 @@ export class ProductWebUi {
     }
     // ?view=billing — the planner billing & usage summary (Phase 30; planner-only, a couple is themed Forbidden).
     if (queryParam(req.path, 'view') === 'billing') return this.#billingPage(req, slug)
+    // ?view=due — the planner's overdue / due-this-week tasks across weddings (issue #32; a couple is themed Forbidden).
+    if (queryParam(req.path, 'view') === 'due') return this.#duePage(req, slug)
     // ?view=team — members and invitations (issue #11; planners; a couple is themed Forbidden).
     if (queryParam(req.path, 'view') === 'team') return this.#teamPage(req, slug)
 
@@ -371,12 +374,16 @@ export class ProductWebUi {
     const csrf = this.#csrf.issueCsrf(token)
     // A 200 means the session resolved; theme + CSRF token must exist in the same stores (mirrors #guestsPage).
     if (theme === undefined || csrf === undefined) return theme === undefined ? GENERIC_404 : ERROR_500
+    // Issue #32: like billing, an affordance only — 200 (a planner) shows the tasks-due card; anything else omits it.
+    const dueRes = this.#api.handle(bearerGet(`/t/${slug}/due-tasks`, token))
+    const due = dueRes.status === 200 ? (dueRes.body as DueAcrossWeddings) : undefined
     const overview: AccountOverview = {
       weddingsCount: readWeddings(weddingsRes.body).length,
       openQuestionsCount: countOpenEscalations(readEscalations(escRes.body), readResolutions(escRes.body)),
       guestsCount: readGuests(guestsRes.body).length,
       ...(summary === undefined ? {} : { billing: { balanceCents: summary.balance_cents, planTier: summary.plan_tier } }),
       ...(team === undefined ? {} : { team: { members: team.members.length, pending: team.invitations.length } }),
+      ...(due === undefined ? {} : { due: { overdue: due.overdue, dueSoon: due.due_soon } }),
     }
     return htmlResult(200, renderHome(theme, slug, overview, csrf))
   }
@@ -847,6 +854,16 @@ export class ProductWebUi {
     const notice =
       res.status === 200 || res.status === 201 ? (action === 'event-remove' ? 'removed' : 'saved') : res.status === 409 ? 'conflict' : 'invalid'
     return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=events&notice=${notice}`)
+  }
+
+  /** GET /t/:slug?view=due (issue #32) — ONE pipeline read, themed by status (a couple's 403 is the themed Forbidden). */
+  #duePage(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const res = this.#api.handle(bearerGet(`/t/${slug}/due-tasks`, token))
+    if (res.status !== 200) return this.#renderNonData(slug, res.status)
+    const theme = this.#themes.resolveActiveTheme(slug)
+    if (theme === undefined) return GENERIC_404
+    return htmlResult(200, renderDueTasks(theme, slug, res.body as DueAcrossWeddings))
   }
 
   /**

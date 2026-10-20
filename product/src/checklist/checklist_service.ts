@@ -41,6 +41,31 @@ export interface TaskInput {
   readonly assignee: TaskAssignee
 }
 
+/** One wedding's part of the planner's morning view (issue #32). */
+export interface DueWedding {
+  readonly wedding_id: string
+  readonly couple_display_name: string
+  readonly event_date: string
+  /** Not done and due before today, oldest first. */
+  readonly overdue: readonly WeddingTask[]
+  /** Not done and due from today to today + 7 days (inclusive), soonest first. */
+  readonly due_soon: readonly WeddingTask[]
+}
+
+/** The planner's morning view across weddings (issue #32): what is overdue and what is due within a week. */
+export interface DueAcrossWeddings {
+  readonly today: string
+  /** The last day counted as "this week": today + 7 days. */
+  readonly horizon: string
+  readonly overdue: number
+  readonly due_soon: number
+  /** Only weddings with something due; the most urgent wedding first. */
+  readonly weddings: readonly DueWedding[]
+}
+
+/** How far ahead "due this week" looks, in days (inclusive). */
+export const DUE_SOON_DAYS = 7
+
 /** A wedding's checklist as the page shows it: overdue first (oldest first), then upcoming (soonest first), then done. */
 export interface ChecklistView {
   /** The injected clock's date (YYYY-MM-DD). */
@@ -96,6 +121,45 @@ export class ChecklistService {
       done: tasks.filter((t) => t.status === 'done'),
       template_missing: this.template.filter((item) => !keys.has(item.key)).length,
       ...(move === undefined || open.length === 0 ? {} : { date_move: { from_date: move.from_date, to_date: move.to_date, days: daysBetween(move.from_date, move.to_date) } }),
+    }
+  }
+
+  /**
+   * The planner's morning question (issue #32): across the workspace's planning and active weddings, every task not
+   * done that is overdue or due within {@link DUE_SOON_DAYS} days, grouped by wedding, the most urgent first. Planner
+   * only — a couple gets PRODUCT.FORBIDDEN and never another wedding's tasks. Each wedding is read on its own
+   * (`tasksOf`), never a tenant-wide list of tasks.
+   */
+  dueAcrossWeddings(context: TenantContext, principal: Principal): DueAcrossWeddings {
+    this.#planner(principal)
+    const today = this.today()
+    const horizon = shiftDate(today, DUE_SOON_DAYS)
+    const weddings = this.weddings
+      .list(context)
+      .filter((w) => w.status === 'planning' || w.status === 'active')
+      .flatMap((wedding): DueWedding[] => {
+        const due = this.tasksOf(context, wedding.wedding_id).filter((t) => t.status === 'todo' && t.due_date <= horizon)
+        if (due.length === 0) return []
+        return [
+          {
+            wedding_id: wedding.wedding_id,
+            couple_display_name: wedding.couple_display_name,
+            event_date: wedding.event_date,
+            overdue: due.filter((t) => t.due_date < today),
+            due_soon: due.filter((t) => t.due_date >= today),
+          },
+        ]
+      })
+      .sort((a, b) => {
+        const first = (w: DueWedding) => (w.overdue[0] ?? w.due_soon[0])?.due_date ?? ''
+        return first(a) === first(b) ? a.couple_display_name.localeCompare(b.couple_display_name) : first(a) < first(b) ? -1 : 1
+      })
+    return {
+      today,
+      horizon,
+      overdue: weddings.reduce((n, w) => n + w.overdue.length, 0),
+      due_soon: weddings.reduce((n, w) => n + w.due_soon.length, 0),
+      weddings,
     }
   }
 
