@@ -16,22 +16,21 @@ direction (target customer, pricing, business model) are the owner's call (`stat
 The job, in the planner's words: *"keep every wedding on track without chasing my couples, my
 vendors and 150 guests by hand."*
 
-## Where we are (2026-10-19)
+## Where we are (2026-10-19, M2 done)
 
-M1 is done. The product is a secure multi-tenant workspace that keeps its data:
-- durable SQLite storage, backed up with the stack, with rollback-safe migrations;
-- real accounts: email and password, reset through emailed links, invitations for teammates and couples, and the
-  workspace owner managing members;
-- a simulated email outbox and an operator console (`/admin`) for tenants, the outbox, in-app feedback and server
-  errors;
-- request logs that carry no personal data, and the build commit in `/healthz`.
+M1 and M2 are done. On top of M1's secure multi-tenant workspace (durable storage, real accounts, invitations, the
+outbox and operator console, feedback, operability), a wedding now has its planning core:
+- a guest list of households and guests with plus-ones, CSV import and export;
+- events with per-event RSVPs and meal choices, and a public RSVP page per household (a link stored only as a hash);
+- a checklist from a built-in template, the date-move shift, and the planner's overdue / due-this-week view;
+- vendors with payment schedules in integer cents, and a budget whose lines can follow a vendor's schedule.
 
-Tenant isolation, CSRF, themed white-label pages, the guest-question inbox and the simulated billing page carry
-over from before (1250 tests). Production runs in demo mode: the demo tenant keeps a clearly labeled role picker,
-and every other workspace signs in for real.
+The couple sees its own wedding: what the planner shares, and what is the couple's to do. Every M2 change had a
+security review before it landed, and the reviews' findings are fixed (1400 tests). Production still runs in demo
+mode: the demo tenant keeps its labeled role picker, every other workspace signs in for real.
 
-Missing is most of the planning domain (a wedding has 7 fields; a guest is a messaging handle), which is M2
-onward, and any real AI: keyword matching only until M4's model port.
+Next is M3 (event day and guest experience: #45 run of show, #46 seating, #47 wedding website, #48 documents), then
+M4 with the model port's simulated adapter only. Guest Q&A is still keyword matching until M4.
 
 ## Milestones
 
@@ -59,9 +58,11 @@ operator console), #10 (accounts), #11 (invitations), #12 (feedback) and #13 (op
 - **Operability.** Structured request logs, an operator page of recent server errors, the build
   commit in `/healthz`.
 
-### M2: Planning core
+### M2: Planning core — done (2026-10-19)
 
-The planner's daily work happens here.
+The planner's daily work happens here. Shipped as #27 (guest list), #28 (CSV), #29 (events and RSVPs), #30 (household
+RSVP page), #31 (checklist), #32 (due across weddings), #33 (vendors), #34 (budget) and #41 (invitation provenance);
+ADRs 0046–0052 and the ADR 0039 addendum (grouped keys).
 
 - **Guest list.** Guests with names, households/parties, contact details, side, tags, plus-ones,
   dietary needs; CSV import and export.
