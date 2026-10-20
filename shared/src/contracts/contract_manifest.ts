@@ -61,6 +61,7 @@ export type ContractKey =
   | 'job'
   | 'guest_answer_output'
   | 'pending_guest_question'
+  | 'concierge_eval_set'
 
 export interface ContractDefinition {
   /** Stable friendly key, e.g. 'grade_report'. */
@@ -333,6 +334,12 @@ export const CONTRACT_DEFINITIONS: readonly ContractDefinition[] = [
     schemaId: `${SCHEMA_ID_PREFIX}/pending_guest_question.json`,
     repoRelativePath: 'product/schemas/pending_guest_question_schema.json',
     domain: 'product',
+  },
+  {
+    key: 'concierge_eval_set',
+    schemaId: `${SCHEMA_ID_PREFIX}/concierge_eval_set.json`,
+    repoRelativePath: 'eval-harness/schemas/concierge_eval_set_schema.json',
+    domain: 'eval-harness',
   },
 ] as const
 

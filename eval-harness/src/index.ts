@@ -13,6 +13,17 @@ export { EvalHarnessError } from './eval_harness_error'
 
 // Corpus loading (personas + scenarios as validated, typed ground truth)
 export { loadCouplePersona, loadGuestPersona, loadScenario } from './corpus/corpus_loader'
+// The guest concierge's eval set and scorer (issue #60; the runner wiring the product lives in app/tests)
+export {
+  CONCIERGE_EVAL_SET_PATH,
+  type ConciergeDecision,
+  type ConciergeEvalCase,
+  type ConciergeEvalReport,
+  type ConciergeEvalResult,
+  type ConciergeFactsFixture,
+  loadConciergeEvalSet,
+  scoreConcierge,
+} from './concierge/concierge_eval'
 
 // Trusted recorder (the integrity boundary — the harness's out-of-band record of real effects)
 export { TrustedRecorder } from './trusted_recorder/trusted_recorder'

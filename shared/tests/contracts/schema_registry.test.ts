@@ -10,8 +10,8 @@ import {
 
 describe('schema registry', () => {
   it('registers exactly the 21 canonical contracts', () => {
-    expect(CONTRACT_COUNT).toBe(42)
-    expect(CONTRACT_DEFINITIONS).toHaveLength(42)
+    expect(CONTRACT_COUNT).toBe(43)
+    expect(CONTRACT_DEFINITIONS).toHaveLength(43)
   })
 
   it('compiles every contract under ajv without error', () => {

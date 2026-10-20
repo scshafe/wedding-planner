@@ -161,9 +161,9 @@ export class ConciergeService {
     if (wedding.status === 'cancelled') return { kind: 'escalate' }
     const facts: ConciergeFacts = projectConciergeFacts(wedding, this.sites?.publishedSiteOf(context, pending.wedding_id))
     const output = await this.model.run(context, GUEST_ANSWER, { facts, question: safeSlice(pending.body, MAX_QUESTION_FOR_MODEL) })
-    const keys = output.action === 'answer' ? [...new Set(output.facts)].slice(0, MAX_ANSWER_KEYS) : []
-    if (keys.length === 0 || !keysHeld(facts, keys)) return { kind: 'escalate' }
-    return { kind: 'answer', reply: renderConciergeAnswer(facts, keys), recipient_ref: binding.recipient_ref }
+    const checked = checkGuestAnswer(facts, output)
+    if (checked.action === 'escalate') return { kind: 'escalate' }
+    return { kind: 'answer', reply: renderConciergeAnswer(facts, checked.keys), recipient_ref: binding.recipient_ref }
   }
 
   /**
@@ -208,6 +208,15 @@ export class ConciergeService {
   #question(context: TenantContext, question_id: string): PendingGuestQuestion | undefined {
     return this.#pending.read(context, question_id)
   }
+}
+
+/**
+ * The second check, pure (the job and the eval set share it): an answer whose keys the projection all holds — at most
+ * {@link MAX_ANSWER_KEYS} — else an escalation.
+ */
+export function checkGuestAnswer(facts: ConciergeFacts, output: GuestAnswerOutput): { readonly action: 'answer'; readonly keys: readonly string[] } | { readonly action: 'escalate' } {
+  const keys = output.action === 'answer' ? [...new Set(output.facts)].slice(0, MAX_ANSWER_KEYS) : []
+  return keys.length > 0 && keysHeld(facts, keys) ? { action: 'answer', keys } : { action: 'escalate' }
 }
 
 /** The pending question's id: a fixed-length hash of the provider's ref (which has no length limit). */

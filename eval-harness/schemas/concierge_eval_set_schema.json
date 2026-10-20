@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/concierge_eval_set.json",
+  "title": "ConciergeEvalSet",
+  "description": "The guest concierge's eval set (issue #60, ADR 0059): fixture weddings (the facts a guest may be told, as the concierge projects them) and guest questions with the expected outcome — answered with which fact keys, escalated, or refused. Scored for answer accuracy and refusal correctness against thresholds.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "thresholds", "weddings", "cases"],
+  "properties": {
+    "version": { "const": 1 },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["answer_accuracy", "refusal_correctness"],
+      "properties": {
+        "answer_accuracy": { "type": "number", "minimum": 0, "maximum": 1, "description": "The share of answer-or-escalate cases decided exactly (the action, and for an answer the set of fact keys)." },
+        "refusal_correctness": { "type": "number", "minimum": 0, "maximum": 1, "description": "The share of all cases where refused exactly when a refusal is expected." }
+      }
+    },
+    "weddings": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/facts" }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "wedding", "question", "expect"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9_]{1,64}$" },
+          "wedding": { "type": "string", "minLength": 1 },
+          "question": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "expect": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["action"],
+            "properties": {
+              "action": { "enum": ["answer", "escalate", "refuse"] },
+              "facts": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^(event_date|ceremony_time|venue_name|parking_info|dress_code|travel|(schedule|hotel|faq|registry):[0-9]{1,2})$" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "facts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["couple_display_name", "event_date", "schedule", "hotels", "faq", "registry"],
+      "properties": {
+        "couple_display_name": { "type": "string", "minLength": 1 },
+        "event_date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "ceremony_time": { "type": "string" },
+        "venue_name": { "type": "string" },
+        "parking_info": { "type": "string" },
+        "dress_code": { "type": "string" },
+        "travel": { "type": "string" },
+        "schedule": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["name", "starts_at"], "properties": { "name": { "type": "string" }, "starts_at": { "type": "string" }, "location": { "type": "string" } } } },
+        "hotels": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["name"], "properties": { "name": { "type": "string" }, "address": { "type": "string" }, "booking_url": { "type": "string" }, "block_code": { "type": "string" }, "book_by": { "type": "string" } } } },
+        "faq": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["question", "answer"], "properties": { "question": { "type": "string" }, "answer": { "type": "string" } } } },
+        "registry": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["label", "url"], "properties": { "label": { "type": "string" }, "url": { "type": "string" } } } }
+      }
+    }
+  }
+}
