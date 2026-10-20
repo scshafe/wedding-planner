@@ -16,9 +16,9 @@ direction (target customer, pricing, business model) are the owner's call (`stat
 The job, in the planner's words: *"keep every wedding on track without chasing my couples, my
 vendors and 150 guests by hand."*
 
-## Where we are (2026-10-20, M3 done)
+## Where we are (2026-10-20, M4 done)
 
-M1, M2 and M3 are done. On top of M1's secure multi-tenant workspace (durable storage, real accounts, invitations, the
+M1 through M4 are done. On top of M1's secure multi-tenant workspace (durable storage, real accounts, invitations, the
 outbox and operator console, feedback, operability), a wedding has its planning core (M2):
 - a guest list of households and guests with plus-ones, CSV import and export;
 - events with per-event RSVPs and meal choices, and a public RSVP page per household (a link stored only as a hash);
@@ -31,13 +31,20 @@ and its event day and guest experience (M3):
 - documents (contracts, floor plans, quotes) stored in the state database, downloaded only as attachments, within a
   process-wide budget for bytes in flight.
 
+and its AI planning assistant (M4), on the simulated model only (a real model is an owner crossing):
+- a model port (async, task-shaped, metered per workspace and month, every output checked against a contract) and a
+  job queue that runs model work after the response;
+- the planner copilot: a drafted checklist and timeline that the planner reviews before anything is saved;
+- the guest concierge: a guest's text answered from the facts guests may see, surprise probes refused, the rest
+  escalated to the inbox; its eval set in `eval-harness/` scores accuracy and refusals;
+- a weekly "what is at risk" summary per wedding, on the wedding page and across weddings on the home page.
+
 The couple sees its own wedding: what the planner shares, and what is the couple's to do. Every change had a security
-or architecture review before it landed, and the reviews' findings are fixed (about 1470 tests). Production still runs
+or architecture review before it landed, and the reviews' findings are fixed (about 1510 tests). Production still runs
 in demo mode: the demo tenant keeps its labeled role picker, every other workspace signs in for real.
 
-M4 has begun with the model port (#59, the simulated adapter only, by the owner's decision); next are the planner
-copilot and the job queue (#61), the guest concierge (#60) and the weekly risk summary (#62). Guest Q&A is still
-keyword matching until #60.
+What remains is M5, which is the owner's crossings: by the owner's decision (2026-10-19) the agents do not start it
+unasked.
 
 ## Milestones
 
@@ -93,7 +100,10 @@ budget and vendors pages); ADRs 0053–0056.
   registry links, RSVP.
 - **Documents.** Attach files (contracts, floor plans) to a wedding or a vendor.
 
-### M4: AI planning assistant
+### M4: AI planning assistant — done (2026-10-20)
+
+Shipped as #59 (the model port), #61 (the copilot and the job queue), #60 (the guest concierge and its eval set) and
+#62 (the weekly risk summary); ADRs 0057–0060.
 
 - **A model port** with a simulated adapter (deterministic, for tests and the demo). Owner decision
   (2026-10-19): only the simulated adapter is built. A real model costs money, so wiring one (an
