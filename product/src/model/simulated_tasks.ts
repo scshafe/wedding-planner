@@ -1,5 +1,6 @@
 import { simulateGuestAnswer } from '../concierge/concierge_simulation'
 import { simulateCopilotDraft } from '../copilot/copilot_simulation'
+import { simulateRiskSummary } from '../risk/risk_simulation'
 import type { SimulatedTask } from './simulated_model_adapter'
 
 /**
@@ -12,4 +13,6 @@ export const SIMULATED_MODEL_TASKS: Readonly<Record<string, SimulatedTask>> = Ob
   copilot_draft: simulateCopilotDraft,
   // The guest concierge's choice of facts (issue #60).
   guest_answer: simulateGuestAnswer,
+  // The weekly risk summary's judgement (issue #62).
+  risk_summary: simulateRiskSummary,
 })

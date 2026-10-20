@@ -160,7 +160,9 @@ describe('durable storage — data written before a restart is read back after i
     expect(api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/documents`, { token, body: { title: 'Contract', kind: 'contract', filename: 'contract.pdf', content_base64: pdf } })).status).toBe(201)
     // A copilot draft made through the job queue, and one still queued (issue #61): job, job_queue, copilot_draft.
     expect(api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/copilot`, { token })).status).toBe(202)
-    expect(await first.surface.drainJobs()).toBe(1)
+    // This week's risk summary, asked for by reading it (issue #62): risk_summary.
+    expect(api1.handle(req('GET', `/t/demo/weddings/${newWeddingId}/risk-summary`, { token })).body).toEqual({ preparing: true })
+    expect(await first.surface.drainJobs()).toBe(2)
     expect(api1.handle(req('POST', `/t/demo/weddings/${demo?.weddingId}/copilot`, { token })).status).toBe(202)
     // A guest question still waiting for the concierge (issue #60): pending_guest_question, and its job.
     expect(api1.handle(inbound(ref, 'pmr_pending', 'Is there a shuttle?')).status).toBe(202)

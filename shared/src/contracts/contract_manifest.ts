@@ -62,6 +62,8 @@ export type ContractKey =
   | 'guest_answer_output'
   | 'pending_guest_question'
   | 'concierge_eval_set'
+  | 'risk_summary_output'
+  | 'risk_summary'
 
 export interface ContractDefinition {
   /** Stable friendly key, e.g. 'grade_report'. */
@@ -340,6 +342,18 @@ export const CONTRACT_DEFINITIONS: readonly ContractDefinition[] = [
     schemaId: `${SCHEMA_ID_PREFIX}/concierge_eval_set.json`,
     repoRelativePath: 'eval-harness/schemas/concierge_eval_set_schema.json',
     domain: 'eval-harness',
+  },
+  {
+    key: 'risk_summary_output',
+    schemaId: `${SCHEMA_ID_PREFIX}/risk_summary_output.json`,
+    repoRelativePath: 'product/schemas/risk_summary_output_schema.json',
+    domain: 'product',
+  },
+  {
+    key: 'risk_summary',
+    schemaId: `${SCHEMA_ID_PREFIX}/risk_summary.json`,
+    repoRelativePath: 'product/schemas/risk_summary_schema.json',
+    domain: 'product',
   },
 ] as const
 

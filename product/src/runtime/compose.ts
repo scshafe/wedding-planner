@@ -49,6 +49,7 @@ import { ModelService } from '../model/model_service'
 import { type DeadlineTimer, JobQueue } from '../jobs/job_queue'
 import { CopilotService } from '../copilot/copilot_service'
 import { ConciergeService } from '../concierge/concierge_service'
+import { RiskSummaryService } from '../risk/risk_summary_service'
 import { ProductError } from '../product_error'
 import { SimulatedModelAdapter, type SimulatedTask } from '../model/simulated_model_adapter'
 import { SIMULATED_MODEL_TASKS } from '../model/simulated_tasks'
@@ -327,6 +328,9 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const sites = new SiteService(tenants, weddings, authorizer, events, clock, ids, store, SITE_LIMITS, limiter)
   const concierge = new ConciergeService(tenants, guestRegistry, weddings, sites, model, jobs, inboundReceipts, messaging, { escalations, resolutions, replies }, store)
   jobs.register(concierge.jobKind())
+  // Issue #62: each wedding's weekly risk summary — signals read fresh, worded from their own data, the planner's only.
+  const risk = new RiskSummaryService(tenants, weddings, authorizer, checklist, vendors, events, guestDirectory, seating, model, jobs, clock, store)
+  jobs.register(risk.jobKind())
 
   const api = new ProductApi({
     resolver,
@@ -353,6 +357,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     runOfShow,
     // The planner copilot (issue #61): drafts through the model job queue, kept through the services above.
     copilot,
+    risk,
     jobs,
     seating,
     // Each wedding's public website (issue #47): edited by the planner and the couple, read by guests when published.

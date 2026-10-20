@@ -10,6 +10,7 @@ import type { BudgetView } from '../budget/budget_service'
 import type { RunOfShowView } from '../run_of_show/run_of_show_service'
 import type { ModelUsageView } from '../model/model_service'
 import { COPILOT_LIMITS, type CopilotView } from '../copilot/copilot_service'
+import type { RiskOverview, RiskView } from '../risk/risk_summary_service'
 import type { SeatingView } from '../seating/seating_service'
 import { type PublicSiteView, SITE_LIMITS, type SiteEditView } from '../site/site_service'
 import { DOCUMENT_LIMITS, type DocumentDownload, type DocumentsView } from '../documents/document_service'
@@ -503,6 +504,9 @@ export class ProductWebUi {
     // Issue #32: like billing, an affordance only — 200 (a planner) shows the tasks-due card; anything else omits it.
     const dueRes = this.#api.handle(bearerGet(`/t/${slug}/due-tasks`, token))
     const due = dueRes.status === 200 ? (dueRes.body as DueAcrossWeddings) : undefined
+    // Issue #62: like the tasks-due card, an affordance only — 200 (a planner) shows this week's risk across weddings.
+    const riskRes = this.#api.handle(bearerGet(`/t/${slug}/risk-summaries`, token))
+    const risk = riskRes.status === 200 ? (riskRes.body as RiskOverview) : undefined
     const overview: AccountOverview = {
       weddingsCount: readWeddings(weddingsRes.body).length,
       openQuestionsCount: countOpenEscalations(readEscalations(escRes.body), readResolutions(escRes.body)),
@@ -510,6 +514,7 @@ export class ProductWebUi {
       ...(summary === undefined ? {} : { billing: { balanceCents: summary.balance_cents, planTier: summary.plan_tier } }),
       ...(team === undefined ? {} : { team: { members: team.members.length, pending: team.invitations.length } }),
       ...(due === undefined ? {} : { due: { overdue: due.overdue, dueSoon: due.due_soon } }),
+      ...(risk === undefined ? {} : { risk }),
     }
     return htmlResult(200, renderHome(theme, slug, overview, csrf))
   }
@@ -566,9 +571,12 @@ export class ProductWebUi {
         tasks === undefined
           ? undefined
           : { overdue: tasks.overdue.length, open: tasks.overdue.length + tasks.upcoming.length, ...(tasks.date_move === undefined ? {} : { dateMove: tasks.date_move }) }
+      // Issue #62: an affordance only — 200 (a planner) shows this week's risk summary; a couple's 403 omits it.
+      const riskRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${encodeURIComponent(weddingId)}/risk-summary`, token))
+      const risk = riskRes.status === 200 ? (riskRes.body as RiskView) : undefined
       return htmlResult(
         invalid ? 400 : 200,
-        renderDetail(theme, slug, wedding, csrf, invalid, canInvite ? (notice === undefined ? {} : { notice }) : undefined, events, checklist),
+        renderDetail(theme, slug, wedding, csrf, invalid, canInvite ? (notice === undefined ? {} : { notice }) : undefined, events, checklist, risk),
       )
     }
     return this.#renderNonData(slug, apiRes.status)

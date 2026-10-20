@@ -121,4 +121,6 @@ export type {
   GuestAnswerOutput,
   PendingGuestQuestion,
   ConciergeEvalSet,
+  RiskSummaryOutput,
+  RiskSummary,
 } from './contracts/contract_types'

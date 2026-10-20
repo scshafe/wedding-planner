@@ -73,3 +73,4 @@
 - [Model port](model-port.md) — #59 / ADR 0057: tasks defined in code, async port run outside transactions, output validated + never trusted, usage metered per task (cost hidden from tenants), simulated adapter ONLY (owner decision)
 - [Model jobs and the copilot](model-jobs-and-copilot.md) — #61 / ADR 0058: the outbox queue for model calls (lease, claim check, retries, drain after responses/boot); copilot drafts checked against input, kept via services
 - [Guest concierge](guest-concierge.md) — #60 / ADR 0059: edge refuses or queues; job answers from the allow-listed facts (model picks keys, product words the reply) or escalates; tests must drain
+- [Weekly risk summary](weekly-risk-summary.md) — #62 / ADR 0060: signals → weekly job (enqueued by reading a stale summary) → level + lines worded from the signals; planner only

@@ -25,6 +25,7 @@ import type {
   CopilotDraft,
   Job,
   PendingGuestQuestion,
+  RiskSummary,
 } from '@wedding-planner/shared'
 
 import type { AccountEmailIndex, UserAccount } from '../accounts/account_store'
@@ -151,4 +152,6 @@ export const COLLECTIONS = Object.freeze({
   copilotDraft: collection<CopilotDraft>('copilot_draft', 'tenant', 'copilot_draft'),
   /** Key question_id (a hash of the provider's ref): a guest's question waiting for the concierge's job (issue #60). */
   pendingGuestQuestion: collection<PendingGuestQuestion>('pending_guest_question', 'tenant', 'pending_guest_question'),
+  /** Key wedding_id: the wedding's risk summary for the current ISO week (issue #62). */
+  riskSummary: collection<RiskSummary>('risk_summary', 'tenant', 'risk_summary'),
 })
