@@ -12,6 +12,7 @@
     "event_id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "An event of the same wedding." },
     "guest_id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "A guest (wedding_guest) of the same wedding." },
     "invited": { "type": "boolean", "description": "Whether the guest is invited to this event (overrides the event's invitation default). A guest not invited has no answer (status pending)." },
+    "invitation_by": { "type": "string", "enum": ["planner", "couple"], "description": "Who set `invited` themselves (issue #41): the planner or the couple. Absent when the invitation is inherited (the host's for a plus-one, else the event's default), even after the household answered. Expand step: accepted before any code writes it, so an older build tolerates it after a rollback." },
     "status": { "type": "string", "enum": ["pending", "attending", "declined"] },
     "meal_option_id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "One of the event's meal options; only while attending." },
     "answered_by": { "type": "string", "enum": ["planner", "couple", "household"], "description": "Who recorded the current answer: the planner or the couple in the console, or the household on its RSVP page (issue #30)." },
