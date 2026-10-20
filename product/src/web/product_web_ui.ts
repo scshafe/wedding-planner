@@ -1,7 +1,7 @@
 import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Wedding } from '@wedding-planner/shared'
 
 import type { TeamView } from '../accounts/membership_service'
-import type { EventsView, GuestEventRsvp } from '../events/event_service'
+import type { WeddingEventsView, GuestEventRsvp } from '../wedding_events/wedding_event_service'
 import { toGuestCsv } from '../guests/guest_csv'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
@@ -402,7 +402,7 @@ export class ProductWebUi {
       const notice = invite === 'sent' || invite === 'exists' || invite === 'invalid' ? invite : undefined
       // Issue #29: the events card with live counts (same boundary as the wedding read; absent if not wired).
       const eventsRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${encodeURIComponent(weddingId)}/events`, token))
-      const events = eventsRes.status === 200 ? (eventsRes.body as EventsView) : undefined
+      const events = eventsRes.status === 200 ? (eventsRes.body as WeddingEventsView) : undefined
       return htmlResult(
         invalid ? 400 : 200,
         renderDetail(theme, slug, wedding, csrf, invalid, canInvite ? (notice === undefined ? {} : { notice }) : undefined, events),
@@ -754,7 +754,7 @@ export class ProductWebUi {
     if (csrf === undefined) return ERROR_500
     const raw = queryParam(req.path, 'notice')
     const notice = (['saved', 'removed', 'invalid', 'conflict'] as const).find((n) => n === raw)
-    return htmlResult(200, renderEvents(theme, slug, wedding, eventsRes.body as EventsView, csrf, notice))
+    return htmlResult(200, renderEvents(theme, slug, wedding, eventsRes.body as WeddingEventsView, csrf, notice))
   }
 
   /**
@@ -770,12 +770,18 @@ export class ProductWebUi {
     const value = (name: string): string => (form.get(name) ?? '').trim()
     const event = encodeURIComponent(value('event_id'))
     const call = (method: string, path: string, body?: unknown) => this.#api.handle(bearerJson(method, path, token, body ?? {}))
-    const eventBody = () => ({
-      name: value('name'),
-      starts_at: value('starts_at'),
-      ...(value('location').length === 0 ? {} : { location: value('location') }),
-      meal_options: (form.get('meal_options') ?? '').split(/\r?\n/).map((m) => m.trim()).filter((m) => m.length > 0),
-    })
+    // Meal rows pair a hidden id with a label, in order; the JSON layer bounds the list's length.
+    const eventBody = () => {
+      const ids = form.getAll('meal_id')
+      const meal_options = form.getAll('meal_label').map((label, i) => ({ label, ...((ids[i] ?? '').length === 0 ? {} : { option_id: ids[i] }) }))
+      return {
+        name: value('name'),
+        starts_at: value('starts_at'),
+        ...(value('location').length === 0 ? {} : { location: value('location') }),
+        ...(value('invitation').length === 0 ? {} : { invitation: value('invitation') }),
+        meal_options: meal_options.filter((m) => m.label.trim().length > 0 || m.option_id !== undefined),
+      }
+    }
     if (action === 'rsvp-set') {
       const guest = encodeURIComponent(value('guest_id'))
       const res = call('PUT', `${base}/events/${event}/rsvps/${guest}`, {

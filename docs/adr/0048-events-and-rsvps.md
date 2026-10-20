@@ -13,53 +13,81 @@
 ### Two contracts
 
 - `wedding_event`: name, `starts_at` (local `YYYY-MM-DDTHH:MM`, with no time zone: the time printed on the
-  invitation, where the event is), optional location, and `meal_options` (`{option_id, label}`, at most 8).
+  invitation, where the event is), optional location, `invitation` (`everyone`, or `selected` for an invite-only
+  event such as a rehearsal dinner), and `meal_options` (`{option_id, label}`, at most 8).
 - `wedding_rsvp`: one guest's answer for one event: `invited`, `status` (`pending`, `attending`, `declined`),
-  optional `meal_option_id`, `answered_by` (`planner`, `couple`, `household`) and `updated_at`. The `household`
-  value is in the enum now, so #30 needs no schema change. That matters because the host rolls back failed deploys,
-  and an older build must still read the records.
+  optional `meal_option_id`, `answered_by` (`planner`, `couple`, `household`) and `updated_at`.
 - Contract count: 25.
 
-### No record means "invited, pending"
+### Rollback safety
 
-An RSVP is stored under `groupedKey(wedding_id, `${event_id}:${guest_id}`)`. A missing record is the default
-(invited, pending), so adding a guest or an event writes nothing. The counts go over the wedding's guests, never over
-the stored records, so a record left behind by a removed guest can never be counted. Records are still removed:
-- with their guest: the guest list's new `guestsRemoved` hook calls `EventService.forgetGuests` in the same request
-  and transaction (the composition root binds the hook);
+The host rolls back a failed deploy, so an older build must keep working on newer records:
+- `answered_by` already includes `household` for #30. `invitation` is required from the start, which costs
+  nothing while the collection is new; adding it later would have needed an expand step.
+- New state that #30 needs (per-household RSVP links; whether RSVPs are closed for a wedding) goes into NEW
+  collections. Older builds never touch those, whereas an older build's edit of an existing record rebuilds it field
+  by field and would silently drop a field it does not know (for example, the wedding update would reopen RSVPs).
+
+### No record means "the event's default, pending"
+
+An RSVP is stored under `groupedKey(wedding_id, rsvpId(event_id, guest_id))`. A missing record means the event's
+`invitation` (a plus-one without a record follows their host's), with the status pending. So adding a guest or an
+event writes nothing. The counts go over the wedding's guests, never over the stored records, so a record left
+behind can never be counted. Records are still removed:
+- with their guest: `WeddingEventService` implements the guest list's `GuestListHooks`, and the guest list calls
+  `guestsRemoved` in the same request and transaction; the composition root passes the service as the hook, and a
+  test through the composed API checks that it does;
 - with their event.
+
+### Guests are read through a directory
+
+`GuestDirectory` (guests module) is the read side of a wedding's guest list: one wedding, or one guest or household
+by a point read. It checks no boundary: its callers have already established who may reach the wedding. The
+wedding events read guests through it, never through the guest list's principal-bound view. That gives a point
+read instead of a whole-list read per answer, removes the guest list ↔ events cycle, and gives #30 a path that needs
+no principal.
 
 ### Meals
 
-A meal choice must be one of the event's options, and only an attending guest has one. A guest who is not invited
-has no answer: their status is pending, with no meal. Options keep their ids when the labels are edited (matched by
-label, case-insensitively), so renaming or reordering keeps the guests' choices. A dropped option clears the
-choices that named it.
+A meal choice must be one of the event's options, and only an attending guest has one: a choice sent with another
+answer is dropped. A guest who is not invited has no answer (pending, no meal).
+- An edit renames an option in place when it carries the option's id (the web form sends every option as a row with
+  its id), and an entry with no id matches an existing option by label. So guests' choices survive renaming and
+  reordering. An unknown id is refused.
+- A dropped option clears the choices that named it, recorded as the editor's change (`answered_by` becomes the
+  editor's role).
+- The raw list an edit sends is capped at 32 entries before any per-item work. The security review showed that
+  deduplicating an unbounded list held the process for minutes.
 
 ### The boundary, shared
 
-`assertWeddingReach` (`wedding/wedding_reach.ts`) is now the one implementation of "may this principal reach this
-wedding": `authorizeRead` plus the wedding exists, otherwise the masked `PRODUCT.NOT_FOUND`. The guest list and the
-events both call it, and the HTTP edge calls it before parsing any body. The planner and the wedding's couple manage
-events and record answers; `answered_by` is the principal's role.
+`assertWeddingReach` (`wedding/wedding_reach.ts`) is the one implementation of "may this principal reach this
+wedding": `authorizeRead` plus the wedding exists, otherwise the masked `PRODUCT.NOT_FOUND`. It returns the wedding.
+The guest list and the events both call it, and the HTTP edge calls it before parsing any body. The planner and
+the wedding's couple manage events and record answers; `answered_by` is the principal's role. The budget (#34)
+will need a read/update distinction; it adds an access kind here rather than a second check.
 
 ### Counts
 
 For each event, over the invited guests: attending, declined, pending (= invited − attending − declined), meals by
 option, and attending guests with no meal chosen yet. They are computed on read, from one grouped read of the
-wedding's RSVPs: at most 12 events × 2,000 guests, and realistically a few hundred records. The wedding page shows
-them; the events page shows them with the forms.
+wedding's RSVPs: at most 12 events × 2,000 guests, and realistically a few hundred records. Each event in the view
+carries its own counts. The wedding page shows them; the events page shows them with the forms.
 
 ### Routes and pages
 
 - JSON: `GET|POST …/weddings/:id/events`, `PUT|DELETE …/events/:eid`, `PUT …/events/:eid/rsvps/:gid` and
-  `GET …/guests/:gid/rsvps` (that guest's answer for each event, with the defaults filled in).
-- Web: the events page `?wedding=<id>&tab=events` (add, edit, remove; meals one per line), RSVP forms on each
+  `GET …/guests/:gid/rsvps` (that guest's answer for each event, defaults filled in).
+- Web: the events page `?wedding=<id>&tab=events` (add, edit, remove; invitation; meal rows), RSVP forms on each
   guest's edit page, and an Events card with the counts on the wedding page. Every form posts to
   `/t/<slug>/events/<action>` and checks the per-session CSRF token first.
 
 ## Consequences
 
-- #30 can let a household answer for its guests: it writes the same records with `answered_by: household`.
-- Not done: answering for a whole household at once from the console; per-event invitations set from the guest list
-  in bulk; the run of show (M3).
+- #30 lets a household answer for its guests through a household entry point beside `recordAnswer`. It takes the
+  invitation from the stored record or the default, never from input, refuses events the guest is not invited to,
+  respects a wedding's closed RSVPs, and writes with `answered_by: household` through the same writer.
+- The wedding's own logistics fields (`ceremony_time`, `venue_name`, ...) stay canonical for the guest Q&A until
+  M3/M4 builds a guest-facing schedule from the events.
+- Not done: answering for a whole household at once from the console; bulk invitations for an invite-only event; the
+  run of show (M3).

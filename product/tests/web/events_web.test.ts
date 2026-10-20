@@ -34,6 +34,15 @@ function form(path: string, fields: Record<string, string>, cookie?: string): Ap
   }
 }
 
+function formMulti(path: string, fields: readonly (readonly [string, string])[], cookie?: string): ApiRequest {
+  return {
+    method: 'POST',
+    path,
+    headers: { 'content-type': 'application/x-www-form-urlencoded', ...(cookie === undefined ? {} : { cookie }) },
+    rawBody: new URLSearchParams(fields.map(([k, v]): [string, string] => [k, v])).toString(),
+  }
+}
+
 const csrfOf = (page: HttpResult): string => /name="_csrf" value="([^"]+)"/.exec(page.body)?.[1] as string
 
 describe('the events pages', () => {
@@ -44,7 +53,7 @@ describe('the events pages', () => {
     expect(page.body).toContain('Events &amp; RSVPs')
     const csrf = csrfOf(page)
     const added = w.ui.handle(
-      form('/t/demo/events/event-add', { _csrf: csrf, wedding_id: w.ours, name: 'Dinner <b>', starts_at: '2028-06-10T18:00', location: 'Hall', meal_options: 'Fish\r\nVeg\r\n' }, w.planner),
+      formMulti('/t/demo/events/event-add', [['_csrf', csrf], ['wedding_id', w.ours], ['name', 'Dinner <b>'], ['starts_at', '2028-06-10T18:00'], ['location', 'Hall'], ['meal_id', ''], ['meal_label', 'Fish'], ['meal_id', ''], ['meal_label', 'Veg'], ['meal_id', ''], ['meal_label', '']], w.planner),
     )
     expect(added.headers.location).toBe(`/t/demo?wedding=${w.ours}&tab=events&notice=saved`)
     const events = w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=events&notice=saved`, w.planner)).body
@@ -72,8 +81,21 @@ describe('the events pages', () => {
     expect(detail).toContain('Meals — Fish: 0 · Veg: 1')
     expect(detail).toContain('tab=events')
 
-    const bad = w.ui.handle(form('/t/demo/events/rsvp-set', { _csrf: csrf, wedding_id: w.ours, guest_id: guestId, event_id: eventId, invited: 'true', status: 'declined', meal_option_id: veg }, w.planner))
+    // Declining with the earlier meal still selected saves (the meal is dropped); an unknown meal is refused.
+    const declined = w.ui.handle(form('/t/demo/events/rsvp-set', { _csrf: csrf, wedding_id: w.ours, guest_id: guestId, event_id: eventId, invited: 'true', status: 'declined', meal_option_id: veg }, w.planner))
+    expect(declined.headers.location).toBe(`/t/demo?wedding=${w.ours}&tab=guests&guest=${guestId}&notice=saved`)
+    const bad = w.ui.handle(form('/t/demo/events/rsvp-set', { _csrf: csrf, wedding_id: w.ours, guest_id: guestId, event_id: eventId, invited: 'true', status: 'attending', meal_option_id: 'meal_x' }, w.planner))
     expect(bad.headers.location).toBe(`/t/demo?wedding=${w.ours}&tab=guests&guest=${guestId}&notice=invalid`)
+
+    // Renaming a meal in its row keeps the guests' choices.
+    const eventsPage = w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=events`, w.planner)).body
+    expect(eventsPage).toContain(`name="meal_id" value="${veg}"`)
+    w.ui.handle(form('/t/demo/events/rsvp-set', { _csrf: csrf, wedding_id: w.ours, guest_id: guestId, event_id: eventId, invited: 'true', status: 'attending', meal_option_id: veg }, w.planner))
+    const fish = /name="meal_id" value="([^"]+)"><input name="meal_label" maxlength="60" value="Fish"/.exec(eventsPage)?.[1] as string
+    w.ui.handle(
+      formMulti('/t/demo/events/event-update', [['_csrf', csrf], ['wedding_id', w.ours], ['event_id', eventId], ['name', 'Dinner'], ['starts_at', '2028-06-10T18:00'], ['invitation', 'everyone'], ['meal_id', fish], ['meal_label', 'Fish'], ['meal_id', veg], ['meal_label', 'Vegetarian'], ['meal_id', ''], ['meal_label', '']], w.planner),
+    )
+    expect(w.ui.handle(get(`/t/demo?wedding=${w.ours}`, w.planner)).body).toContain('Meals — Fish: 0 · Vegetarian: 1')
   })
 
   it('edits and removes an event; a bad date comes back with a notice; a forged form changes nothing', () => {
@@ -90,15 +112,23 @@ describe('the events pages', () => {
     expect(w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=events`, w.planner)).body).not.toContain('Vows')
   })
 
-  it('a couple manages its own wedding\'s events; another wedding is the generic not-found', () => {
+  it('a couple manages its own wedding\'s events; a sibling wedding is the same generic not-found as a missing one', () => {
     const w = setup()
+    const api = (method: string, path: string, token?: string, body?: unknown) =>
+      w.api.handle({ method, path, headers: token === undefined ? {} : { authorization: `Bearer ${token}` }, rawBody: body === undefined ? undefined : JSON.stringify(body) })
+    const plannerToken = (api('POST', '/t/demo/sessions', undefined, { role: 'planner' }).body as { token: string }).token
+    const sibling = (api('POST', '/t/demo/weddings', plannerToken, { couple_display_name: 'Sam & Kit', event_date: '2028-07-10' }).body as { wedding: { wedding_id: string } }).wedding.wedding_id
     const couple = w.login({ role: 'couple', wedding_id: w.ours })
     const page = w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=events`, couple))
     expect(page.status).toBe(200)
-    const foreignPage = w.ui.handle(get('/t/demo?wedding=wedding_other&tab=events', couple))
-    const foreignPost = w.ui.handle(form('/t/demo/events/event-add', { _csrf: csrfOf(page), wedding_id: 'wedding_other', name: 'X', starts_at: '2028-06-10T18:00' }, couple))
-    expect(foreignPage.status).toBe(404)
-    expect(foreignPost.status).toBe(404)
-    expect(foreignPost.body).toBe(foreignPage.body)
+    const responses = [sibling, 'wedding_missing'].flatMap((id) => [
+      w.ui.handle(get(`/t/demo?wedding=${id}&tab=events`, couple)),
+      w.ui.handle(form('/t/demo/events/event-add', { _csrf: csrfOf(page), wedding_id: id, name: 'X', starts_at: '2028-06-10T18:00' }, couple)),
+      w.ui.handle(form('/t/demo/events/rsvp-set', { _csrf: csrfOf(page), wedding_id: id, guest_id: 'g', event_id: 'e', status: 'attending' }, couple)),
+    ])
+    for (const res of responses) {
+      expect(res.status).toBe(404)
+      expect(res.body).toBe(responses[0]?.body)
+    }
   })
 })

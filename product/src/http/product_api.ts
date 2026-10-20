@@ -13,7 +13,13 @@ import type { AccountService } from '../accounts/account_service'
 import { publicAccountView } from '../accounts/account_store'
 import type { InvitedRole } from '../accounts/invitation_store'
 import type { MembershipService } from '../accounts/membership_service'
-import type { EventInput, EventService, RsvpInput } from '../events/event_service'
+import {
+  type MealOptionInput,
+  type RsvpInput,
+  WEDDING_EVENT_LIMITS,
+  type WeddingEventInput,
+  type WeddingEventService,
+} from '../wedding_events/wedding_event_service'
 import type { FeedbackService } from '../feedback/feedback_service'
 import type { GuestInput, GuestListService, GuestSide } from '../guests/guest_list_service'
 import type { ErrorLog } from '../operability/error_log'
@@ -156,7 +162,7 @@ export interface WeddingHandlerDeps {
   /** Issue #27: the wedding's guest list (households + guests). Absent ⇒ the sub-routes are not mounted. */
   readonly guestList?: GuestListService
   /** Issue #29: the wedding's events and RSVPs. Absent ⇒ the sub-routes are not mounted. */
-  readonly events?: EventService
+  readonly events?: WeddingEventService
 }
 
 /** The narrow bag handed to the operator-gated /admin handlers — DELIBERATELY excludes the operator store. */
@@ -309,7 +315,7 @@ export interface ProductApiDeps {
   /** Issue #27: each wedding's guest list, under /t/:slug/weddings/:id/{guest-list,households,guests}. */
   readonly guestList?: GuestListService
   /** Issue #29: each wedding's events and RSVPs, under /t/:slug/weddings/:id/events and …/guests/:id/rsvps. */
-  readonly events?: EventService
+  readonly events?: WeddingEventService
   /**
    * Issue #13: where a request that ends in a 500 is recorded (code + location, never data), and what the operator
    * reads at /admin/errors. Absent ⇒ nothing is recorded (fixtures).
@@ -892,7 +898,7 @@ function dispatchEvents(
   req: ApiRequest,
   weddingId: string,
   rest: readonly string[],
-  events: EventService,
+  events: WeddingEventService,
 ): ApiResponse {
   events.assertReach(context, principal, weddingId)
   const [resource, id, sub, subId] = rest
@@ -908,7 +914,7 @@ function dispatchEvents(
   }
   if (resource === 'events' && id !== undefined && sub === 'rsvps' && subId !== undefined && rest.length === 4) {
     if (req.method !== 'PUT') throw methodNotAllowed()
-    return { status: 200, body: { rsvp: events.setRsvp(context, principal, weddingId, id, subId, rsvpInput(req)) } }
+    return { status: 200, body: { rsvp: events.recordAnswer(context, principal, weddingId, id, subId, rsvpInput(req)) } }
   }
   if (resource === 'guests' && id !== undefined && sub === 'rsvps' && rest.length === 3) {
     if (req.method !== 'GET') throw methodNotAllowed()
@@ -917,19 +923,37 @@ function dispatchEvents(
   throw routeNotFound()
 }
 
-/** An event body: `{name, starts_at, location?, meal_options?: string[]}`. */
-function eventInput(req: ApiRequest): EventInput {
+/**
+ * An event body: `{name, starts_at, location?, invitation?, meal_options?}`. A meal option is `{option_id?, label}` (an
+ * existing id renames that option) or a plain label. The list's length is bounded here, before any per-item work.
+ */
+function eventInput(req: ApiRequest): WeddingEventInput {
   const body = parseObjectBody(req.rawBody)
   const meals = body.meal_options
-  if (meals !== undefined && (!Array.isArray(meals) || meals.some((m) => typeof m !== 'string'))) {
-    throw new ProductError('PRODUCT.BAD_REQUEST', 'meal_options must be a list of strings.', {})
+  if (meals !== undefined && (!Array.isArray(meals) || meals.length > WEDDING_EVENT_LIMITS.meal_inputs)) {
+    throw new ProductError('PRODUCT.BAD_REQUEST', `meal_options must be a list of at most ${WEDDING_EVENT_LIMITS.meal_inputs} options.`, {})
+  }
+  const meal_options = (meals ?? []).map((m: unknown): MealOptionInput => {
+    if (typeof m === 'string') return { label: m }
+    if (typeof m === 'object' && m !== null && !Array.isArray(m)) {
+      const option = m as Record<string, unknown>
+      const label = option.label
+      const id = option.option_id
+      if (typeof label === 'string' && (id === undefined || typeof id === 'string')) return { label, ...(id === undefined ? {} : { option_id: id }) }
+    }
+    throw new ProductError('PRODUCT.BAD_REQUEST', 'A meal option is a label or {option_id?, label}.', {})
+  })
+  const invitation = body.invitation
+  if (invitation !== undefined && invitation !== 'everyone' && invitation !== 'selected') {
+    throw new ProductError('PRODUCT.BAD_REQUEST', 'invitation must be everyone or selected.', {})
   }
   const location = optionalString(body, 'location')
   return {
     name: requireString(body, 'name'),
     starts_at: requireString(body, 'starts_at'),
     ...(location === undefined ? {} : { location }),
-    ...(meals === undefined ? {} : { meal_options: meals as string[] }),
+    ...(invitation === undefined ? {} : { invitation }),
+    ...(meals === undefined ? {} : { meal_options }),
   }
 }
 

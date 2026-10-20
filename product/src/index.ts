@@ -305,17 +305,20 @@ export {
 
 // A wedding's events and the guests' RSVPs per event (issue #29, ADR 0048).
 export {
-  EVENT_LIMITS,
-  type EventCounts,
-  type EventInput,
-  EventService,
-  type EventsView,
+  type EventInvitation,
   type GuestEventRsvp,
   isLocalDateTime,
+  type MealOptionInput,
   type RsvpAnsweredBy,
   type RsvpInput,
   type RsvpStatus,
-} from './events/event_service'
+  WEDDING_EVENT_LIMITS,
+  type WeddingEventCounts,
+  type WeddingEventInput,
+  WeddingEventService,
+  type WeddingEventsView,
+} from './wedding_events/wedding_event_service'
+export { GuestDirectory } from './guests/guest_directory'
 export { assertWeddingReach } from './wedding/wedding_reach'
 
 // Operability (issue #13, ADR 0044): the per-request log line and the server-error log.

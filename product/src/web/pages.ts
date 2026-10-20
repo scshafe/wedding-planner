@@ -12,7 +12,7 @@ import type {
 
 import type { TeamView } from '../accounts/membership_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
-import type { EventCounts, EventsView, GuestEventRsvp } from '../events/event_service'
+import type { WeddingEventCounts, WeddingEventsView, GuestEventRsvp } from '../wedding_events/wedding_event_service'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -955,14 +955,14 @@ export function renderDetail(
   csrfToken: string,
   invalid = false,
   inviteCouple?: { readonly notice?: 'sent' | 'exists' | 'invalid' },
-  events?: EventsView,
+  events?: WeddingEventsView,
 ): string {
   // Issue #29: each event's live RSVP counts, when the events are wired.
   const eventsCard =
     events === undefined
       ? html``
       : html`<div class="card"><h3>Events</h3>
-    ${events.events.length === 0 ? html`<p class="note">No events yet.</p>` : html`<ul>${events.events.map((e, i) => html`<li>${eventLine(e, events.counts[i])}</li>`)}</ul>`}
+    ${events.events.length === 0 ? html`<p class="note">No events yet.</p>` : html`<ul>${events.events.map((entry) => html`<li>${eventLine(entry.event, entry.counts)}</li>`)}</ul>`}
     <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=events">Events &amp; RSVPs →</a></p>
   </div>`
   // Issue #11: a planner can invite this wedding's couple (role couple, bound to this wedding).
@@ -1482,16 +1482,17 @@ function eventWhen(e: WeddingEvent): string {
 }
 
 /** An event with its live counts and meals. */
-function eventLine(e: WeddingEvent, c: EventCounts | undefined): SafeHtml {
-  if (c === undefined) return html`<strong>${e.name}</strong> <span class="note">${eventWhen(e)}</span>`
+function eventLine(e: WeddingEvent, c: WeddingEventCounts): SafeHtml {
   const meals = e.meal_options.map((o) => `${o.label}: ${c.meals[o.option_id] ?? 0}`)
   if (e.meal_options.length > 0 && c.meal_unchosen > 0) meals.push(`not chosen: ${c.meal_unchosen}`)
-  return html`<strong>${e.name}</strong> <span class="note">${eventWhen(e)}</span><br>
+  return html`<strong>${e.name}</strong> <span class="note">${eventWhen(e)}${e.invitation === 'selected' ? ' · invited guests only' : ''}</span><br>
     ${`${c.attending} attending · ${c.declined} declined · ${c.pending} pending (of ${c.invited} invited)`}
     ${meals.length === 0 ? html`` : html`<br><span class="note">${`Meals — ${meals.join(' · ')}`}</span>`}`
 }
 
 export type EventsNotice = 'saved' | 'removed' | 'invalid' | 'conflict'
+
+const INVITATION_LABELS = Object.freeze({ everyone: 'Every guest', selected: 'Only the guests I mark invited' })
 
 const EVENTS_NOTICES: Readonly<Record<EventsNotice, string>> = Object.freeze({
   saved: 'Saved.',
@@ -1500,16 +1501,25 @@ const EVENTS_NOTICES: Readonly<Record<EventsNotice, string>> = Object.freeze({
   conflict: 'This wedding has reached the event limit.',
 })
 
-/** The fields of an event form; meals are one per line. */
+/** The fields of an event form. Each meal is a row carrying its id, so renaming one keeps the guests' choices. */
 function eventFields(prefix: string, e?: WeddingEvent): SafeHtml {
+  const invitation = e?.invitation ?? 'everyone'
+  const mealRow = (id: string, label: string) =>
+    html`<input type="hidden" name="meal_id" value="${id}"><input name="meal_label" maxlength="60" value="${label}" aria-label="Meal option">`
+  const meals = [...(e?.meal_options ?? []).map((o) => mealRow(o.option_id, o.label)), mealRow('', ''), mealRow('', ''), mealRow('', '')]
   return html`<label for="${prefix}_name">Name <span class="note">(e.g. "Ceremony")</span></label>
       <input id="${prefix}_name" name="name" maxlength="120" required value="${e?.name ?? ''}">
       <label for="${prefix}_starts">Starts</label>
       <input id="${prefix}_starts" name="starts_at" type="datetime-local" required value="${e?.starts_at ?? ''}">
       <label for="${prefix}_location">Location <span class="note">(optional)</span></label>
       <input id="${prefix}_location" name="location" maxlength="200" value="${e?.location ?? ''}">
-      <label for="${prefix}_meals">Meal options <span class="note">(one per line; leave empty for no meal choice)</span></label>
-      <textarea id="${prefix}_meals" name="meal_options" rows="3">${(e?.meal_options ?? []).map((o) => o.label).join('\n')}</textarea>`
+      <label for="${prefix}_invitation">Who is invited</label>
+      <select id="${prefix}_invitation" name="invitation">${(['everyone', 'selected'] as const).map((v) =>
+        v === invitation
+          ? html`<option value="${v}" selected>${INVITATION_LABELS[v]}</option>`
+          : html`<option value="${v}">${INVITATION_LABELS[v]}</option>`,
+      )}</select>
+      <fieldset><legend>Meal options <span class="note">(rename one in place to keep the guests' choices; clear one to remove it; leave all empty for no meal choice)</span></legend>${meals}</fieldset>`
 }
 
 /** A wedding's events with their live counts (issue #29): add, edit, remove. Answers are recorded per guest. */
@@ -1517,15 +1527,15 @@ export function renderEvents(
   theme: Tenant['theme'],
   slug: string,
   wedding: Wedding,
-  view: EventsView,
+  view: WeddingEventsView,
   csrfToken: string,
   notice?: EventsNotice,
 ): string {
   const w = wedding.wedding_id
   const banner = notice === undefined ? html`` : html`<p class="note">${EVENTS_NOTICES[notice]}</p>`
   const cards = view.events.map(
-    (e, i) => html`<div class="card">
-    <p>${eventLine(e, view.counts[i])}</p>
+    ({ event: e, counts }) => html`<div class="card">
+    <p>${eventLine(e, counts)}</p>
     <details><summary>Edit or remove this event</summary>
       <form method="post" action="/t/${slug}/events/event-update">${csrfField(csrfToken)}
         <input type="hidden" name="wedding_id" value="${w}">
@@ -1547,7 +1557,7 @@ export function renderEvents(
     html`<p><a href="/t/${slug}?wedding=${w}">← ${wedding.couple_display_name}</a></p>
   <h2>Events &amp; RSVPs</h2>
   ${banner}
-  <p class="note">Every guest is invited to every event unless you change it. Record answers on each guest's page from the <a href="/t/${slug}?wedding=${w}&amp;tab=guests">guest list</a>.</p>
+  <p class="note">An event invites every guest, or only the guests you mark invited; a plus-one follows their host. Record invitations and answers on each guest's page from the <a href="/t/${slug}?wedding=${w}&amp;tab=guests">guest list</a>.</p>
   ${cards}
   <div class="card">
     <h3>Add an event</h3>

@@ -60,5 +60,5 @@
 - [In-app feedback](in-app-feedback.md) — issue #12 / ADRs 0043+0045: footer link on signed-in pages, stores only typed text + tenant/role/page key, operator-only /admin/feedback; owner decided it STAYS IN THE APP (no export to GitHub/agents; feedback role stays off)
 - [Operability: logs, errors, build](operability-logs-errors-build.md) — issue #13 / ADR 0044: route-pattern-only request logs, 500s by code+frames never message, /healthz commit from WP_BUILD_COMMIT or the WP_IMAGE_REF tag
 - [Guest list](guest-list.md) — issue #27 / ADR 0046: household + wedding_guest contracts (not the messaging guest), wedding boundary with NOT_FOUND masking, plus-one model, bounds
-- [Events and RSVPs](events-and-rsvps.md) — #29 / ADR 0048: no RSVP record = invited+pending; counts over guests; guest removal hook; assertWeddingReach
+- [Events and RSVPs](events-and-rsvps.md) — #29 / ADR 0048: no RSVP record = event default + pending; counts over guests; GuestDirectory; events are the guest list's hook; assertWeddingReach
 - [Guest list CSV](guest-list-csv.md) — #28 / ADR 0047: export neutralizes formulas; import plans every row, applies all-or-nothing, matches by household + name

@@ -14,8 +14,9 @@ import { PendingResetQueue } from '../accounts/pending_reset_queue'
 import { PasswordHasher, PRODUCTION_SCRYPT_COST, type ScryptCost } from '../accounts/password_hasher'
 import { RateLimiter } from '../accounts/rate_limiter'
 import { BillingLedger } from '../billing/billing_ledger'
-import { EventService } from '../events/event_service'
+import { WeddingEventService } from '../wedding_events/wedding_event_service'
 import { FeedbackService } from '../feedback/feedback_service'
+import { GuestDirectory } from '../guests/guest_directory'
 import { GUEST_LIST_LIMITS, GuestListService } from '../guests/guest_list_service'
 import { ErrorLog } from '../operability/error_log'
 import { SimulatedEmailAdapter } from '../email/simulated_email_adapter'
@@ -266,12 +267,11 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   // appends, the read surface returns it as the third scoped array. Stamps reply_id/sent_at from injected ids/clock.
   const replies = new EscalationReplyLog(tenants, ids, clock, store)
 
-  // A wedding's guest list (issue #27) and its events + RSVPs (issue #29). Removing a guest forgets their RSVPs in
-  // the same request: the guest list calls the event service through its hook (bound once both exist).
-  const guestList: GuestListService = new GuestListService(tenants, weddings, authorizer, clock, ids, store, GUEST_LIST_LIMITS, {
-    guestsRemoved: (context, wedding_id, guest_ids) => events.forgetGuests(context, wedding_id, guest_ids),
-  })
-  const events: EventService = new EventService(tenants, weddings, authorizer, guestList, clock, ids, store)
+  // A wedding's guest list (issue #27) and its events + RSVPs (issue #29). The events read guests through the
+  // directory; the guest list tells the events when guests are removed (its hook), in the same request.
+  const guestDirectory = new GuestDirectory(tenants, store)
+  const events = new WeddingEventService(tenants, weddings, authorizer, guestDirectory, clock, ids, store)
+  const guestList = new GuestListService(tenants, weddings, authorizer, clock, ids, store, GUEST_LIST_LIMITS, events)
 
   const api = new ProductApi({
     resolver,

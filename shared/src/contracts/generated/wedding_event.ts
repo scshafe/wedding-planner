@@ -30,11 +30,15 @@ starts_at: string
  */
 location?: string
 /**
+ * Who is invited when a guest has no RSVP record for this event: every guest, or only the guests marked invited (an invite-only rehearsal dinner). A plus-one without a record follows their host.
+ */
+invitation: ("everyone" | "selected")
+/**
  * The meals a guest can choose at this event; empty when there is no meal choice. At most 8 (enforced by the event service: a maxItems here would generate a tuple type).
  */
 meal_options: {
 /**
- * Stable across label edits, so a guest's choice survives a renamed meal.
+ * Stable across label edits (an edit that names the option_id renames it in place), so a guest's choice survives a renamed meal.
  */
 option_id: string
 label: string

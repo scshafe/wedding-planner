@@ -5,7 +5,7 @@
  */
 
 /**
- * One guest's answer for one event of a wedding (issue #29). Stored under groupedKey(wedding_id, `${event_id}:${guest_id}`). No record means the default: invited, pending. Removed with its guest or its event.
+ * One guest's answer for one event of a wedding (issue #29). Stored under groupedKey(wedding_id, `${event_id}:${guest_id}`). No record means the default: the event's invitation (a plus-one follows their host), pending. Removed with its guest or its event.
  */
 export interface WeddingRsvp {
 /**
@@ -22,7 +22,7 @@ event_id: string
  */
 guest_id: string
 /**
- * Whether the guest is invited to this event. A guest not invited has no answer (status pending).
+ * Whether the guest is invited to this event (overrides the event's invitation default). A guest not invited has no answer (status pending).
  */
 invited: boolean
 status: ("pending" | "attending" | "declined")

@@ -5,7 +5,7 @@
   "description": "One event of a wedding (issue #29): the ceremony, the reception, a rehearsal dinner. Guests answer an RSVP per event. Owned by one tenant and one wedding; stored under groupedKey(wedding_id, event_id) and read one wedding at a time.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["event_id", "tenant_id", "wedding_id", "name", "starts_at", "meal_options", "created_at"],
+  "required": ["event_id", "tenant_id", "wedding_id", "name", "starts_at", "invitation", "meal_options", "created_at"],
   "properties": {
     "event_id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Identity within the owning tenant's partition, from the injected id generator." },
     "tenant_id": { "type": "string", "minLength": 1, "description": "The owning tenant. Compared to the context's tenant only; never selects the partition." },
@@ -13,6 +13,7 @@
     "name": { "type": "string", "minLength": 1, "maxLength": 120 },
     "starts_at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}$", "description": "The local date and time the event starts (YYYY-MM-DDTHH:MM, no zone: the time on the invitation, where the event is)." },
     "location": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Where it happens (free text), when known." },
+    "invitation": { "type": "string", "enum": ["everyone", "selected"], "description": "Who is invited when a guest has no RSVP record for this event: every guest, or only the guests marked invited (an invite-only rehearsal dinner). A plus-one without a record follows their host." },
     "meal_options": {
       "type": "array",
       "description": "The meals a guest can choose at this event; empty when there is no meal choice. At most 8 (enforced by the event service: a maxItems here would generate a tuple type).",
@@ -21,7 +22,7 @@
         "additionalProperties": false,
         "required": ["option_id", "label"],
         "properties": {
-          "option_id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Stable across label edits, so a guest's choice survives a renamed meal." },
+          "option_id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Stable across label edits (an edit that names the option_id renames it in place), so a guest's choice survives a renamed meal." },
           "label": { "type": "string", "minLength": 1, "maxLength": 60 }
         }
       }

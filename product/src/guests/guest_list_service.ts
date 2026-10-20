@@ -4,6 +4,7 @@ import type { Principal } from '../auth/principal'
 import type { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import { isEmailAddress } from '../email/email_port'
 import { type ImportProblem, planGuestImport } from './guest_csv'
+import { GuestDirectory } from './guest_directory'
 import { COLLECTIONS } from '../persistence/collections'
 import { groupedKey, type RecordStore } from '../persistence/record_store'
 import { ProductError } from '../product_error'
@@ -82,6 +83,7 @@ export interface GuestListHooks {
   guestsRemoved(context: TenantContext, wedding_id: string, guest_ids: readonly string[]): void
 }
 
+
 export interface GuestInput {
   readonly household_id?: string
   readonly first_name: string
@@ -99,6 +101,7 @@ export interface GuestInput {
 export class GuestListService {
   readonly #households: TenantScopedRepository<Household>
   readonly #guests: TenantScopedRepository<WeddingGuest>
+  readonly #directory: GuestDirectory
 
   constructor(
     liveness: TenantLivenessCheck,
@@ -112,6 +115,7 @@ export class GuestListService {
   ) {
     this.#households = new TenantScopedRepository<Household>(liveness, (h) => groupedKey(h.wedding_id, h.household_id), COLLECTIONS.household, store)
     this.#guests = new TenantScopedRepository<WeddingGuest>(liveness, (g) => groupedKey(g.wedding_id, g.guest_id), COLLECTIONS.weddingGuest, store)
+    this.#directory = new GuestDirectory(liveness, store)
   }
 
   /**
@@ -191,8 +195,7 @@ export class GuestListService {
   /** Remove a household and every guest in it. Returns whether it existed. */
   removeHousehold(context: TenantContext, principal: Principal, wedding_id: string, household_id: string): boolean {
     this.#reach(context, principal, wedding_id)
-    const household = this.#households.read(context, groupedKey(wedding_id, household_id))
-    if (household === undefined || household.wedding_id !== wedding_id) return false
+    if (this.#directory.household(context, wedding_id, household_id) === undefined) return false
     const guests = this.#guestsOf(context, wedding_id)
     const leaving = new Set(guests.filter((g) => g.household_id === household_id).map((g) => g.guest_id))
     const removed: string[] = []
@@ -292,8 +295,7 @@ export class GuestListService {
   /** Remove a guest and their plus-one. Returns whether the guest existed. */
   removeGuest(context: TenantContext, principal: Principal, wedding_id: string, guest_id: string): boolean {
     this.#reach(context, principal, wedding_id)
-    const guest = this.#guests.read(context, groupedKey(wedding_id, guest_id))
-    if (guest === undefined || guest.wedding_id !== wedding_id) return false
+    if (this.#directory.guest(context, wedding_id, guest_id) === undefined) return false
     const removed = [guest_id]
     for (const other of this.#guestsOf(context, wedding_id)) {
       if (other.plus_one_of === guest_id) {
@@ -381,18 +383,16 @@ export class GuestListService {
   }
 
   #householdsOf(context: TenantContext, wedding_id: string): Household[] {
-    return [...this.#households.listGroup(context, wedding_id)].filter((h) => h.wedding_id === wedding_id)
+    return this.#directory.householdsOf(context, wedding_id)
   }
 
   #guestsOf(context: TenantContext, wedding_id: string): WeddingGuest[] {
-    return [...this.#guests.listGroup(context, wedding_id)].filter((g) => g.wedding_id === wedding_id)
+    return this.#directory.guestsOf(context, wedding_id)
   }
 
   #household(context: TenantContext, wedding_id: string, household_id: string, code = 'PRODUCT.NOT_FOUND'): Household {
-    const household = household_id.length === 0 ? undefined : this.#households.read(context, groupedKey(wedding_id, household_id))
-    if (household === undefined || household.wedding_id !== wedding_id) {
-      throw new ProductError(code, 'No such household on this wedding.', {})
-    }
+    const household = this.#directory.household(context, wedding_id, household_id)
+    if (household === undefined) throw new ProductError(code, 'No such household on this wedding.', {})
     return household
   }
 
