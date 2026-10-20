@@ -110,4 +110,6 @@ export type {
   WeddingVendor,
   BudgetCategory,
   RunOfShowItem,
+  SeatingTable,
+  SeatAssignment,
 } from './contracts/contract_types'

@@ -82,3 +82,6 @@ export type { WeddingVendor } from './generated/wedding_vendor'
 export type { BudgetCategory } from './generated/budget_category'
 // One item of a wedding's run of show (issue #45). ADR 0053.
 export type { RunOfShowItem } from './generated/run_of_show_item'
+// A wedding's seating plan: tables, and where each guest sits (issue #46). ADR 0054.
+export type { SeatingTable } from './generated/seating_table'
+export type { SeatAssignment } from './generated/seat_assignment'

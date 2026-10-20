@@ -20,6 +20,7 @@ import type { ChecklistView, DueAcrossWeddings, DueTask } from '../checklist/che
 import { VENDOR_CATEGORIES, type VendorsView } from '../vendors/vendor_service'
 import type { BudgetLine, BudgetView } from '../budget/budget_service'
 import type { RunOfShowLine, RunOfShowView } from '../run_of_show/run_of_show_service'
+import type { SeatedGuest, SeatingView } from '../seating/seating_service'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -1049,7 +1050,7 @@ export function renderDetail(
     <p>Status: <span class="status">${wedding.status}</span></p>
     <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=guests">Guest list →</a></p>
     ${checklistLine}
-    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=vendors">Vendors →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=budget">Budget →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=run-of-show">Run of show →</a></p>
+    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=vendors">Vendors →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=budget">Budget →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=run-of-show">Run of show →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=seating">Seating →</a></p>
     <p class="note">Wedding id: <code>${wedding.wedding_id}</code> · created ${wedding.created_at}</p>
     <p class="note">Active strategy: <a href="/t/${slug}/strategy">the platform’s data-optimized planning defaults</a> (applied to every wedding in this workspace).</p>
   </div>
@@ -2173,6 +2174,91 @@ export function renderRunOfShow(
     <form method="post" action="/t/${slug}/run-of-show/show-add">${hidden({ wedding_id: w })}${fields('new')}<p><button type="submit">Add</button></p></form></div>`
       : html``
   }`,
+    'wedding',
+  )
+}
+
+export type SeatingNotice = 'saved' | 'removed' | 'invalid' | 'full'
+
+const SEATING_NOTICES: Readonly<Record<SeatingNotice, string>> = Object.freeze({
+  saved: 'Saved.',
+  removed: 'Removed.',
+  invalid: 'That could not be saved. A table seats from 1 to 50 guests.',
+  full: 'That table does not have room (or seats more guests than that).',
+})
+
+/**
+ * A wedding's seating plan (issue #46) for one event: the tables with their guests, the attending guests not seated
+ * yet, and the seated guests no longer attending. `print` gives the table list alone: each table, its guests
+ * alphabetically, with their dietary notes.
+ */
+export function renderSeating(theme: Tenant['theme'], slug: string, wedding: Wedding, view: SeatingView, csrfToken: string, print: boolean, notice?: SeatingNotice): string {
+  const w = wedding.wedding_id
+  const eventQuery = view.event === undefined ? '' : `&event=${view.event.event_id}`
+  const guestName = (g: SeatedGuest) => html`${g.name}${g.dietary === undefined ? html`` : html` <span class="note">${`(${g.dietary})`}</span>`}`
+  if (print) {
+    return signedInShell(
+      theme,
+      slug,
+      'Table list',
+      html`<h2>${`Table list — ${wedding.couple_display_name}${view.event === undefined ? '' : `, ${view.event.name}`}`}</h2>
+  ${view.tables.map((t) => html`<div class="card"><h3>${`${t.table.name} (${t.guests.length}/${t.table.capacity})`}</h3><ul>${t.guests.map((g) => html`<li>${guestName(g)}</li>`)}</ul></div>`)}`,
+      'wedding',
+    )
+  }
+  const hidden = (fields: Record<string, string>) => html`${csrfField(csrfToken)}${Object.entries(fields).map(([k, v]) => html`<input type="hidden" name="${k}" value="${v}">`)}`
+  // The table choice is rendered once per form, never once per guest: the page grows with guests plus tables.
+  const tableSelect = html`<select name="table_id">${view.tables.map((t) => html`<option value="${t.table.table_id}">${`${t.table.name} (${t.free} free)`}</option>`)}</select>`
+  const back = { wedding_id: w, event_id: view.event?.event_id ?? '' }
+  return signedInShell(
+    theme,
+    slug,
+    'Seating',
+    html`<p><a href="/t/${slug}?wedding=${w}">← ${wedding.couple_display_name}</a> · <a href="/t/${slug}?wedding=${w}&amp;tab=seating${eventQuery}&amp;print=1">Printable table list</a></p>
+  <h2>Seating</h2>
+  ${notice === undefined ? html`` : html`<p class="note">${SEATING_NOTICES[notice]}</p>`}
+  ${
+    view.events.length === 0
+      ? html`<p class="note">No events yet: every guest is shown. Add the reception on the events page to seat only the guests attending it.</p>`
+      : html`<form method="get" action="/t/${slug}"><input type="hidden" name="wedding" value="${w}"><input type="hidden" name="tab" value="seating">
+    <label>Seating for <select name="event">${view.events.map((e) => (e.event_id === view.event?.event_id ? html`<option value="${e.event_id}" selected>${e.name}</option>` : html`<option value="${e.event_id}">${e.name}</option>`))}</select></label>
+    <button type="submit">Show</button></form>`
+  }
+  ${view.tables.map(
+    (t) => html`<div class="card"><h3>${`${t.table.name} — ${t.guests.length} of ${t.table.capacity}`}</h3>
+    <ul>${t.guests.map(
+      (g) => html`<li>${guestName(g)}${g.attending ? html`` : html` <span class="note" style="color:#b00">no longer attending</span>`}
+      <form class="inline" method="post" action="/t/${slug}/seating/seat-guest">${hidden({ ...back, guest_id: g.guest_id, table_id: '' })}<button type="submit">Unseat</button></form></li>`,
+    )}</ul>
+    <details><summary>Edit or remove the table</summary>
+      <form method="post" action="/t/${slug}/seating/table-update">${hidden({ ...back, table_id: t.table.table_id })}
+        <label>Name <input name="name" maxlength="60" required value="${t.table.name}"></label>
+        <label>Seats <input name="capacity" type="number" min="1" max="50" required value="${String(t.table.capacity)}"></label>
+        <button type="submit">Save table</button></form>
+      <form method="post" action="/t/${slug}/seating/table-remove">${hidden({ ...back, table_id: t.table.table_id })}<button type="submit">Remove the table (its guests become unseated)</button></form>
+    </details></div>`,
+  )}
+  <div class="card"><h3>${`Not seated yet (${view.unseated.length})`}</h3>
+    ${
+      view.unseated.length === 0
+        ? html`<p class="note">Everyone attending has a seat.</p>`
+        : view.tables.length === 0
+          ? html`<p class="note">Add a table first.</p>`
+          : html`<ul>${view.unseated.map((g) => html`<li>${guestName(g)}</li>`)}</ul>
+    <form method="post" action="/t/${slug}/seating/seat-guest">${hidden(back)}
+      <label>Seat <select name="guest_id">${view.unseated.map((g) => html`<option value="${g.guest_id}">${g.name}</option>`)}</select></label>
+      ${tableSelect}<button type="submit">Seat</button></form>
+    <form method="post" action="/t/${slug}/seating/seat-household">${hidden(back)}
+      <label>Seat a whole household <select name="household_id">${view.households.map((h) => html`<option value="${h.household_id}">${h.name}</option>`)}</select></label>
+      ${tableSelect}<button type="submit">Seat them together</button></form>`
+    }
+  </div>
+  <div class="card"><h3>Add a table</h3>
+    <form method="post" action="/t/${slug}/seating/table-add">${hidden(back)}
+      <label>Name <input name="name" maxlength="60" required></label>
+      <label>Seats <input name="capacity" type="number" min="1" max="50" required value="8"></label>
+      <button type="submit">Add table</button></form>
+  </div>`,
     'wedding',
   )
 }

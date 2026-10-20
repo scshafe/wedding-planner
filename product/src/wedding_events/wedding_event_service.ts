@@ -420,6 +420,24 @@ export class WeddingEventService implements GuestListHooks {
     }
   }
 
+  /**
+   * Each guest's effective invitation and answer for one event of the wedding (issue #46: who is attending, for the
+   * seating plan). No boundary check: callers have established reach. Undefined when the event is not on the wedding.
+   */
+  statusesFor(context: TenantContext, wedding_id: string, event_id: string): ReadonlyMap<string, { readonly invited: boolean; readonly status: RsvpStatus }> | undefined {
+    const event = this.eventsOf(context, wedding_id).find((e) => e.event_id === event_id)
+    if (event === undefined) return undefined
+    const guests = this.guests.guestsOf(context, wedding_id)
+    const rsvps = new Map(this.#rsvps.listGroup(context, wedding_id).map((r) => [rsvpId(r.event_id, r.guest_id), r]))
+    const answers = new Answers(guests, rsvps)
+    return new Map(
+      guests.map((g) => {
+        const invited = answers.invited(event, g)
+        return [g.guest_id, { invited, status: invited ? (answers.rsvp(event, g)?.status ?? 'pending') : 'pending' }]
+      }),
+    )
+  }
+
   /** The wedding's events, by start time then name. No boundary check: callers have established reach. */
   eventsOf(context: TenantContext, wedding_id: string): WeddingEvent[] {
     return this.#events

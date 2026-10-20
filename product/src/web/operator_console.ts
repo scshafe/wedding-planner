@@ -1,6 +1,7 @@
 import type { CsrfGuard } from '../auth/csrf_guard'
 import type { OutboxMessage } from '../email/simulated_email_adapter'
 import type { ApiRequest } from '../http/api_message'
+import { queryParam } from '../http/path'
 import type { ProductApi } from '../http/product_api'
 import type { Tenant } from '@wedding-planner/shared'
 
@@ -216,10 +217,3 @@ export class OperatorConsole {
 
 const TENANTS_NOTICE_VALUES: readonly TenantsNotice[] = ['owner_sent', 'owner_invalid', 'owner_conflict', 'owner_inactive']
 
-/** Extract a single query parameter value from a path, or undefined. */
-function queryParam(path: string, name: string): string | undefined {
-  const q = path.indexOf('?')
-  if (q === -1) return undefined
-  const value = new URLSearchParams(path.slice(q + 1)).get(name)
-  return value === null ? undefined : value
-}

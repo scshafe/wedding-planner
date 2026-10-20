@@ -17,6 +17,7 @@ import { ChecklistService } from '../checklist/checklist_service'
 import { VendorService } from '../vendors/vendor_service'
 import { BudgetService } from '../budget/budget_service'
 import { RunOfShowService } from '../run_of_show/run_of_show_service'
+import { SeatingService } from '../seating/seating_service'
 import { BillingLedger } from '../billing/billing_ledger'
 import { WeddingEventService } from '../wedding_events/wedding_event_service'
 import { FeedbackService } from '../feedback/feedback_service'
@@ -278,7 +279,9 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   const events = new WeddingEventService(tenants, weddings, authorizer, guestDirectory, clock, ids, store)
   // Households' RSVP links (issue #30): the public RSVP page's authority; a link goes with its household.
   const rsvpLinks = new RsvpLinkService(tenants, weddings, authorizer, guestDirectory, clock, ids, store, config.publicUrl)
-  const guestList = new GuestListService(tenants, weddings, authorizer, clock, ids, store, GUEST_LIST_LIMITS, fanOutGuestListHooks(events, rsvpLinks))
+  // A wedding's seating plan (issue #46): a removed guest loses their seat through the guest list's hook too.
+  const seating = new SeatingService(tenants, weddings, authorizer, guestDirectory, events, clock, ids, store)
+  const guestList = new GuestListService(tenants, weddings, authorizer, clock, ids, store, GUEST_LIST_LIMITS, fanOutGuestListHooks(events, rsvpLinks, seating))
 
   const vendors = new VendorService(tenants, weddings, authorizer, clock, ids, store)
 
@@ -305,6 +308,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     budget: new BudgetService(tenants, weddings, authorizer, vendors, clock, ids, store),
     // Each wedding's run of show (issue #45): the day-of timeline and vendor call times.
     runOfShow: new RunOfShowService(tenants, weddings, authorizer, vendors, events, clock, ids, store),
+    seating,
     // In-app feedback (issue #12): stored in the shared store, read by the operator at /admin/feedback.
     feedback: new FeedbackService(clock, ids, limiter, store),
     // Operability (issue #13): 500s are recorded (code + location, never data); /healthz names the build.

@@ -16,3 +16,11 @@ export function splitPath(path: string): string[] {
   const clean = query === -1 ? path : path.slice(0, query)
   return clean.split('/').filter((s) => s.length > 0)
 }
+
+/** @canonical query_param -- one query-string value of a request path, or undefined (the web pages and the API). */
+export function queryParam(path: string, name: string): string | undefined {
+  const q = path.indexOf('?')
+  if (q === -1) return undefined
+  const value = new URLSearchParams(path.slice(q + 1)).get(name)
+  return value === null ? undefined : value
+}

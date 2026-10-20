@@ -17,6 +17,8 @@ import type {
   WeddingVendor,
   BudgetCategory,
   RunOfShowItem,
+  SeatingTable,
+  SeatAssignment,
 } from '@wedding-planner/shared'
 
 import type { AccountEmailIndex, UserAccount } from '../accounts/account_store'
@@ -114,4 +116,8 @@ export const COLLECTIONS = Object.freeze({
   budgetCategory: collection<BudgetCategory>('budget_category', 'tenant', 'budget_category'),
   /** Key groupedKey(wedding_id, item_id): a wedding's run of show (issue #45). */
   runOfShowItem: collection<RunOfShowItem>('run_of_show_item', 'tenant', 'run_of_show_item'),
+  /** Key groupedKey(wedding_id, table_id): a wedding's seating tables (issue #46). */
+  seatingTable: collection<SeatingTable>('seating_table', 'tenant', 'seating_table'),
+  /** Key groupedKey(wedding_id, guest_id): where each guest sits (issue #46). */
+  seatAssignment: collection<SeatAssignment>('seat_assignment', 'tenant', 'seat_assignment'),
 })

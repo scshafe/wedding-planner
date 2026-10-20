@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/seat_assignment.json",
+  "title": "SeatAssignment",
+  "description": "Where one guest sits (issue #46): at most one table per guest, so it is keyed by the guest \u2014 groupedKey(wedding_id, guest_id). Removed with the guest (the guest list's hook) or with the table.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tenant_id",
+    "wedding_id",
+    "guest_id",
+    "table_id",
+    "seated_at"
+  ],
+  "properties": {
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The owning tenant. Compared to the context's tenant only; never selects the partition."
+    },
+    "wedding_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "guest_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "A guest (wedding_guest) of the same wedding."
+    },
+    "table_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "A table of the same wedding."
+    },
+    "seated_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO 8601 UTC time the guest was seated there, from the injected clock."
+    }
+  }
+}
