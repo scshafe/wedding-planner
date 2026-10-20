@@ -325,6 +325,8 @@ export {
 export { GuestDirectory } from './guests/guest_directory'
 // A real local calendar date (YYYY-MM-DD): wedding dates and due dates (issue #31).
 export { assertDate, isDate } from './wedding/calendar_date'
+// What typed text may hold (no control characters, separators or direction overrides).
+export { assertPlainText } from './text/plain_text'
 // A wedding's checklist and the built-in template (issue #31, ADR 0050).
 export {
   CHECKLIST_LIMITS,
@@ -340,6 +342,21 @@ export {
   type TaskStatus,
 } from './checklist/checklist_service'
 export { CHECKLIST_TEMPLATE, type ChecklistOffset, type ChecklistTemplateItem, dateBefore, daysBetween, shiftDate } from './checklist/checklist_template'
+// A wedding's vendors and their payment schedules, in integer cents (issue #33, ADR 0051).
+export {
+  centsFromText,
+  type ContractStatus,
+  type DueInstallment,
+  type Installment,
+  type InstallmentInput,
+  MAX_AMOUNT_CENTS,
+  VENDOR_CATEGORIES,
+  VENDOR_LIMITS,
+  type VendorCategory,
+  type VendorInput,
+  VendorService,
+  type VendorsView,
+} from './vendors/vendor_service'
 // Households' RSVP links and the grant a resolved link carries (issue #30, ADR 0049).
 export { assertHouseholdGrant, type HouseholdRsvpGrant, RsvpLinkService } from './rsvp/rsvp_link_service'
 export { assertWeddingReach } from './wedding/wedding_reach'

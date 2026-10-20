@@ -3,6 +3,7 @@ import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Wed
 import type { TeamView } from '../accounts/membership_service'
 import type { GuestEventRsvp, HouseholdAnswer, HouseholdRsvpView, WeddingEventsView } from '../wedding_events/wedding_event_service'
 import type { ChecklistView, DueAcrossWeddings } from '../checklist/checklist_service'
+import { centsFromText, VENDOR_LIMITS, type VendorsView } from '../vendors/vendor_service'
 import { toGuestCsv } from '../guests/guest_csv'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
@@ -40,6 +41,9 @@ import {
   renderGuestList,
   renderHouseholdRsvp,
   renderChecklist,
+  renderVendors,
+  type VendorsNotice,
+  BLANK_INSTALLMENT_ROWS,
   renderDueTasks,
   type ChecklistNotice,
   type HouseholdRsvpNotice,
@@ -248,6 +252,11 @@ export class ProductWebUi {
       if (segments.length === 4 && segments[2] === 'rsvp' && this.#accounts !== undefined) {
         return slug === undefined ? GENERIC_404 : this.#householdRsvp(req, slug, segments[3] ?? '')
       }
+      // /t/:slug/vendors/<action> (issue #33) — the vendor FORM posts (CSRF-protected).
+      if (segments.length === 4 && segments[2] === 'vendors' && req.method === 'POST') {
+        if (slug === undefined) return GENERIC_404
+        return this.#vendorsAction(req, slug, segments[3] ?? '')
+      }
       // /t/:slug/checklist/<action> (issue #31) — the checklist FORM posts (CSRF-protected).
       if (segments.length === 4 && segments[2] === 'checklist' && req.method === 'POST') {
         if (slug === undefined) return GENERIC_404
@@ -333,6 +342,8 @@ export class ProductWebUi {
     const weddingId = queryParam(req.path, 'wedding')
     // ?wedding=ID&tab=guests (issue #27): the wedding's guest list (or one guest's edit page with &guest=ID).
     if (weddingId !== undefined && queryParam(req.path, 'tab') === 'guests') return this.#guestListPage(req, slug, weddingId)
+    // ?wedding=ID&tab=vendors (issue #33): the wedding's vendors and what is due next.
+    if (weddingId !== undefined && queryParam(req.path, 'tab') === 'vendors') return this.#vendorsPage(req, slug, weddingId)
     // ?wedding=ID&tab=checklist (issue #31): the wedding's checklist.
     if (weddingId !== undefined && queryParam(req.path, 'tab') === 'checklist') return this.#checklistPage(req, slug, weddingId)
     // ?wedding=ID&tab=events (issue #29): the wedding's events and their RSVP counts.
@@ -854,6 +865,93 @@ export class ProductWebUi {
     const notice =
       res.status === 200 || res.status === 201 ? (action === 'event-remove' ? 'removed' : 'saved') : res.status === 409 ? 'conflict' : 'invalid'
     return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=events&notice=${notice}`)
+  }
+
+  /** GET /t/:slug?wedding=ID&tab=vendors (issue #33) — the wedding, then its vendors; any non-200 takes the masking. */
+  #vendorsPage(req: ApiRequest, slug: string, weddingId: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const id = encodeURIComponent(weddingId)
+    const weddingRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}`, token))
+    if (weddingRes.status !== 200) return this.#renderNonData(slug, weddingRes.status)
+    const vendorsRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}/vendors`, token))
+    if (vendorsRes.status !== 200) return this.#renderNonData(slug, vendorsRes.status)
+    const theme = this.#themes.resolveActiveTheme(slug)
+    const csrf = this.#csrf.issueCsrf(token)
+    const wedding = readWedding(weddingRes.body)
+    if (theme === undefined || wedding === undefined) return GENERIC_404
+    if (csrf === undefined) return ERROR_500
+    const raw = queryParam(req.path, 'notice')
+    const notice = (['saved', 'removed', 'invalid', 'forbidden', 'conflict'] as const).find((n) => n === raw)
+    return htmlResult(200, renderVendors(theme, slug, wedding, vendorsRes.body as VendorsView, csrf, notice))
+  }
+
+  /**
+   * POST /t/:slug/vendors/<action> (issue #33) — CSRF first, then the JSON route of the form's wedding; back to the
+   * vendors page with a notice. Installment rows are indexed fields (i<n>_…), read from a one-pass index.
+   */
+  #vendorsAction(req: ApiRequest, slug: string, action: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    const fields = new Map<string, string>()
+    for (const [key, value] of form) if (!fields.has(key)) fields.set(key, value)
+    const value = (name: string): string => (fields.get(name) ?? '').trim()
+    const weddingId = value('wedding_id')
+    const base = `/t/${slug}/weddings/${encodeURIComponent(weddingId)}/vendors`
+    const vendor = encodeURIComponent(value('vendor_id'))
+    const call = (method: string, path: string, body?: unknown) => this.#api.handle(bearerJson(method, path, token, body ?? {}))
+    const vendorBody = () => {
+      const installments: Record<string, unknown>[] = []
+      for (let n = 0; n < VENDOR_LIMITS.installments + BLANK_INSTALLMENT_ROWS && fields.has(`i${n}_label`); n++) {
+        const label = value(`i${n}_label`)
+        const amount = value(`i${n}_amount`)
+        if (label.length === 0) continue // a blank row, or a cleared one (removed)
+        installments.push({
+          label,
+          amount_cents: amount.length === 0 ? 0 : (centsFromText(amount) ?? -1),
+          due_date: value(`i${n}_due`),
+          deposit: value(`i${n}_deposit`) === 'true',
+          paid: value(`i${n}_paid`) === 'true',
+          ...(value(`i${n}_id`).length === 0 ? {} : { installment_id: value(`i${n}_id`) }),
+        })
+      }
+      const optional = (name: string) => (value(name).length === 0 ? {} : { [name]: value(name) })
+      return {
+        category: value('category'),
+        business_name: value('business_name'),
+        contract_status: value('contract_status'),
+        shared_with_couple: value('shared_with_couple') === 'true',
+        installments,
+        ...(value('category') === 'other' ? optional('category_other') : {}),
+        ...optional('contact_name'),
+        ...optional('email'),
+        ...optional('phone'),
+        ...optional('notes'),
+      }
+    }
+    const res =
+      action === 'vendor-add'
+        ? call('POST', base, vendorBody())
+        : action === 'vendor-update'
+          ? call('PUT', `${base}/${vendor}`, vendorBody())
+          : action === 'vendor-remove'
+            ? call('DELETE', `${base}/${vendor}`)
+            : action === 'installment-paid'
+              ? call('PUT', `${base}/${vendor}/installments/${encodeURIComponent(value('installment_id'))}`, { paid: value('paid') === 'true' })
+              : undefined
+    if (res === undefined) return GENERIC_404
+    if (res.status === 404 || res.status === 401) return this.#renderNonData(slug, res.status)
+    const notice: VendorsNotice =
+      res.status === 200 || res.status === 201
+        ? action === 'vendor-remove'
+          ? 'removed'
+          : 'saved'
+        : res.status === 403
+          ? 'forbidden'
+          : res.status === 409
+            ? 'conflict'
+            : 'invalid'
+    return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=vendors&notice=${notice}`)
   }
 
   /** GET /t/:slug?view=due (issue #32) — ONE pipeline read, themed by status (a couple's 403 is the themed Forbidden). */

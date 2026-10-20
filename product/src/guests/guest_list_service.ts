@@ -6,6 +6,7 @@ import { isEmailAddress } from '../email/email_port'
 import { type ImportProblem, planGuestImport } from './guest_csv'
 import { GuestDirectory } from './guest_directory'
 import { assertHouseholdGrant, type HouseholdRsvpGrant } from '../rsvp/rsvp_link_service'
+import { assertPlainText } from '../text/plain_text'
 import { COLLECTIONS } from '../persistence/collections'
 import { groupedKey, type RecordStore } from '../persistence/record_store'
 import { ProductError } from '../product_error'
@@ -453,33 +454,13 @@ export class GuestListService {
   }
 }
 
-/**
- * Names, notes and numbers never hold a line break, a control character (C0, DEL, C1), a line or paragraph
- * separator, or a bidirectional override that could make text display as something else (PRODUCT.BAD_REQUEST).
- */
+/** Names, notes and numbers are single-line plain text (`assertPlainText`). */
 function refuseControlCharacters(...values: readonly (string | undefined)[]): void {
-  for (const value of values) {
-    if (value !== undefined && [...value].some((c) => isDisallowedCharacter(c.charCodeAt(0)))) {
-      throw new ProductError('PRODUCT.BAD_REQUEST', 'A name, note or number may not hold a line break or control character.', {})
-    }
-  }
+  assertPlainText(values)
 }
-
 
 /** `{ [key]: value }` for a non-empty trimmed value, else `{}` (an optional field is absent, never empty). */
 function optional<K extends string>(key: K, value: string | undefined): { [P in K]?: string } {
   const trimmed = value?.trim()
   return (trimmed === undefined || trimmed.length === 0 ? {} : { [key]: trimmed }) as { [P in K]?: string }
 }
-
-function isDisallowedCharacter(code: number): boolean {
-  return (
-    code < 0x20 ||
-    (code >= 0x7f && code <= 0x9f) ||
-    code === 0x2028 ||
-    code === 0x2029 ||
-    (code >= 0x202a && code <= 0x202e) ||
-    (code >= 0x2066 && code <= 0x2069)
-  )
-}
-

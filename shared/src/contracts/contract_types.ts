@@ -76,3 +76,5 @@ export type { WeddingRsvpSettings } from './generated/wedding_rsvp_settings'
 // One task on a wedding's checklist (issue #31). ADR 0050.
 export type { WeddingTask } from './generated/wedding_task'
 export type { ChecklistDateMove } from './generated/checklist_date_move'
+// One vendor of a wedding, with its payment schedule in integer cents (issue #33). ADR 0051.
+export type { WeddingVendor } from './generated/wedding_vendor'

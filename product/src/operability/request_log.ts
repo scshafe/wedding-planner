@@ -24,6 +24,7 @@ const STATIC_SEGMENTS: ReadonlySet<string> = new Set([
   'rsvp', 'household-rsvp', 'rsvp-link', 'rsvp-links', 'rsvp-settings', 'rsvp-close',
   'tasks', 'status', 'apply-template', 'shift', 'checklist', 'task-add', 'task-update', 'task-remove', 'task-status',
   'date-move', 'keep-dates', 'due-tasks',
+  'vendors', 'installments', 'vendor-add', 'vendor-update', 'vendor-remove', 'installment-paid',
   'tenants', 'owner', 'activate', 'suspend', 'reactivate', 'outbox', 'errors',
 ])
 

@@ -8,6 +8,7 @@ import { ProductError } from '../product_error'
 import type { TenantContext } from '../tenant/tenant_context'
 import { TenantScopedRepository } from '../tenant/tenant_scoped_repository'
 import type { TenantLivenessCheck } from '../tenant/tenant_store'
+import { assertPlainText } from '../text/plain_text'
 import { isDate } from '../wedding/calendar_date'
 import { assertWeddingReach } from '../wedding/wedding_reach'
 import type { WeddingRepository } from '../wedding/wedding_repository'
@@ -336,12 +337,9 @@ export class ChecklistService {
 /** The editable fields, normalized; the due date must be a real date. */
 function fields(input: TaskInput): Pick<WeddingTask, 'title' | 'due_date' | 'assignee'> & { notes?: string } {
   if (!isDate(input.due_date)) throw new ProductError('PRODUCT.BAD_REQUEST', 'due_date must be a date (YYYY-MM-DD).', {})
-  // A title is one line; notes may break lines, but hold no other control character.
-  const control = (value: string, allowLines: boolean) =>
-    [...value].some((c) => (c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f) && !(allowLines && (c === '\n' || c === '\r' || c === '\t')))
-  if (control(input.title, false) || control(input.notes ?? '', true)) {
-    throw new ProductError('PRODUCT.BAD_REQUEST', 'A task may not hold control characters.', {})
-  }
+  // A title is one line; notes may break lines.
+  assertPlainText([input.title])
+  assertPlainText([input.notes], { multiline: true })
   const notes = input.notes?.trim()
   return {
     title: input.title.trim(),

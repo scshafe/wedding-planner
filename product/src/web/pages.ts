@@ -9,12 +9,14 @@ import type {
   WeddingEvent,
   WeddingGuest,
   WeddingTask,
+  WeddingVendor,
 } from '@wedding-planner/shared'
 
 import type { TeamView } from '../accounts/membership_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
 import type { GuestEventRsvp, HouseholdRsvpView, WeddingEventCounts, WeddingEventsView } from '../wedding_events/wedding_event_service'
 import type { ChecklistView, DueAcrossWeddings, DueTask } from '../checklist/checklist_service'
+import { VENDOR_CATEGORIES, type VendorsView } from '../vendors/vendor_service'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -1044,6 +1046,7 @@ export function renderDetail(
     <p>Status: <span class="status">${wedding.status}</span></p>
     <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=guests">Guest list →</a></p>
     ${checklistLine}
+    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=vendors">Vendors →</a></p>
     <p class="note">Wedding id: <code>${wedding.wedding_id}</code> · created ${wedding.created_at}</p>
     <p class="note">Active strategy: <a href="/t/${slug}/strategy">the platform’s data-optimized planning defaults</a> (applied to every wedding in this workspace).</p>
   </div>
@@ -1872,6 +1875,124 @@ export function renderDueTasks(theme: Tenant['theme'], slug: string, due: DueAcr
         )
   }`,
     'home',
+  )
+}
+
+export type VendorsNotice = 'saved' | 'removed' | 'invalid' | 'forbidden' | 'conflict'
+
+const VENDORS_NOTICES: Readonly<Record<VendorsNotice, string>> = Object.freeze({
+  saved: 'Saved.',
+  removed: 'Removed.',
+  invalid: 'That could not be saved. Check the names, amounts (like 1250.00) and dates.',
+  forbidden: 'Only the planner manages vendors.',
+  conflict: 'This wedding has reached the vendor limit.',
+})
+
+const CONTRACT_LABELS = Object.freeze({ none: 'No contract', sent: 'Contract sent', signed: 'Contract signed', cancelled: 'Cancelled' })
+
+/** How many blank installment rows a vendor form offers beyond the existing ones. */
+export const BLANK_INSTALLMENT_ROWS = 3
+
+/** Cents as an amount a person can edit ("1250.00"). */
+function amountText(cents: number): string {
+  return `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, '0')}`
+}
+
+/**
+ * A wedding's vendors (issue #33): what is due next, then each vendor with its payment schedule. The planner gets
+ * the forms; the couple sees the shared vendors only, read-only.
+ */
+export function renderVendors(theme: Tenant['theme'], slug: string, wedding: Wedding, view: VendorsView, csrfToken: string, notice?: VendorsNotice): string {
+  const w = wedding.wedding_id
+  const banner = notice === undefined ? html`` : html`<p class="note">${VENDORS_NOTICES[notice]}</p>`
+  const hidden = (fields: Record<string, string>) => html`${csrfField(csrfToken)}${Object.entries(fields).map(([k, v]) => html`<input type="hidden" name="${k}" value="${v}">`)}`
+  const categoryName = (v: WeddingVendor) => (v.category === 'other' ? (v.category_other ?? 'other') : v.category)
+  const vendorFields = (prefix: string, v?: WeddingVendor) => {
+    const rows = [...(v?.installments ?? []), ...Array.from({ length: BLANK_INSTALLMENT_ROWS }, () => undefined)]
+    return html`<label for="${prefix}_category">Category</label>
+      <select id="${prefix}_category" name="category">${VENDOR_CATEGORIES.map((c) => (c === (v?.category ?? 'venue') ? html`<option value="${c}" selected>${c}</option>` : html`<option value="${c}">${c}</option>`))}</select>
+      <label for="${prefix}_other">If "other", which <span class="note">(optional)</span></label>
+      <input id="${prefix}_other" name="category_other" maxlength="60" value="${v?.category_other ?? ''}">
+      <label for="${prefix}_business">Business name</label>
+      <input id="${prefix}_business" name="business_name" maxlength="120" required value="${v?.business_name ?? ''}">
+      <label for="${prefix}_contact">Contact person <span class="note">(optional)</span></label>
+      <input id="${prefix}_contact" name="contact_name" maxlength="120" value="${v?.contact_name ?? ''}">
+      <label for="${prefix}_email">Email <span class="note">(optional)</span></label>
+      <input id="${prefix}_email" name="email" type="email" maxlength="254" value="${v?.email ?? ''}">
+      <label for="${prefix}_phone">Phone <span class="note">(optional)</span></label>
+      <input id="${prefix}_phone" name="phone" maxlength="40" value="${v?.phone ?? ''}">
+      <label for="${prefix}_contract">Contract</label>
+      <select id="${prefix}_contract" name="contract_status">${(['none', 'sent', 'signed', 'cancelled'] as const).map((c) =>
+        c === (v?.contract_status ?? 'none') ? html`<option value="${c}" selected>${CONTRACT_LABELS[c]}</option>` : html`<option value="${c}">${CONTRACT_LABELS[c]}</option>`,
+      )}</select>
+      <label><input type="checkbox" name="shared_with_couple" value="true"${v?.shared_with_couple === true ? html` checked` : html``}> Shared with the couple</label>
+      <fieldset><legend>Payment schedule <span class="note">(amounts like 1250.00; clear a row's label to remove it)</span></legend>
+      ${rows.map(
+        (i, n) => html`<p><input type="hidden" name="i${n}_id" value="${i?.installment_id ?? ''}">
+        <input name="i${n}_label" maxlength="60" value="${i?.label ?? ''}" aria-label="What for">
+        <input name="i${n}_amount" inputmode="decimal" value="${i === undefined ? '' : amountText(i.amount_cents)}" aria-label="Amount">
+        <input name="i${n}_due" type="date" value="${i?.due_date ?? ''}" aria-label="Due">
+        <label><input type="checkbox" name="i${n}_deposit" value="true"${i?.deposit === true ? html` checked` : html``}> Deposit</label>
+        <label><input type="checkbox" name="i${n}_paid" value="true"${i?.paid === true ? html` checked` : html``}> Paid</label></p>`,
+      )}</fieldset>
+      <label for="${prefix}_notes">Notes <span class="note">(the planner's only)</span></label>
+      <textarea id="${prefix}_notes" name="notes" maxlength="2000" rows="2">${v?.notes ?? ''}</textarea>`
+  }
+  const card = (v: WeddingVendor) => {
+    const total = v.installments.reduce((n, i) => n + i.amount_cents, 0)
+    const paid = v.installments.filter((i) => i.paid).reduce((n, i) => n + i.amount_cents, 0)
+    return html`<div class="card">
+    <h3>${v.business_name} <span class="note">${`${categoryName(v)} · ${CONTRACT_LABELS[v.contract_status]}${view.can_manage ? (v.shared_with_couple ? ' · shared with the couple' : ' · not shared') : ''}`}</span></h3>
+    ${[v.contact_name, v.email, v.phone].some((x) => x !== undefined) ? html`<p class="note">${[v.contact_name, v.email, v.phone].filter((x) => x !== undefined).join(' · ')}</p>` : html``}
+    ${
+      v.installments.length === 0
+        ? html`<p class="note">No payment schedule yet.</p>`
+        : html`<ul>${v.installments.map(
+            (i) => html`<li>${`${i.label}${i.deposit ? ' (deposit)' : ''}: ${dollars(i.amount_cents)}, due ${i.due_date} — ${i.paid ? 'paid' : 'not paid'}`}
+        ${
+          view.can_manage
+            ? html`<form class="inline" method="post" action="/t/${slug}/vendors/installment-paid">${hidden({ wedding_id: w, vendor_id: v.vendor_id, installment_id: i.installment_id, paid: i.paid ? 'false' : 'true' })}<button type="submit">${i.paid ? 'Mark not paid' : 'Mark paid'}</button></form>`
+            : html``
+        }</li>`,
+          )}</ul>
+    <p class="note">${`Total ${dollars(total)} · paid ${dollars(paid)} · still due ${dollars(total - paid)}`}</p>`
+    }
+    ${v.notes === undefined ? html`` : html`<p class="note">${v.notes}</p>`}
+    ${
+      view.can_manage
+        ? html`<details><summary>Edit or remove</summary>
+      <form method="post" action="/t/${slug}/vendors/vendor-update">${hidden({ wedding_id: w, vendor_id: v.vendor_id })}${vendorFields(`v_${v.vendor_id}`, v)}<p><button type="submit">Save vendor</button></p></form>
+      <form method="post" action="/t/${slug}/vendors/vendor-remove">${hidden({ wedding_id: w, vendor_id: v.vendor_id })}<button type="submit">Remove the vendor</button></form>
+    </details>`
+        : html``
+    }
+  </div>`
+  }
+  return signedInShell(
+    theme,
+    slug,
+    'Vendors',
+    html`<p><a href="/t/${slug}?wedding=${w}">← ${wedding.couple_display_name}</a></p>
+  <h2>Vendors</h2>
+  ${banner}
+  <div class="card"><h3>Due next</h3>
+    ${
+      view.due_next.length === 0
+        ? html`<p class="note">Nothing is waiting to be paid.</p>`
+        : html`<ul>${view.due_next.slice(0, 10).map(
+            (d) => html`<li><span${d.overdue ? html` style="color:#b00"` : html``}>${`${d.installment.due_date}${d.overdue ? ' (overdue)' : ''}`}</span> ${`${d.business_name} — ${d.installment.label}: ${dollars(d.installment.amount_cents)}`}</li>`,
+          )}</ul>`
+    }
+    <p class="note">Money is tracked here, never paid through the app.</p>
+  </div>
+  ${view.vendors.length === 0 ? html`<p class="note">${view.can_manage ? 'No vendors yet.' : 'The planner has not shared any vendors yet.'}</p>` : view.vendors.map(card)}
+  ${
+    view.can_manage
+      ? html`<div class="card"><h3>Add a vendor</h3>
+    <form method="post" action="/t/${slug}/vendors/vendor-add">${hidden({ wedding_id: w })}${vendorFields('new')}<p><button type="submit">Add vendor</button></p></form></div>`
+      : html``
+  }`,
+    'wedding',
   )
 }
 

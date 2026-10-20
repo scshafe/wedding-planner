@@ -14,6 +14,7 @@ import type {
   RsvpLink,
   WeddingTask,
   ChecklistDateMove,
+  WeddingVendor,
 } from '@wedding-planner/shared'
 
 import type { AccountEmailIndex, UserAccount } from '../accounts/account_store'
@@ -105,4 +106,6 @@ export const COLLECTIONS = Object.freeze({
   weddingTask: collection<WeddingTask>('wedding_task', 'tenant', 'wedding_task'),
   /** Key wedding_id: a wedding date that moved, pending the planner's shift-or-keep (issue #31). */
   checklistDateMove: collection<ChecklistDateMove>('checklist_date_move', 'tenant', 'checklist_date_move'),
+  /** Key groupedKey(wedding_id, vendor_id): a wedding's vendors and their payment schedules (issue #33). */
+  weddingVendor: collection<WeddingVendor>('wedding_vendor', 'tenant', 'wedding_vendor'),
 })
