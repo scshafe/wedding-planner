@@ -902,7 +902,10 @@ export class ProductWebUi {
     if (csrf === undefined) return ERROR_500
     const raw = queryParam(req.path, 'notice')
     const notice = (['saved', 'removed', 'invalid', 'forbidden', 'conflict'] as const).find((n) => n === raw)
-    return htmlResult(200, renderRunOfShow(theme, slug, wedding, showRes.body as RunOfShowView, csrf, queryParam(req.path, 'print') === '1', notice))
+    return htmlResult(
+      200,
+      renderRunOfShow(theme, slug, wedding, showRes.body as RunOfShowView, csrf, queryParam(req.path, 'print') === '1', notice, queryParam(req.path, 'item')),
+    )
   }
 
   /** POST /t/:slug/run-of-show/<action> (issue #45) — CSRF first, then the JSON route of the form's wedding; a notice back. */

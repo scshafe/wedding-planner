@@ -19,7 +19,8 @@ import type { WeddingRepository } from '../wedding/wedding_repository'
  * happens when, who owns it, and when each vendor must arrive.
  *
  * The boundary is the wedding's (`assertWeddingReach`). The planner manages the items; the couple reads the run of
- * show, without the planner's notes, and sees a vendor it is not shared (#33) by its category, never by name.
+ * show, without the planner's notes. A vendor the couple is not shared (#33) stays out of its view as on the vendors
+ * page: its items show "A vendor" as the owner, and its arrival lines are not in the couple's timeline.
  *
  * The view is a list of lines in time order: each item at its start, and — for a vendor's item with a call time — a
  * separate "arrives" line at that time, so the call times read in the same timeline.
@@ -97,13 +98,15 @@ export class RunOfShowService {
     const eventNames = new Map(events.map((e) => [e.event_id, e.name]))
     const lines: RunOfShowLine[] = []
     for (const stored of this.#itemsOf(context, wedding_id)) {
-      const item = planner ? stored : withoutNotes(stored)
       const vendor = stored.owner_vendor_id === undefined ? undefined : vendors.get(stored.owner_vendor_id)
+      const item = planner ? stored : asTheCoupleSeesIt(stored, vendor?.shared_with_couple === true)
       const owner_label = ownerLabel(item, vendor, planner)
       const event_name = item.event_id === undefined ? undefined : eventNames.get(item.event_id)
       const extra = event_name === undefined ? {} : { event_name }
       lines.push({ kind: 'item', at: item.starts_at, item, owner_label, ...extra })
-      if (item.vendor_call_time !== undefined) lines.push({ kind: 'arrival', at: item.vendor_call_time, item, owner_label, ...extra })
+      // An arrival line names when a vendor comes: the couple sees it only for a vendor it is shared.
+      const arrivalShown = planner || vendor?.shared_with_couple === true
+      if (item.vendor_call_time !== undefined && arrivalShown) lines.push({ kind: 'arrival', at: item.vendor_call_time, item, owner_label, ...extra })
     }
     lines.sort((a, b) => (a.at === b.at ? (a.kind === b.kind ? 0 : a.kind === 'arrival' ? -1 : 1) : a.at < b.at ? -1 : 1))
     return {
@@ -165,6 +168,9 @@ export class RunOfShowService {
     if (input.vendor_call_time !== undefined && input.owner !== 'vendor') {
       throw new ProductError('PRODUCT.BAD_REQUEST', 'A call time is for an item a vendor owns.', {})
     }
+    if (input.vendor_call_time !== undefined && input.vendor_call_time > input.starts_at) {
+      throw new ProductError('PRODUCT.BAD_REQUEST', 'A vendor arrives at or before the item starts.', {})
+    }
     if (input.event_id !== undefined && !this.events.eventsOf(context, wedding_id).some((e) => e.event_id === input.event_id)) {
       throw new ProductError('PRODUCT.BAD_REQUEST', 'That event is not on this wedding.', {})
     }
@@ -203,19 +209,22 @@ export class RunOfShowService {
   }
 }
 
-/** Who owns an item, as this principal may see it. A vendor the couple is not shared shows as its category. */
+/** Who owns an item, as this principal may see it. A vendor the couple is not shared is just "A vendor". */
 function ownerLabel(item: RunOfShowItem, vendor: WeddingVendor | undefined, planner: boolean): string {
   if (item.owner === 'planner') return 'Planner'
   if (item.owner === 'couple') return 'Couple'
-  if (vendor === undefined) return 'A vendor'
-  if (planner || vendor.shared_with_couple) return vendor.business_name
-  return vendor.category === 'other' ? 'A vendor' : `The ${vendor.category} vendor`
+  if (vendor === undefined || !(planner || vendor.shared_with_couple)) return 'A vendor'
+  return vendor.business_name
 }
 
-/** An item as the couple sees it: the planner's notes and which vendor record owns it stay with the planner. */
-function withoutNotes(item: RunOfShowItem): RunOfShowItem {
+/**
+ * An item as the couple sees it: the planner's notes and which vendor record owns it stay with the planner, and so
+ * does an unshared vendor's call time.
+ */
+function asTheCoupleSeesIt(item: RunOfShowItem, vendorShared: boolean): RunOfShowItem {
   const shared: RunOfShowItem = { ...item }
   delete shared.notes
   delete shared.owner_vendor_id
+  if (!vendorShared) delete shared.vendor_call_time
   return shared
 }

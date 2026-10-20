@@ -70,13 +70,20 @@ describe('RunOfShowService', () => {
     expect(view.can_manage).toBe(true)
   })
 
-  it('the couple reads it without notes, and sees a vendor it is not shared by its category, never by name or id', () => {
+  it('the couple reads it without notes; a vendor it is not shared is just "A vendor", with no arrival line', () => {
     const w = world()
     w.show.addItem(w.ctx, w.planner, w.ours, { starts_at: '2028-06-10T15:30', title: 'Portraits', owner: 'vendor', owner_vendor_id: w.photographer.vendor_id, vendor_call_time: '2028-06-10T14:00', notes: 'Bring the long lens' })
     const view = w.show.view(w.ctx, w.couple, w.ours)
-    expect(view.lines.map((l) => l.owner_label)).toEqual(['The photography vendor', 'The photography vendor'])
+    expect(view.lines.map((l) => [l.kind, l.owner_label])).toEqual([['item', 'A vendor']])
     const text = JSON.stringify(view)
-    for (const hidden of ['Snap Studio', 'long lens', w.photographer.vendor_id]) expect(text).not.toContain(hidden)
+    for (const hidden of ['Snap Studio', 'long lens', 'photography', '14:00', w.photographer.vendor_id]) expect(text).not.toContain(hidden)
+    // A vendor the planner shares appears by name, with its arrival.
+    w.show.addItem(w.ctx, w.planner, w.ours, { starts_at: '2028-06-10T19:00', title: 'First dance', owner: 'vendor', owner_vendor_id: w.band.vendor_id, vendor_call_time: '2028-06-10T18:00' })
+    expect(w.show.view(w.ctx, w.couple, w.ours).lines.map((l) => [l.kind, l.owner_label])).toEqual([
+      ['item', 'A vendor'],
+      ['arrival', 'The Band'],
+      ['item', 'The Band'],
+    ])
     expect(view).toMatchObject({ can_manage: false, vendors: [], events: [] })
   })
 
@@ -88,6 +95,7 @@ describe('RunOfShowService', () => {
     expect(codeOf(add({ starts_at: '2028-06-31T16:00' }))).toBe('PRODUCT.BAD_REQUEST')
     expect(codeOf(add({ ends_at: '2028-06-10T15:00' }))).toBe('PRODUCT.BAD_REQUEST')
     expect(codeOf(add({ vendor_call_time: '2028-06-10T15:00' }))).toBe('PRODUCT.BAD_REQUEST')
+    expect(codeOf(add({ owner: 'vendor', owner_vendor_id: w.photographer.vendor_id, vendor_call_time: '2028-06-10T17:00' }))).toBe('PRODUCT.BAD_REQUEST') // arrives after it starts
     expect(codeOf(add({ owner: 'vendor' }))).toBe('PRODUCT.BAD_REQUEST')
     expect(codeOf(add({ owner: 'vendor', owner_vendor_id: theirVendor.vendor_id }))).toBe('PRODUCT.BAD_REQUEST')
     expect(codeOf(add({ event_id: theirEvent.event_id }))).toBe('PRODUCT.BAD_REQUEST')

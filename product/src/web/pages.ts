@@ -2110,7 +2110,16 @@ function showLine(line: RunOfShowLine, previous: string | undefined): SafeHtml {
  * A wedding's run of show (issue #45): the day-of timeline in time order, with each vendor's call time as its own
  * line. `print` gives the timeline alone (no forms), for paper; the planner gets the forms otherwise.
  */
-export function renderRunOfShow(theme: Tenant['theme'], slug: string, wedding: Wedding, view: RunOfShowView, csrfToken: string, print: boolean, notice?: RunOfShowNotice): string {
+export function renderRunOfShow(
+  theme: Tenant['theme'],
+  slug: string,
+  wedding: Wedding,
+  view: RunOfShowView,
+  csrfToken: string,
+  print: boolean,
+  notice?: RunOfShowNotice,
+  editItemId?: string,
+): string {
   const w = wedding.wedding_id
   const timeline = view.lines.length === 0 ? html`<p class="note">Nothing on the run of show yet.</p>` : html`<ul>${view.lines.map((l, n) => showLine(l, n === 0 ? undefined : view.lines[n - 1]?.at))}</ul>`
   if (print) {
@@ -2137,7 +2146,10 @@ export function renderRunOfShow(theme: Tenant['theme'], slug: string, wedding: W
       )}</select>
       <label for="${prefix}_notes">Notes <span class="note">(the planner's only)</span></label>
       <textarea id="${prefix}_notes" name="notes" maxlength="2000" rows="2">${item?.notes ?? ''}</textarea>`
+  // One item's edit form at a time (`&item=<id>`): every form repeats the vendor and event choices, so a form per
+  // item would make the page grow with items × vendors.
   const items = view.lines.filter((l) => l.kind === 'item')
+  const editing = editItemId === undefined ? undefined : items.find((l) => l.item.item_id === editItemId)?.item
   return signedInShell(
     theme,
     slug,
@@ -2148,13 +2160,16 @@ export function renderRunOfShow(theme: Tenant['theme'], slug: string, wedding: W
   <div class="card">${timeline}</div>
   ${
     view.can_manage
-      ? html`${items.map(
-          (l) => html`<details class="card"><summary>${`Edit or remove: ${l.item.title}`}</summary>
-    <form method="post" action="/t/${slug}/run-of-show/show-update">${hidden({ wedding_id: w, item_id: l.item.item_id })}${fields(`s_${l.item.item_id}`, l.item)}<p><button type="submit">Save</button></p></form>
-    <form method="post" action="/t/${slug}/run-of-show/show-remove">${hidden({ wedding_id: w, item_id: l.item.item_id })}<button type="submit">Remove</button></form>
-  </details>`,
-        )}
+      ? editing !== undefined
+        ? html`<div class="card"><h3>${`Edit: ${editing.title}`}</h3>
+    <form method="post" action="/t/${slug}/run-of-show/show-update">${hidden({ wedding_id: w, item_id: editing.item_id })}${fields(`s_${editing.item_id}`, editing)}<p><button type="submit">Save</button></p></form>
+    <form method="post" action="/t/${slug}/run-of-show/show-remove">${hidden({ wedding_id: w, item_id: editing.item_id })}<button type="submit">Remove</button></form>
+    <p><a href="/t/${slug}?wedding=${w}&amp;tab=run-of-show">Done</a></p></div>`
+        : html`<div class="card"><h3>Edit an item</h3><ul>${items.map(
+            (l) => html`<li><a href="/t/${slug}?wedding=${w}&amp;tab=run-of-show&amp;item=${l.item.item_id}">${`${l.item.starts_at.replace('T', ' ')} ${l.item.title}`}</a></li>`,
+          )}</ul></div>
   <div class="card"><h3>Add to the run of show</h3>
+    <p class="note">A vendor the couple is not shared shows to them only as "A vendor", without an arrival time.</p>
     <form method="post" action="/t/${slug}/run-of-show/show-add">${hidden({ wedding_id: w })}${fields('new')}<p><button type="submit">Add</button></p></form></div>`
       : html``
   }`,

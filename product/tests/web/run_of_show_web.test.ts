@@ -35,6 +35,15 @@ const csrfOf = (page: HttpResult): string => /name="_csrf" value="([^"]+)"/.exec
 const NOT_FOUND = { status: 404, body: { error: 'not_found' } }
 
 describe('the run of show', () => {
+  it('the planner page grows with items plus vendors, not items times vendors', () => {
+    const w = setup()
+    for (let v = 0; v < 40; v++) w.api('POST', `/t/demo/weddings/${w.ours}/vendors`, w.bearer, { category: 'other', category_other: 'x', business_name: `Vendor ${'&'.repeat(100)} ${v}`, contract_status: 'none' })
+    for (let i = 0; i < 100; i++) w.api('POST', `/t/demo/weddings/${w.ours}/run-of-show`, w.bearer, { starts_at: '2028-06-10T16:00', title: `Item ${i}`, owner: 'planner' })
+    const page = w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=run-of-show`, w.login({ role: 'planner' })))
+    expect(page.status).toBe(200)
+    expect(page.body.length).toBeLessThan(200_000)
+  })
+
   it('JSON: the planner manages items; the couple reads (403 to manage, before the body); another wedding is the masked 404', () => {
     const w = setup()
     expect(w.api('POST', `/t/demo/weddings/${w.ours}/run-of-show`, w.coupleBearer, { junk: true }).status).toBe(403)
@@ -61,13 +70,19 @@ describe('the run of show', () => {
     expect(saved.headers.location).toContain('notice=saved')
     const body = w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=run-of-show`, planner)).body
     expect(body.indexOf('Snap &lt;Studio&gt; arrives')).toBeLessThan(body.indexOf('<strong>15:30</strong> Portraits'))
+    // One item's edit form at a time: the list links to it.
+    expect(body).not.toContain('show-update')
+    const itemId = /&amp;item=([^"]+)"/.exec(body)?.[1] as string
+    expect(w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=run-of-show&item=${itemId}`, planner)).body).toContain('show-update')
     const print = w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=run-of-show&print=1`, planner)).body
     expect(print).toContain('Portraits')
     expect(print).not.toContain('<form')
     expect(w.ui.handle(form('/t/demo/run-of-show/show-add', { _csrf: csrfOf(page), wedding_id: w.ours, title: 'X', starts_at: '2028-06-10T15:30', owner_choice: 'planner', vendor_call_time: '2028-06-10T14:00' }, planner)).headers.location).toContain('notice=invalid')
     const couple = w.login({ role: 'couple', wedding_id: w.ours })
     const coupleBody = w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=run-of-show`, couple)).body
-    expect(coupleBody).toContain('The photography vendor arrives')
+    expect(coupleBody).toContain('Portraits')
+    expect(coupleBody).toContain('A vendor')
+    expect(coupleBody).not.toContain('arrives')
     expect(coupleBody).not.toContain('Snap')
     expect(coupleBody).not.toContain('secret note')
     expect(coupleBody).not.toContain('Add to the run of show')
