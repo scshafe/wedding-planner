@@ -18,9 +18,16 @@ Interactive-session context. The loop's roles keep their continuity on GitHub (i
   provider (M5), #14–#16 (loop timers, old Mac loop, `main` protection).
 - **Owner direction (2026-10-19):** build M2, then M3, then M4 with the model port's SIMULATED adapter only (a real
   model costs money: owner decision); skip M5 (owner crossings). Issues first, per ROADMAP "How the loop uses this file".
-- **Next:** M2 "Planning core" in `ROADMAP.md` (guest list, RSVPs, checklist, vendors, budget). Durable-storage rules
-  for new records: [[durable-storage-record-store]] (add every collection to the census; ship new fields
-  expand-then-contract; never regenerate a drift fixture).
+- **M2 "Planning core" is built** (same session): #27 guest list (0046), #28 CSV (0047), #29 events + RSVPs (0048),
+  #30 household RSVP page (0049), #31 checklist + #32 due across weddings (0050), #33 vendors (0051), #34 budget
+  (0052), #41 invitation provenance (expand #49, use #50); grouped keys for per-wedding stores (#36, ADR 0039
+  addendum). Each had a `security-reviewer` pass (and `architecture-reviewer` for #29 and #36) before landing; the
+  reviews caught real DoS (CSV planner, meal dedupe, RSVP form loop, regex), disclosure (budget labels) and
+  integrity bugs — all fixed. Each merge deployed and passed `/healthz`.
+- **Next:** M3 (#45 run of show — in progress, #46 seating, #47 wedding website, #48 documents), then M4 (simulated
+  model adapter only). Patterns to follow for a per-wedding store: [[events-and-rsvps]] (assertWeddingReach,
+  grouped keys, couple boundary), [[durable-storage-record-store]] (census; new state in new collections; expand
+  before use), and cap raw input before per-item work.
 - **Dashboard:** the reporter publishes it to GitHub Pages once the owner turns Pages on (unchanged).
 - **Last product work before M1:** Phase 38, the guest-conversation transcript (ADR 0038).
 
