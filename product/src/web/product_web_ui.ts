@@ -918,7 +918,7 @@ export class ProductWebUi {
   #publicSite(slug: string, siteName: string): HttpResult {
     const theme = this.#themes.resolveActiveTheme(slug)
     if (theme === undefined) return GENERIC_404
-    const res = this.#api.handle(bearerGet(`/t/${slug}/site/${siteName}`, undefined))
+    const res = this.#api.handle(bearerGet(`/t/${slug}/site/${encodeURIComponent(siteName)}`, undefined))
     if (res.status !== 200) return GENERIC_404
     return htmlResult(200, renderPublicSite(theme, slug, res.body as PublicSiteView), { 'referrer-policy': 'no-referrer' })
   }
@@ -937,7 +937,7 @@ export class ProductWebUi {
     if (theme === undefined || wedding === undefined) return GENERIC_404
     if (csrf === undefined) return ERROR_500
     const raw = queryParam(req.path, 'notice')
-    const notice = (['saved', 'invalid', 'taken', 'published', 'unpublished'] as const).find((n) => n === raw)
+    const notice = (['saved', 'invalid', 'taken', 'busy', 'published', 'unpublished'] as const).find((n) => n === raw)
     return htmlResult(200, renderSiteEditor(theme, slug, wedding, siteRes.body as SiteEditView, csrf, notice))
   }
 
@@ -988,7 +988,9 @@ export class ProductWebUi {
     if (res.status === 404 || res.status === 401 || res.status === 403) return this.#renderNonData(slug, res.status)
     const published = value('published') === 'true'
     const notice: SiteNotice =
-      res.status === 200 ? (action === 'site-publish' ? (published ? 'published' : 'unpublished') : 'saved') : res.status === 409 ? 'taken' : 'invalid'
+      res.status === 200
+        ? action === 'site-publish' ? (published ? 'published' : 'unpublished') : 'saved'
+        : res.status === 409 ? 'taken' : res.status === 429 ? 'busy' : 'invalid'
     return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=site&notice=${notice}`)
   }
 

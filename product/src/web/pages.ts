@@ -2264,12 +2264,13 @@ export function renderSeating(theme: Tenant['theme'], slug: string, wedding: Wed
   )
 }
 
-export type SiteNotice = 'saved' | 'invalid' | 'taken' | 'published' | 'unpublished'
+export type SiteNotice = 'saved' | 'invalid' | 'taken' | 'busy' | 'published' | 'unpublished'
 
 const SITE_NOTICES: Readonly<Record<SiteNotice, string>> = Object.freeze({
   saved: 'Saved.',
   invalid: 'That could not be saved. Check the site name (3 to 40 lowercase letters, digits and hyphens) and that links start with https://.',
   taken: 'That site name is taken in this workspace.',
+  busy: 'Too many site name changes for now. Try again in an hour.',
   published: 'The website is published.',
   unpublished: 'The website is off.',
 })
@@ -2302,6 +2303,7 @@ export function renderSiteEditor(theme: Tenant['theme'], slug: string, wedding: 
       ? html`<p class="note">No website yet: choose a site name and save, then publish it.</p>`
       : html`<div class="card"><p>${site.published ? 'The website is published at ' : 'The website is off. Once published it will be at '}<a href="${publicPath ?? ''}">${publicPath ?? ''}</a></p>
     <form method="post" action="/t/${slug}/site/site-publish">${hidden({ wedding_id: w, published: site.published ? 'false' : 'true' })}<button type="submit">${site.published ? 'Turn the website off' : 'Publish the website'}</button></form>
+    <p>Anyone with the address can read a published website: share only what guests may see.</p>
     <p class="note">Guests see the couple's names, the date, and what you write here. Never the guest list or who answered.</p></div>`
   }
   <form method="post" action="/t/${slug}/site/site-save">${hidden({ wedding_id: w })}
@@ -2341,7 +2343,8 @@ export function renderSiteEditor(theme: Tenant['theme'], slug: string, wedding: 
  * `SiteService.publicView`: no guest data, no ids. Links are https (checked when saved) and open with no referrer.
  */
 export function renderPublicSite(theme: Tenant['theme'], slug: string, view: PublicSiteView): string {
-  const link = (url: string, text: string) => html`<a href="${url}" rel="noopener noreferrer nofollow">${text}</a>`
+  // Links were checked https when saved; checked again here, so a link that is not https is shown as plain text.
+  const link = (url: string, text: string) => (url.startsWith('https://') ? html`<a href="${url}" rel="noopener noreferrer nofollow">${text}</a>` : html`${text}`)
   return themedShell(
     theme,
     slug,

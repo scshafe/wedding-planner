@@ -45,8 +45,12 @@ answer with their household's RSVP link (#30), and lists no one.
   `/t/<slug>/site/<name>` read.
 - **No existence oracle:** a malformed name, an unknown or unpublished site, another workspace's site, and a
   suspended workspace are all the generic not-found.
-- **Rate limit:** reads of one published site are limited to 600 per ten minutes. The limit applies only after the
-  name resolves, so an unknown name costs one point read.
+- **A cancelled wedding:** its site is not public either.
+- **No rate limit on public reads.** The edge has no client identity, so a limit would be one shared by every guest, and
+  an anonymous client could trip it to take the site down for everyone (the security review showed 600 reads did). The
+  household RSVP page's limits (ADR 0049) work because they are keyed on a secret link; a site name is public. A read
+  costs a few point reads plus the wedding's events (at most the event limit), so there is nothing to protect that a
+  shared limit would protect better than it harms.
 - **Headers:** the page is sent with `no-referrer`.
 
 ### Links are https only
@@ -60,6 +64,11 @@ every text is escaped.
 The boundary is the wedding's (`assertWeddingReach`). The planner and the couple both edit the site and publish it.
 Publishing needs a saved site. The editor page lists the wedding's events to choose from.
 
+**Name changes are limited:** 10 per wedding per hour. Every attempt to change the name counts, taken or not, and the
+count happens before the name is looked up; saving the content under the same name is free. A taken name is an honest
+409, also to the couple. That tells a couple that another wedding of the workspace holds a name, even a draft's, so
+the limit keeps such probing slow (an accepted residual, like the workspace slug index).
+
 ### Routes and pages
 
 - **JSON:** `GET|PUT …/weddings/:id/site` and `PUT …/site/published {published}`.
@@ -68,6 +77,12 @@ Publishing needs a saved site. The editor page lists the wedding's events to cho
   `/t/<slug>/w/<name>`.
 
 ## Consequences
+
+- **Published means readable by anyone who can reach the service.** Site names are short and can be guessed, so a
+  published page (hotel block codes included) is public. The editor says so.
+- **The couple publishes without the planner's approval**, under the planner's brand, as it makes RSVP links
+  (ADR 0049). A planner switch to turn a site off could come later.
+- **A site cannot be deleted.** Renaming frees its old name, and unpublishing takes it offline.
 
 - M4's guest concierge can answer from the same allow-listed facts (schedule, travel, FAQ).
 - Not done: custom domains, photos, and password-protected sites.

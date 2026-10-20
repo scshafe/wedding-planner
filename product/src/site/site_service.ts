@@ -4,6 +4,7 @@ import type { Principal } from '../auth/principal'
 import type { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import { COLLECTIONS } from '../persistence/collections'
 import type { RecordStore } from '../persistence/record_store'
+import { RateLimiter, type RateLimitRule } from '../accounts/rate_limiter'
 import { ProductError } from '../product_error'
 import type { TenantContext } from '../tenant/tenant_context'
 import { TenantScopedRepository } from '../tenant/tenant_scoped_repository'
@@ -24,14 +25,22 @@ import type { WeddingRepository } from '../wedding/wedding_repository'
  *
  * A site name is unique in the workspace (the `wedding_site_name` index, keyed by name) and is 3–40 lowercase
  * letters, digits and hyphens — no underscore, so it never looks like an id. An unknown, unpublished or removed
- * site, a malformed name, or a suspended workspace all resolve to nothing: the public route's generic not-found.
- * Links are https only.
+ * site, a malformed name, a cancelled wedding, or a suspended workspace all resolve to nothing: the public route's
+ * generic not-found. Links are https only.
+ *
+ * Public reads are not rate-limited: the edge has no client identity, so any limit would be shared by every guest and
+ * an anonymous client could trip it to take the site down; a read is a few point reads, bounded by the event limit.
+ * Name CHANGES are limited per wedding ({@link SITE_NAME_CHANGES}): a taken name is an honest 409, also to the couple,
+ * so the limit bounds how fast anyone can probe for other weddings' names (ADR 0055).
  *
  * related: wedding_site_schema.json and wedding_site_name_schema.json (the contracts), wedding_event_service.ts.
  */
 
 /** Bounds on one site; lists are capped before any per-item work. */
 export const SITE_LIMITS = Object.freeze({ hotels: 10, faq: 30, registry: 10, public_events: 12 })
+
+/** How often one wedding's site name may change (each attempt counts, taken or not). */
+export const SITE_NAME_CHANGES: RateLimitRule = Object.freeze({ limit: 10, windowSeconds: 3600 })
 
 /** A site name: 3–40 lowercase letters, digits and hyphens, starting and ending with a letter or digit. */
 export const SITE_NAME = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$/
@@ -60,6 +69,15 @@ export interface SiteEditView {
   readonly events: readonly { readonly event_id: string; readonly name: string; readonly starts_at: string }[]
 }
 
+/** A hotel block as the public page shows it (copied field by field: a field added to the stored hotel stays private). */
+export interface PublicHotel {
+  readonly name: string
+  readonly address?: string
+  readonly booking_url?: string
+  readonly block_code?: string
+  readonly book_by?: string
+}
+
 /** What the public page shows — nothing else about the wedding. */
 export interface PublicSiteView {
   readonly couple_display_name: string
@@ -67,7 +85,7 @@ export interface PublicSiteView {
   readonly welcome?: string
   readonly schedule: readonly { readonly name: string; readonly starts_at: string; readonly location?: string }[]
   readonly travel?: string
-  readonly hotels: readonly Omit<WeddingSite['hotels'][number], 'hotel_id'>[]
+  readonly hotels: readonly PublicHotel[]
   readonly faq: readonly { readonly question: string; readonly answer: string }[]
   readonly registry: readonly { readonly label: string; readonly url: string }[]
 }
@@ -85,6 +103,7 @@ export class SiteService {
     private readonly ids: IdGenerator,
     store?: RecordStore,
     private readonly limits: typeof SITE_LIMITS = SITE_LIMITS,
+    private readonly nameChanges: RateLimiter = new RateLimiter(clock),
   ) {
     this.#sites = new TenantScopedRepository<WeddingSite>(liveness, (s) => s.wedding_id, COLLECTIONS.weddingSite, store)
     this.#names = new TenantScopedRepository<WeddingSiteName>(liveness, (n) => n.site_name, COLLECTIONS.weddingSiteName, store)
@@ -109,6 +128,10 @@ export class SiteService {
     this.assertReach(context, principal, wedding_id)
     const existing = this.#site(context, wedding_id)
     const fields = this.#fields(context, wedding_id, input)
+    // Counted BEFORE the name is looked up, so probing for taken names is as slow as the limit.
+    if (existing?.site_name !== fields.site_name && !this.nameChanges.attempt(`site-name:${context.tenant_id}:${wedding_id}`, SITE_NAME_CHANGES)) {
+      throw new ProductError('PRODUCT.RATE_LIMITED', 'Too many site name changes; try again later.', {})
+    }
     const holder = this.#names.read(context, fields.site_name)
     if (holder !== undefined && holder.wedding_id !== wedding_id) throw new ProductError('PRODUCT.SITE_NAME_TAKEN', 'That site name is taken in this workspace.', {})
     const site: WeddingSite = {
@@ -139,7 +162,7 @@ export class SiteService {
 
   /**
    * The public page of a site name in this workspace, or undefined (malformed, unknown, unpublished, or its wedding is
-   * gone): one indistinguishable "nothing", which the route turns into the generic not-found. No principal: the
+   * gone or cancelled): one indistinguishable "nothing", which the route turns into the generic not-found. No principal: the
    * page is public, and it shows only the allow-listed content.
    */
   publicView(context: TenantContext, site_name: string): PublicSiteView | undefined {
@@ -149,7 +172,7 @@ export class SiteService {
     const site = this.#site(context, holder.wedding_id)
     if (site === undefined || !site.published || site.site_name !== site_name) return undefined
     const wedding = this.weddings.get(context, site.wedding_id)
-    if (wedding === undefined) return undefined
+    if (wedding === undefined || wedding.status === 'cancelled') return undefined
     const shown = new Set(site.public_event_ids)
     return {
       couple_display_name: wedding.couple_display_name,
@@ -160,7 +183,13 @@ export class SiteService {
         .filter((e) => shown.has(e.event_id))
         .map((e) => ({ name: e.name, starts_at: e.starts_at, ...(e.location === undefined ? {} : { location: e.location }) })),
       ...(site.travel === undefined ? {} : { travel: site.travel }),
-      hotels: site.hotels.map(({ hotel_id: _id, ...hotel }) => hotel),
+      hotels: site.hotels.map((h) => ({
+        name: h.name,
+        ...(h.address === undefined ? {} : { address: h.address }),
+        ...(h.booking_url === undefined ? {} : { booking_url: h.booking_url }),
+        ...(h.block_code === undefined ? {} : { block_code: h.block_code }),
+        ...(h.book_by === undefined ? {} : { book_by: h.book_by }),
+      })),
       faq: site.faq.map((f) => ({ question: f.question, answer: f.answer })),
       registry: site.registry.map((r) => ({ label: r.label, url: r.url })),
     }
@@ -220,9 +249,10 @@ export class SiteService {
   }
 }
 
-/** Refuse anything but a plain https URL (no other scheme, no credentials, no spaces or quotes). */
+/** Refuse anything but a plain https URL (no other scheme, no credentials, no spaces or quotes, no control characters). */
 function assertHttpsUrl(value: string): void {
   const url = value.trim()
+  assertPlainText([url])
   let parsed: URL | undefined
   try {
     parsed = new URL(url)

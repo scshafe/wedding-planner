@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import { type ApiRequest, type ApiResponse, composeProductSurface, type HttpResult } from '@wedding-planner/product'
 
-/** Issue #47 through the surface: editing (planner and couple), the public page, masking, escaping, rate limiting. */
+/** Issue #47 through the surface: editing (planner and couple), the public page, masking, escaping, availability. */
 
 function setup() {
   const clock = new ManualClock('2028-01-10T12:00:00.000Z')
@@ -76,13 +76,22 @@ describe('the wedding website', () => {
     expect(w.api('POST', '/t/demo/site/our-day')).toEqual(NOT_FOUND)
   })
 
-  it('public reads of one site are rate-limited (600 per ten minutes)', () => {
+  it('anonymous reads cannot take a published site down: there is no shared limit to trip', () => {
     const w = setup()
     w.api('PUT', `/t/demo/weddings/${w.ours}/site`, w.bearer, { site_name: 'busy-site' })
     w.api('PUT', `/t/demo/weddings/${w.ours}/site/published`, w.bearer, { published: true })
-    for (let i = 0; i < 600; i++) expect(w.api('GET', '/t/demo/site/busy-site').status).toBe(200)
-    expect(w.api('GET', '/t/demo/site/busy-site').status).toBe(429)
-    w.clock.advance(601_000)
+    for (let i = 0; i < 1000; i++) w.api('GET', '/t/demo/site/busy-site')
     expect(w.api('GET', '/t/demo/site/busy-site').status).toBe(200)
+    expect(w.ui.handle(get('/t/demo/w/busy-site')).status).toBe(200)
+  })
+
+  it('too many name changes come back to the editor as a notice, not an error page', () => {
+    const w = setup()
+    const couple = w.login({ role: 'couple', wedding_id: w.ours })
+    const csrf = csrfOf(w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=site`, couple)))
+    for (let i = 0; i < 10; i++) w.ui.handle(form('/t/demo/site/site-save', { _csrf: csrf, wedding_id: w.ours, site_name: `name-${i}` }, couple))
+    const res = w.ui.handle(form('/t/demo/site/site-save', { _csrf: csrf, wedding_id: w.ours, site_name: 'name-x' }, couple))
+    expect(res.headers.location).toContain('notice=busy')
+    expect(w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=site&notice=busy`, couple)).body).toContain('Too many site name changes')
   })
 })

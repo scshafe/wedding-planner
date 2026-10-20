@@ -1,4 +1,4 @@
-import { ManualClock, SequentialIdGenerator, type Tenant } from '@wedding-planner/shared'
+import { ManualClock, SequentialIdGenerator, type Tenant, type WeddingSite } from '@wedding-planner/shared'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -13,6 +13,8 @@ import {
   WeddingEventService,
   WeddingRepository,
 } from '@wedding-planner/product'
+
+import { COLLECTIONS } from '../../src/persistence/collections'
 
 /**
  * Issue #47 — a wedding's public website below the HTTP edge: unique site names, publishing, the public view's
@@ -41,7 +43,7 @@ function world() {
   const events = new WeddingEventService(tenants, weddings, authorizer, new GuestDirectory(tenants, store), clock, ids, store)
   const sites = new SiteService(tenants, weddings, authorizer, events, clock, ids, store)
   const guestList = new GuestListService(tenants, weddings, authorizer, clock, ids, store)
-  return { tenants, ctx, other, ours, theirs, planner, couple, events, sites, guestList }
+  return { tenants, ctx, other, ours, theirs, planner, couple, events, sites, guestList, store, weddings, clock }
 }
 
 function codeOf(fn: () => unknown): string {
@@ -114,6 +116,48 @@ describe('SiteService', () => {
     const theirEvent = w.events.addEvent(w.ctx, w.planner, w.theirs, { name: 'Theirs', starts_at: '2028-07-10T16:00' })
     expect(codeOf(save({ public_event_ids: [theirEvent.event_id] }))).toBe('PRODUCT.BAD_REQUEST')
     for (const name of ['wedding_w_1', 'x', 'Our Day']) expect(codeOf(() => w.sites.save(w.ctx, w.planner, w.ours, { site_name: name }))).toBe('PRODUCT.BAD_REQUEST')
+    // A link is plain text too: no control characters, no bidi overrides.
+    for (const url of ['https://x.example/\u0001a', 'https://x.example/\u202Egnp.exe']) {
+      expect(codeOf(save({ registry: [{ label: 'X', url }] }))).toBe('PRODUCT.BAD_REQUEST')
+    }
+  })
+
+  it("the public view copies hotels field by field: a field it does not name stays private", () => {
+    const w = world()
+    w.sites.save(w.ctx, w.planner, w.ours, { site_name: 'our-day', hotels: [{ name: 'Inn' }] })
+    w.sites.setPublished(w.ctx, w.planner, w.ours, true)
+    const stored = w.store.get(COLLECTIONS.weddingSite, w.ctx.tenant_id, w.ours) as WeddingSite
+    w.store.put(COLLECTIONS.weddingSite, w.ctx.tenant_id, w.ours, { ...stored, hotels: [{ ...stored.hotels[0], planner_notes: 'rate 89' }] } as never)
+    expect(w.sites.publicView(w.ctx, 'our-day')?.hotels).toEqual([{ name: 'Inn' }])
+  })
+
+  it("a cancelled wedding's site is not public", () => {
+    const w = world()
+    w.sites.save(w.ctx, w.planner, w.ours, { site_name: 'our-day' })
+    w.sites.setPublished(w.ctx, w.planner, w.ours, true)
+    expect(w.sites.publicView(w.ctx, 'our-day')).toBeDefined()
+    const wedding = w.weddings.get(w.ctx, w.ours)
+    if (wedding === undefined) throw new Error('no wedding')
+    w.weddings.update(w.ctx, { ...wedding, status: 'cancelled' })
+    expect(w.sites.publicView(w.ctx, 'our-day')).toBeUndefined()
+  })
+
+  it('name changes are limited per wedding, taken or not, so probing for names is slow; keeping the name is free', () => {
+    const w = world()
+    w.sites.save(w.ctx, w.planner, w.theirs, { site_name: 'their-day' })
+    w.sites.save(w.ctx, w.couple, w.ours, { site_name: 'name-0' })
+    for (let i = 1; i < 10; i++) {
+      const name = i % 3 === 0 ? 'their-day' : `name-${i}`
+      expect(codeOf(() => w.sites.save(w.ctx, w.couple, w.ours, { site_name: name }))).toBe(name === 'their-day' ? 'PRODUCT.SITE_NAME_TAKEN' : 'NO_THROW')
+    }
+    expect(codeOf(() => w.sites.save(w.ctx, w.couple, w.ours, { site_name: 'their-day' }))).toBe('PRODUCT.RATE_LIMITED')
+    expect(codeOf(() => w.sites.save(w.ctx, w.planner, w.ours, { site_name: 'other-name' }))).toBe('PRODUCT.RATE_LIMITED')
+    // Saving the content under the same name is not a change.
+    expect(codeOf(() => w.sites.save(w.ctx, w.couple, w.ours, { site_name: 'name-8', welcome: 'Hi' }))).toBe('NO_THROW')
+    // Another wedding has its own allowance; an hour later this one does again.
+    expect(codeOf(() => w.sites.save(w.ctx, w.planner, w.theirs, { site_name: 'their-new-day' }))).toBe('NO_THROW')
+    w.clock.advance(3_600_000)
+    expect(codeOf(() => w.sites.save(w.ctx, w.couple, w.ours, { site_name: 'name-10' }))).toBe('NO_THROW')
   })
 
   it('the couple edits only its own wedding\'s site; publishing needs a site', () => {

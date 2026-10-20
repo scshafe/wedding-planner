@@ -196,10 +196,9 @@ export interface WeddingHandlerDeps {
   readonly site?: SiteService
 }
 
-/** Issue #47: what the public website read needs — the sites and a limiter. */
+/** Issue #47: what the public website read needs — the sites. */
 export interface PublicSiteDeps {
   readonly sites: SiteService
-  readonly limiter: RateLimiter
 }
 
 /** Issue #30: what the public household RSVP route needs — the link resolver, the answers, the dietary note, a limiter. */
@@ -615,14 +614,12 @@ export class ProductApi {
       }
 
       // /t/:slug/site/:name — a published wedding website's public content (issue #47). Unauthenticated by design;
-      // anything that is not a published site of THIS workspace is the masked 404. Reads are rate-limited per site.
+      // anything that is not a published site of THIS workspace is the masked 404. Not rate-limited: with no client
+      // identity a limit is shared by every guest, so tripping it would take the site down (ADR 0055).
       if (this.#publicSite !== undefined && segments.length === 4 && segments[2] === 'site') {
         if (req.method !== 'GET') throw routeNotFound()
         const view = this.#publicSite.sites.publicView(context, segments[3] ?? '')
         if (view === undefined) throw routeNotFound()
-        if (!this.#publicSite.limiter.attempt(`site:${context.tenant_id}:${segments[3] ?? ''}`, PUBLIC_SITE_RATE_LIMIT)) {
-          throw new ProductError('PRODUCT.RATE_LIMITED', 'Too many requests for this site; try again later.', {})
-        }
         return { status: 200, body: view }
       }
 
@@ -1140,9 +1137,6 @@ function dispatchChecklist(
   if (req.method === 'DELETE') return { status: 200, body: { removed: checklist.removeTask(context, principal, weddingId, id) } }
   throw methodNotAllowed()
 }
-
-/** Public reads of one published site per window: a page for every guest, never a load generator. */
-const PUBLIC_SITE_RATE_LIMIT = Object.freeze({ limit: 600, windowSeconds: 600 })
 
 /**
  * The website routes of one wedding (issue #47): the planner and the couple edit. The wedding's boundary first.
