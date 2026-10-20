@@ -21,6 +21,7 @@ import { VENDOR_CATEGORIES, type VendorsView } from '../vendors/vendor_service'
 import type { BudgetLine, BudgetView } from '../budget/budget_service'
 import type { RunOfShowLine, RunOfShowView } from '../run_of_show/run_of_show_service'
 import type { SeatedGuest, SeatingView } from '../seating/seating_service'
+import type { PublicSiteView, SiteEditView } from '../site/site_service'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -1050,7 +1051,7 @@ export function renderDetail(
     <p>Status: <span class="status">${wedding.status}</span></p>
     <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=guests">Guest list →</a></p>
     ${checklistLine}
-    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=vendors">Vendors →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=budget">Budget →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=run-of-show">Run of show →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=seating">Seating →</a></p>
+    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=vendors">Vendors →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=budget">Budget →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=run-of-show">Run of show →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=seating">Seating →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=site">Website →</a></p>
     <p class="note">Wedding id: <code>${wedding.wedding_id}</code> · created ${wedding.created_at}</p>
     <p class="note">Active strategy: <a href="/t/${slug}/strategy">the platform’s data-optimized planning defaults</a> (applied to every wedding in this workspace).</p>
   </div>
@@ -2260,6 +2261,119 @@ export function renderSeating(theme: Tenant['theme'], slug: string, wedding: Wed
       <button type="submit">Add table</button></form>
   </div>`,
     'wedding',
+  )
+}
+
+export type SiteNotice = 'saved' | 'invalid' | 'taken' | 'published' | 'unpublished'
+
+const SITE_NOTICES: Readonly<Record<SiteNotice, string>> = Object.freeze({
+  saved: 'Saved.',
+  invalid: 'That could not be saved. Check the site name (3 to 40 lowercase letters, digits and hyphens) and that links start with https://.',
+  taken: 'That site name is taken in this workspace.',
+  published: 'The website is published.',
+  unpublished: 'The website is off.',
+})
+
+/** Blank rows a site form offers beyond the existing ones. */
+export const BLANK_SITE_ROWS = Object.freeze({ hotels: 2, faq: 3, registry: 2 })
+
+/**
+ * Editing a wedding's public website (issue #47), for the planner and the couple: the site name, what guests read,
+ * which events are public, and publishing. The page never shows guest data; neither does the site.
+ */
+export function renderSiteEditor(theme: Tenant['theme'], slug: string, wedding: Wedding, view: SiteEditView, csrfToken: string, notice?: SiteNotice): string {
+  const w = wedding.wedding_id
+  const site = view.site
+  const hidden = (fields: Record<string, string>) => html`${csrfField(csrfToken)}${Object.entries(fields).map(([k, v]) => html`<input type="hidden" name="${k}" value="${v}">`)}`
+  const shown = new Set(site?.public_event_ids ?? [])
+  const hotels = [...(site?.hotels ?? []), ...Array.from({ length: BLANK_SITE_ROWS.hotels }, () => undefined)]
+  const faq = [...(site?.faq ?? []), ...Array.from({ length: BLANK_SITE_ROWS.faq }, () => undefined)]
+  const registry = [...(site?.registry ?? []), ...Array.from({ length: BLANK_SITE_ROWS.registry }, () => undefined)]
+  const publicPath = site === undefined ? undefined : `/t/${slug}/w/${site.site_name}`
+  return signedInShell(
+    theme,
+    slug,
+    'Website',
+    html`<p><a href="/t/${slug}?wedding=${w}">← ${wedding.couple_display_name}</a></p>
+  <h2>Wedding website</h2>
+  ${notice === undefined ? html`` : html`<p class="note">${SITE_NOTICES[notice]}</p>`}
+  ${
+    site === undefined
+      ? html`<p class="note">No website yet: choose a site name and save, then publish it.</p>`
+      : html`<div class="card"><p>${site.published ? 'The website is published at ' : 'The website is off. Once published it will be at '}<a href="${publicPath ?? ''}">${publicPath ?? ''}</a></p>
+    <form method="post" action="/t/${slug}/site/site-publish">${hidden({ wedding_id: w, published: site.published ? 'false' : 'true' })}<button type="submit">${site.published ? 'Turn the website off' : 'Publish the website'}</button></form>
+    <p class="note">Guests see the couple's names, the date, and what you write here. Never the guest list or who answered.</p></div>`
+  }
+  <form method="post" action="/t/${slug}/site/site-save">${hidden({ wedding_id: w })}
+  <div class="card">
+    <label for="site_name">Site name <span class="note">(3 to 40 lowercase letters, digits and hyphens: /t/${slug}/w/<em>name</em>)</span></label>
+    <input id="site_name" name="site_name" maxlength="40" required value="${site?.site_name ?? ''}">
+    <label for="welcome">Welcome</label>
+    <textarea id="welcome" name="welcome" maxlength="2000" rows="3">${site?.welcome ?? ''}</textarea>
+    <label for="travel">Travel notes</label>
+    <textarea id="travel" name="travel" maxlength="2000" rows="3">${site?.travel ?? ''}</textarea>
+  </div>
+  <div class="card"><h3>Schedule</h3>
+    ${view.events.length === 0 ? html`<p class="note">Add events on the events page to show a schedule.</p>` : view.events.map((e) => html`<label><input type="checkbox" name="public_event" value="${e.event_id}"${shown.has(e.event_id) ? html` checked` : html``}> ${`${e.name} (${e.starts_at.replace('T', ' ')})`}</label>`)}
+  </div>
+  <div class="card"><h3>Hotel blocks</h3>${hotels.map(
+    (h, n) => html`<p><input name="h${n}_name" maxlength="120" value="${h?.name ?? ''}" aria-label="Hotel">
+      <input name="h${n}_address" maxlength="300" value="${h?.address ?? ''}" aria-label="Address">
+      <input name="h${n}_url" maxlength="500" value="${h?.booking_url ?? ''}" aria-label="Booking link (https://)">
+      <input name="h${n}_code" maxlength="60" value="${h?.block_code ?? ''}" aria-label="Block code">
+      <input name="h${n}_by" type="date" value="${h?.book_by ?? ''}" aria-label="Book by"></p>`,
+  )}<p class="note">Clear a hotel's name to remove it.</p></div>
+  <div class="card"><h3>Questions and answers</h3>${faq.map(
+    (f, n) => html`<p><input name="f${n}_q" maxlength="200" value="${f?.question ?? ''}" aria-label="Question">
+      <textarea name="f${n}_a" maxlength="2000" rows="2" aria-label="Answer">${f?.answer ?? ''}</textarea></p>`,
+  )}</div>
+  <div class="card"><h3>Registry links</h3>${registry.map(
+    (r, n) => html`<p><input name="r${n}_label" maxlength="80" value="${r?.label ?? ''}" aria-label="Name"> <input name="r${n}_url" maxlength="500" value="${r?.url ?? ''}" aria-label="Link (https://)"></p>`,
+  )}</div>
+  <p><button type="submit">Save the website</button></p>
+  </form>`,
+    'wedding',
+  )
+}
+
+/**
+ * A published wedding website (issue #47): public, themed, read by guests. Only the allow-listed content of
+ * `SiteService.publicView`: no guest data, no ids. Links are https (checked when saved) and open with no referrer.
+ */
+export function renderPublicSite(theme: Tenant['theme'], slug: string, view: PublicSiteView): string {
+  const link = (url: string, text: string) => html`<a href="${url}" rel="noopener noreferrer nofollow">${text}</a>`
+  return themedShell(
+    theme,
+    slug,
+    view.couple_display_name,
+    html`<h2>${view.couple_display_name}</h2>
+  <p><strong>${view.event_date}</strong></p>
+  ${view.welcome === undefined ? html`` : html`<div class="card"><p style="white-space:pre-line">${view.welcome}</p></div>`}
+  ${
+    view.schedule.length === 0
+      ? html``
+      : html`<div class="card"><h3>Schedule</h3><ul>${view.schedule.map(
+          (e) => html`<li><strong>${e.starts_at.replace('T', ' ')}</strong> ${e.name}${e.location === undefined ? html`` : html` <span class="note">${e.location}</span>`}</li>`,
+        )}</ul></div>`
+  }
+  ${view.travel === undefined ? html`` : html`<div class="card"><h3>Getting there</h3><p style="white-space:pre-line">${view.travel}</p></div>`}
+  ${
+    view.hotels.length === 0
+      ? html``
+      : html`<div class="card"><h3>Where to stay</h3><ul>${view.hotels.map(
+          (h) => html`<li><strong>${h.name}</strong>${h.address === undefined ? html`` : html`, ${h.address}`}
+        ${h.block_code === undefined ? html`` : html`<br><span class="note">${`Block code: ${h.block_code}`}</span>`}
+        ${h.book_by === undefined ? html`` : html`<br><span class="note">${`Book by ${h.book_by}`}</span>`}
+        ${h.booking_url === undefined ? html`` : html`<br>${link(h.booking_url, 'Book a room')}`}</li>`,
+        )}</ul></div>`
+  }
+  ${
+    view.faq.length === 0
+      ? html``
+      : html`<div class="card"><h3>Questions</h3>${view.faq.map((f) => html`<p><strong>${f.question}</strong><br><span style="white-space:pre-line">${f.answer}</span></p>`)}</div>`
+  }
+  ${view.registry.length === 0 ? html`` : html`<div class="card"><h3>Registry</h3><ul>${view.registry.map((r) => html`<li>${link(r.url, r.label)}</li>`)}</ul></div>`}
+  <div class="card"><h3>RSVP</h3><p>Please answer with the RSVP link sent to your household. It lets you answer for everyone in your party.</p></div>`,
   )
 }
 

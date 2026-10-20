@@ -112,4 +112,6 @@ export type {
   RunOfShowItem,
   SeatingTable,
   SeatAssignment,
+  WeddingSite,
+  WeddingSiteName,
 } from './contracts/contract_types'

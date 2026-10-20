@@ -19,6 +19,8 @@ import type {
   RunOfShowItem,
   SeatingTable,
   SeatAssignment,
+  WeddingSite,
+  WeddingSiteName,
 } from '@wedding-planner/shared'
 
 import type { AccountEmailIndex, UserAccount } from '../accounts/account_store'
@@ -120,4 +122,8 @@ export const COLLECTIONS = Object.freeze({
   seatingTable: collection<SeatingTable>('seating_table', 'tenant', 'seating_table'),
   /** Key groupedKey(wedding_id, guest_id): where each guest sits (issue #46). */
   seatAssignment: collection<SeatAssignment>('seat_assignment', 'tenant', 'seat_assignment'),
+  /** Key wedding_id: a wedding's public website (issue #47). */
+  weddingSite: collection<WeddingSite>('wedding_site', 'tenant', 'wedding_site'),
+  /** Key site_name: which wedding holds a site name in the workspace (issue #47). */
+  weddingSiteName: collection<WeddingSiteName>('wedding_site_name', 'tenant', 'wedding_site_name'),
 })

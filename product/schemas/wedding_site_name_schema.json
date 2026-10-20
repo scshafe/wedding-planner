@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/wedding_site_name.json",
+  "title": "WeddingSiteName",
+  "description": "The index of site names in a workspace (issue #47): keyed by the site name, naming the wedding whose site holds it \u2014 so a name is unique in the workspace, and the public page finds its wedding by name.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tenant_id",
+    "site_name",
+    "wedding_id"
+  ],
+  "properties": {
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "site_name": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$"
+    },
+    "wedding_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  }
+}
