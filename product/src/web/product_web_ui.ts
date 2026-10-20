@@ -1,6 +1,7 @@
 import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Wedding } from '@wedding-planner/shared'
 
 import type { TeamView } from '../accounts/membership_service'
+import type { EventsView, GuestEventRsvp } from '../events/event_service'
 import { toGuestCsv } from '../guests/guest_csv'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
@@ -28,6 +29,7 @@ import {
   renderConversationNotFound,
   renderDetail,
   renderEscalations,
+  renderEvents,
   renderForbidden,
   renderFeedback,
   renderFeedbackThanks,
@@ -230,6 +232,11 @@ export class ProductWebUi {
         if (slug === undefined) return GENERIC_404
         return this.#guestListAction(req, slug, segments[3] ?? '')
       }
+      // /t/:slug/events/<action> (issue #29) — the events and RSVP FORM posts (CSRF-protected).
+      if (segments.length === 4 && segments[2] === 'events' && req.method === 'POST') {
+        if (slug === undefined) return GENERIC_404
+        return this.#eventsAction(req, slug, segments[3] ?? '')
+      }
 
       // /t/:slug/feedback/send (issue #12) — the feedback FORM post (CSRF-protected), distinct from the JSON
       // POST /t/:slug/feedback. Slug masked to 404 before any cookie read / CSRF verdict.
@@ -303,6 +310,8 @@ export class ProductWebUi {
     const weddingId = queryParam(req.path, 'wedding')
     // ?wedding=ID&tab=guests (issue #27): the wedding's guest list (or one guest's edit page with &guest=ID).
     if (weddingId !== undefined && queryParam(req.path, 'tab') === 'guests') return this.#guestListPage(req, slug, weddingId)
+    // ?wedding=ID&tab=events (issue #29): the wedding's events and their RSVP counts.
+    if (weddingId !== undefined && queryParam(req.path, 'tab') === 'events') return this.#eventsPage(req, slug, weddingId)
     if (weddingId !== undefined) return this.#detail(req, slug, weddingId)
     return this.#home(req, slug)
   }
@@ -391,9 +400,12 @@ export class ProductWebUi {
       const canInvite = readTeam(this.#api.handle(bearerGet(`/t/${slug}/team`, token))) !== undefined
       const invite = queryParam(req.path, 'invite')
       const notice = invite === 'sent' || invite === 'exists' || invite === 'invalid' ? invite : undefined
+      // Issue #29: the events card with live counts (same boundary as the wedding read; absent if not wired).
+      const eventsRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${encodeURIComponent(weddingId)}/events`, token))
+      const events = eventsRes.status === 200 ? (eventsRes.body as EventsView) : undefined
       return htmlResult(
         invalid ? 400 : 200,
-        renderDetail(theme, slug, wedding, csrf, invalid, canInvite ? (notice === undefined ? {} : { notice }) : undefined),
+        renderDetail(theme, slug, wedding, csrf, invalid, canInvite ? (notice === undefined ? {} : { notice }) : undefined, events),
       )
     }
     return this.#renderNonData(slug, apiRes.status)
@@ -694,7 +706,7 @@ export class ProductWebUi {
    * Two reads through the pipeline (the wedding, then its list): any non-200 takes the usual masking, so a couple
    * probing another wedding sees the same not-found as for a wedding that does not exist.
    */
-  #guestListPage(req: ApiRequest, slug: string, weddingId: string, status = 200, editProblem?: 'invalid' | 'conflict'): HttpResult {
+  #guestListPage(req: ApiRequest, slug: string, weddingId: string, status = 200, editNotice?: 'saved' | 'invalid' | 'conflict'): HttpResult {
     const token = readSessionCookie(req.headers.cookie)
     const id = encodeURIComponent(weddingId)
     const weddingRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}`, token))
@@ -712,11 +724,82 @@ export class ProductWebUi {
     if (guestId !== undefined) {
       const guest = list.guests.find((g) => g.guest_id === guestId)
       if (guest === undefined) return this.#renderNonData(slug, 404)
-      return htmlResult(status, renderGuestEdit(theme, slug, wedding, guest, list.households, csrf, editProblem))
+      // Issue #29: the guest's answer per event (absent when events are not wired).
+      const rsvpRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}/guests/${encodeURIComponent(guestId)}/rsvps`, token))
+      const rsvps = rsvpRes.status === 200 ? (rsvpRes.body as { rsvps: GuestEventRsvp[] }).rsvps : undefined
+      const rawNotice = queryParam(req.path, 'notice')
+      const notice = editNotice ?? (['saved', 'invalid', 'conflict'] as const).find((n) => n === rawNotice)
+      return htmlResult(status, renderGuestEdit(theme, slug, wedding, guest, list.households, csrf, notice, rsvps))
     }
     const raw = queryParam(req.path, 'notice')
     const notice = (['saved', 'removed', 'invalid', 'conflict', 'imported'] as const).find((n) => n === raw)
     return htmlResult(status, renderGuestList(theme, slug, wedding, list, csrf, notice))
+  }
+
+  /**
+   * GET /t/:slug?wedding=ID&tab=events (issue #29) — the wedding's events and live counts. Two reads through the
+   * pipeline (the wedding, then its events); any non-200 takes the usual masking.
+   */
+  #eventsPage(req: ApiRequest, slug: string, weddingId: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const id = encodeURIComponent(weddingId)
+    const weddingRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}`, token))
+    if (weddingRes.status !== 200) return this.#renderNonData(slug, weddingRes.status)
+    const eventsRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}/events`, token))
+    if (eventsRes.status !== 200) return this.#renderNonData(slug, eventsRes.status)
+    const theme = this.#themes.resolveActiveTheme(slug)
+    const csrf = this.#csrf.issueCsrf(token)
+    const wedding = readWedding(weddingRes.body)
+    if (theme === undefined || wedding === undefined) return GENERIC_404
+    if (csrf === undefined) return ERROR_500
+    const raw = queryParam(req.path, 'notice')
+    const notice = (['saved', 'removed', 'invalid', 'conflict'] as const).find((n) => n === raw)
+    return htmlResult(200, renderEvents(theme, slug, wedding, eventsRes.body as EventsView, csrf, notice))
+  }
+
+  /**
+   * POST /t/:slug/events/<action> (issue #29) — CSRF first, then the matching JSON route of the form's wedding.
+   * Event actions go back to the events page with a notice; an RSVP goes back to the guest's edit page.
+   */
+  #eventsAction(req: ApiRequest, slug: string, action: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    const weddingId = form.get('wedding_id') ?? ''
+    const base = `/t/${slug}/weddings/${encodeURIComponent(weddingId)}`
+    const value = (name: string): string => (form.get(name) ?? '').trim()
+    const event = encodeURIComponent(value('event_id'))
+    const call = (method: string, path: string, body?: unknown) => this.#api.handle(bearerJson(method, path, token, body ?? {}))
+    const eventBody = () => ({
+      name: value('name'),
+      starts_at: value('starts_at'),
+      ...(value('location').length === 0 ? {} : { location: value('location') }),
+      meal_options: (form.get('meal_options') ?? '').split(/\r?\n/).map((m) => m.trim()).filter((m) => m.length > 0),
+    })
+    if (action === 'rsvp-set') {
+      const guest = encodeURIComponent(value('guest_id'))
+      const res = call('PUT', `${base}/events/${event}/rsvps/${guest}`, {
+        invited: form.get('invited') === 'true',
+        status: value('status'),
+        ...(value('meal_option_id').length === 0 ? {} : { meal_option_id: value('meal_option_id') }),
+      })
+      if (res.status === 404 || res.status === 401 || res.status === 403) return this.#renderNonData(slug, res.status)
+      const notice = res.status === 200 ? 'saved' : 'invalid'
+      return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=guests&guest=${guest}&notice=${notice}`)
+    }
+    const res =
+      action === 'event-add'
+        ? call('POST', `${base}/events`, eventBody())
+        : action === 'event-update'
+          ? call('PUT', `${base}/events/${event}`, eventBody())
+          : action === 'event-remove'
+            ? call('DELETE', `${base}/events/${event}`)
+            : undefined
+    if (res === undefined) return GENERIC_404
+    if (res.status === 404 || res.status === 401 || res.status === 403) return this.#renderNonData(slug, res.status)
+    const notice =
+      res.status === 200 || res.status === 201 ? (action === 'event-remove' ? 'removed' : 'saved') : res.status === 409 ? 'conflict' : 'invalid'
+    return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=events&notice=${notice}`)
   }
 
   /**

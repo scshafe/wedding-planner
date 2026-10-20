@@ -100,5 +100,7 @@ export type {
   EscalationResolution,
   EscalationReply,
   Household,
+  WeddingEvent,
   WeddingGuest,
+  WeddingRsvp,
 } from './contracts/contract_types'

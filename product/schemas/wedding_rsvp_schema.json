@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/wedding_rsvp.json",
+  "title": "WeddingRsvp",
+  "description": "One guest's answer for one event of a wedding (issue #29). Stored under groupedKey(wedding_id, `${event_id}:${guest_id}`). No record means the default: invited, pending. Removed with its guest or its event.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tenant_id", "wedding_id", "event_id", "guest_id", "invited", "status", "answered_by", "updated_at"],
+  "properties": {
+    "tenant_id": { "type": "string", "minLength": 1, "description": "The owning tenant. Compared to the context's tenant only; never selects the partition." },
+    "wedding_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "event_id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "An event of the same wedding." },
+    "guest_id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "A guest (wedding_guest) of the same wedding." },
+    "invited": { "type": "boolean", "description": "Whether the guest is invited to this event. A guest not invited has no answer (status pending)." },
+    "status": { "type": "string", "enum": ["pending", "attending", "declined"] },
+    "meal_option_id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "One of the event's meal options; only while attending." },
+    "answered_by": { "type": "string", "enum": ["planner", "couple", "household"], "description": "Who recorded the current answer: the planner or the couple in the console, or the household on its RSVP page (issue #30)." },
+    "updated_at": { "type": "string", "minLength": 1, "description": "ISO 8601 UTC time of the last change, from the injected clock." }
+  }
+}

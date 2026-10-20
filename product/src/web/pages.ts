@@ -6,11 +6,13 @@ import type {
   Household,
   Tenant,
   Wedding,
+  WeddingEvent,
   WeddingGuest,
 } from '@wedding-planner/shared'
 
 import type { TeamView } from '../accounts/membership_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
+import type { EventCounts, EventsView, GuestEventRsvp } from '../events/event_service'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -953,7 +955,16 @@ export function renderDetail(
   csrfToken: string,
   invalid = false,
   inviteCouple?: { readonly notice?: 'sent' | 'exists' | 'invalid' },
+  events?: EventsView,
 ): string {
+  // Issue #29: each event's live RSVP counts, when the events are wired.
+  const eventsCard =
+    events === undefined
+      ? html``
+      : html`<div class="card"><h3>Events</h3>
+    ${events.events.length === 0 ? html`<p class="note">No events yet.</p>` : html`<ul>${events.events.map((e, i) => html`<li>${eventLine(e, events.counts[i])}</li>`)}</ul>`}
+    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=events">Events &amp; RSVPs →</a></p>
+  </div>`
   // Issue #11: a planner can invite this wedding's couple (role couple, bound to this wedding).
   const inviteNotices = {
     sent: 'Invitation sent to the couple.',
@@ -1008,6 +1019,7 @@ export function renderDetail(
       <p><button type="submit">Save changes</button></p>
     </form>
   </div>
+  ${eventsCard}
   ${inviteCard}`,
     'wedding',
   )
@@ -1390,9 +1402,20 @@ export function renderGuestEdit(
   guest: WeddingGuest,
   households: readonly Household[],
   csrfToken: string,
-  problem?: 'invalid' | 'conflict',
+  notice?: 'saved' | 'invalid' | 'conflict',
+  rsvps?: readonly GuestEventRsvp[],
 ): string {
   const w = wedding.wedding_id
+  const rsvpCard =
+    rsvps === undefined || rsvps.length === 0
+      ? html``
+      : html`<div class="card"><h3>RSVPs</h3>${rsvps.map((r) => rsvpForm(slug, w, guest.guest_id, csrfToken, r))}</div>`
+  const banner =
+    notice === undefined
+      ? html``
+      : notice === 'saved'
+        ? html`<p class="note">${GUEST_LIST_NOTICES.saved}</p>`
+        : html`<p class="note" style="color:#b00">${GUEST_LIST_NOTICES[notice]}</p>`
   const householdField =
     guest.plus_one_of === undefined
       ? html`<label for="e_household">Household</label>
@@ -1410,7 +1433,7 @@ export function renderGuestEdit(
     html`<p><a href="/t/${slug}?wedding=${w}&amp;tab=guests">← Guest list</a></p>
   <div class="card">
     <h2>Edit guest</h2>
-    ${problem === undefined ? html`` : html`<p class="note" style="color:#b00">${GUEST_LIST_NOTICES[problem]}</p>`}
+    ${banner}
     <form method="post" action="/t/${slug}/guest-list/guest-update">
       ${csrfField(csrfToken)}
       <input type="hidden" name="wedding_id" value="${w}">
@@ -1418,6 +1441,120 @@ export function renderGuestEdit(
       ${guestFields('e', guest)}
       ${householdField}
       <p><button type="submit">Save guest</button></p>
+    </form>
+  </div>
+  ${rsvpCard}`,
+    'wedding',
+  )
+}
+
+const RSVP_STATUS_LABELS = Object.freeze({ pending: 'No answer yet', attending: 'Attending', declined: 'Declined' })
+
+/** One event's RSVP form on a guest's edit page (issue #29). */
+function rsvpForm(slug: string, weddingId: string, guestId: string, csrfToken: string, r: GuestEventRsvp): SafeHtml {
+  const e = r.event
+  const statusOptions = (['pending', 'attending', 'declined'] as const).map((s) =>
+    s === r.status ? html`<option value="${s}" selected>${RSVP_STATUS_LABELS[s]}</option>` : html`<option value="${s}">${RSVP_STATUS_LABELS[s]}</option>`,
+  )
+  const mealField =
+    e.meal_options.length === 0
+      ? html``
+      : html`<label>Meal <select name="meal_option_id"><option value="">Not chosen</option>${e.meal_options.map((o) =>
+          o.option_id === r.meal_option_id
+            ? html`<option value="${o.option_id}" selected>${o.label}</option>`
+            : html`<option value="${o.option_id}">${o.label}</option>`,
+        )}</select></label>`
+  return html`<form method="post" action="/t/${slug}/events/rsvp-set">${csrfField(csrfToken)}
+    <input type="hidden" name="wedding_id" value="${weddingId}">
+    <input type="hidden" name="guest_id" value="${guestId}">
+    <input type="hidden" name="event_id" value="${e.event_id}">
+    <p><strong>${e.name}</strong> <span class="note">${eventWhen(e)}</span></p>
+    <label><input type="checkbox" name="invited" value="true"${r.invited ? html` checked` : html``}> Invited</label>
+    <label>Answer <select name="status">${statusOptions}</select></label>
+    ${mealField}
+    <p><button type="submit">Save RSVP</button></p>
+  </form>`
+}
+
+/** `2028-06-10 16:00 · Garden` — when and where. */
+function eventWhen(e: WeddingEvent): string {
+  return [e.starts_at.replace('T', ' '), ...(e.location === undefined ? [] : [e.location])].join(' · ')
+}
+
+/** An event with its live counts and meals. */
+function eventLine(e: WeddingEvent, c: EventCounts | undefined): SafeHtml {
+  if (c === undefined) return html`<strong>${e.name}</strong> <span class="note">${eventWhen(e)}</span>`
+  const meals = e.meal_options.map((o) => `${o.label}: ${c.meals[o.option_id] ?? 0}`)
+  if (e.meal_options.length > 0 && c.meal_unchosen > 0) meals.push(`not chosen: ${c.meal_unchosen}`)
+  return html`<strong>${e.name}</strong> <span class="note">${eventWhen(e)}</span><br>
+    ${`${c.attending} attending · ${c.declined} declined · ${c.pending} pending (of ${c.invited} invited)`}
+    ${meals.length === 0 ? html`` : html`<br><span class="note">${`Meals — ${meals.join(' · ')}`}</span>`}`
+}
+
+export type EventsNotice = 'saved' | 'removed' | 'invalid' | 'conflict'
+
+const EVENTS_NOTICES: Readonly<Record<EventsNotice, string>> = Object.freeze({
+  saved: 'Saved.',
+  removed: 'Removed.',
+  invalid: 'That could not be saved. Check the name and the date and time.',
+  conflict: 'This wedding has reached the event limit.',
+})
+
+/** The fields of an event form; meals are one per line. */
+function eventFields(prefix: string, e?: WeddingEvent): SafeHtml {
+  return html`<label for="${prefix}_name">Name <span class="note">(e.g. "Ceremony")</span></label>
+      <input id="${prefix}_name" name="name" maxlength="120" required value="${e?.name ?? ''}">
+      <label for="${prefix}_starts">Starts</label>
+      <input id="${prefix}_starts" name="starts_at" type="datetime-local" required value="${e?.starts_at ?? ''}">
+      <label for="${prefix}_location">Location <span class="note">(optional)</span></label>
+      <input id="${prefix}_location" name="location" maxlength="200" value="${e?.location ?? ''}">
+      <label for="${prefix}_meals">Meal options <span class="note">(one per line; leave empty for no meal choice)</span></label>
+      <textarea id="${prefix}_meals" name="meal_options" rows="3">${(e?.meal_options ?? []).map((o) => o.label).join('\n')}</textarea>`
+}
+
+/** A wedding's events with their live counts (issue #29): add, edit, remove. Answers are recorded per guest. */
+export function renderEvents(
+  theme: Tenant['theme'],
+  slug: string,
+  wedding: Wedding,
+  view: EventsView,
+  csrfToken: string,
+  notice?: EventsNotice,
+): string {
+  const w = wedding.wedding_id
+  const banner = notice === undefined ? html`` : html`<p class="note">${EVENTS_NOTICES[notice]}</p>`
+  const cards = view.events.map(
+    (e, i) => html`<div class="card">
+    <p>${eventLine(e, view.counts[i])}</p>
+    <details><summary>Edit or remove this event</summary>
+      <form method="post" action="/t/${slug}/events/event-update">${csrfField(csrfToken)}
+        <input type="hidden" name="wedding_id" value="${w}">
+        <input type="hidden" name="event_id" value="${e.event_id}">
+        ${eventFields(`e_${e.event_id}`, e)}
+        <p><button type="submit">Save event</button></p>
+      </form>
+      <form method="post" action="/t/${slug}/events/event-remove">${csrfField(csrfToken)}
+        <input type="hidden" name="wedding_id" value="${w}">
+        <input type="hidden" name="event_id" value="${e.event_id}">
+        <button type="submit">Remove the event and its answers</button>
+      </form></details>
+  </div>`,
+  )
+  return signedInShell(
+    theme,
+    slug,
+    'Events',
+    html`<p><a href="/t/${slug}?wedding=${w}">← ${wedding.couple_display_name}</a></p>
+  <h2>Events &amp; RSVPs</h2>
+  ${banner}
+  <p class="note">Every guest is invited to every event unless you change it. Record answers on each guest's page from the <a href="/t/${slug}?wedding=${w}&amp;tab=guests">guest list</a>.</p>
+  ${cards}
+  <div class="card">
+    <h3>Add an event</h3>
+    <form method="post" action="/t/${slug}/events/event-add">${csrfField(csrfToken)}
+      <input type="hidden" name="wedding_id" value="${w}">
+      ${eventFields('new')}
+      <p><button type="submit">Add event</button></p>
     </form>
   </div>`,
     'wedding',

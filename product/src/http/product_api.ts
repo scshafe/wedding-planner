@@ -13,6 +13,7 @@ import type { AccountService } from '../accounts/account_service'
 import { publicAccountView } from '../accounts/account_store'
 import type { InvitedRole } from '../accounts/invitation_store'
 import type { MembershipService } from '../accounts/membership_service'
+import type { EventInput, EventService, RsvpInput } from '../events/event_service'
 import type { FeedbackService } from '../feedback/feedback_service'
 import type { GuestInput, GuestListService, GuestSide } from '../guests/guest_list_service'
 import type { ErrorLog } from '../operability/error_log'
@@ -154,6 +155,8 @@ export interface WeddingHandlerDeps {
   readonly authorizer: WeddingAuthorizer
   /** Issue #27: the wedding's guest list (households + guests). Absent ⇒ the sub-routes are not mounted. */
   readonly guestList?: GuestListService
+  /** Issue #29: the wedding's events and RSVPs. Absent ⇒ the sub-routes are not mounted. */
+  readonly events?: EventService
 }
 
 /** The narrow bag handed to the operator-gated /admin handlers — DELIBERATELY excludes the operator store. */
@@ -305,6 +308,8 @@ export interface ProductApiDeps {
   readonly feedback?: FeedbackService
   /** Issue #27: each wedding's guest list, under /t/:slug/weddings/:id/{guest-list,households,guests}. */
   readonly guestList?: GuestListService
+  /** Issue #29: each wedding's events and RSVPs, under /t/:slug/weddings/:id/events and …/guests/:id/rsvps. */
+  readonly events?: EventService
   /**
    * Issue #13: where a request that ends in a 500 is recorded (code + location, never data), and what the operator
    * reads at /admin/errors. Absent ⇒ nothing is recorded (fixtures).
@@ -410,6 +415,7 @@ export class ProductApi {
       weddings: deps.weddings,
       authorizer: deps.authorizer,
       ...(deps.guestList === undefined ? {} : { guestList: deps.guestList }),
+      ...(deps.events === undefined ? {} : { events: deps.events }),
     }
     this.#guests = deps.guests
     this.#adminDeps = {
@@ -812,8 +818,12 @@ function dispatchWeddings(
     if (req.method === 'PUT') return handleUpdate(context, principal, req, weddingId, deps)
     throw methodNotAllowed()
   }
-  // /t/:slug/weddings/:weddingId/{guest-list | households[/:id] | guests[/:id]} (issue #27).
   const weddingId = segments[3]
+  // /t/:slug/weddings/:weddingId/events[/:id[/rsvps/:guestId]] and …/guests/:guestId/rsvps (issue #29).
+  if (deps.events !== undefined && weddingId !== undefined && (segments[4] === 'events' || (segments[4] === 'guests' && segments[6] === 'rsvps'))) {
+    return dispatchEvents(context, principal, req, weddingId, segments.slice(4), deps.events)
+  }
+  // /t/:slug/weddings/:weddingId/{guest-list | households[/:id] | guests[/:id]} (issue #27).
   if (deps.guestList !== undefined && weddingId !== undefined && (segments.length === 5 || segments.length === 6)) {
     return dispatchGuestList(context, principal, req, weddingId, segments.slice(4), deps.guestList)
   }
@@ -871,6 +881,71 @@ function dispatchGuestList(
     throw methodNotAllowed()
   }
   throw routeNotFound()
+}
+
+/**
+ * The events and RSVP routes of one wedding (issue #29). The wedding's boundary runs before any body is parsed.
+ */
+function dispatchEvents(
+  context: TenantContext,
+  principal: Principal,
+  req: ApiRequest,
+  weddingId: string,
+  rest: readonly string[],
+  events: EventService,
+): ApiResponse {
+  events.assertReach(context, principal, weddingId)
+  const [resource, id, sub, subId] = rest
+  if (resource === 'events' && id === undefined) {
+    if (req.method === 'GET') return { status: 200, body: events.view(context, principal, weddingId) }
+    if (req.method === 'POST') return { status: 201, body: { event: events.addEvent(context, principal, weddingId, eventInput(req)) } }
+    throw methodNotAllowed()
+  }
+  if (resource === 'events' && id !== undefined && sub === undefined) {
+    if (req.method === 'PUT') return { status: 200, body: { event: events.updateEvent(context, principal, weddingId, id, eventInput(req)) } }
+    if (req.method === 'DELETE') return { status: 200, body: { removed: events.removeEvent(context, principal, weddingId, id) } }
+    throw methodNotAllowed()
+  }
+  if (resource === 'events' && id !== undefined && sub === 'rsvps' && subId !== undefined && rest.length === 4) {
+    if (req.method !== 'PUT') throw methodNotAllowed()
+    return { status: 200, body: { rsvp: events.setRsvp(context, principal, weddingId, id, subId, rsvpInput(req)) } }
+  }
+  if (resource === 'guests' && id !== undefined && sub === 'rsvps' && rest.length === 3) {
+    if (req.method !== 'GET') throw methodNotAllowed()
+    return { status: 200, body: { rsvps: events.guestRsvps(context, principal, weddingId, id) } }
+  }
+  throw routeNotFound()
+}
+
+/** An event body: `{name, starts_at, location?, meal_options?: string[]}`. */
+function eventInput(req: ApiRequest): EventInput {
+  const body = parseObjectBody(req.rawBody)
+  const meals = body.meal_options
+  if (meals !== undefined && (!Array.isArray(meals) || meals.some((m) => typeof m !== 'string'))) {
+    throw new ProductError('PRODUCT.BAD_REQUEST', 'meal_options must be a list of strings.', {})
+  }
+  const location = optionalString(body, 'location')
+  return {
+    name: requireString(body, 'name'),
+    starts_at: requireString(body, 'starts_at'),
+    ...(location === undefined ? {} : { location }),
+    ...(meals === undefined ? {} : { meal_options: meals as string[] }),
+  }
+}
+
+/** An RSVP body: `{invited?, status, meal_option_id?}` (invited defaults to true). */
+function rsvpInput(req: ApiRequest): RsvpInput {
+  const body = parseObjectBody(req.rawBody)
+  const status = body.status
+  if (status !== 'pending' && status !== 'attending' && status !== 'declined') {
+    throw new ProductError('PRODUCT.BAD_REQUEST', 'status must be pending, attending or declined.', {})
+  }
+  const invited = body.invited
+  if (invited !== undefined && typeof invited !== 'boolean') {
+    throw new ProductError('PRODUCT.BAD_REQUEST', 'invited must be true or false.', {})
+  }
+  const meal = optionalString(body, 'meal_option_id')
+  return { invited: invited ?? true, status, ...(meal === undefined ? {} : { meal_option_id: meal }) }
 }
 
 /** A household body: `{name, address?}`. */

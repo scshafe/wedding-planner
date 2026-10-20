@@ -67,3 +67,6 @@ export type { EscalationReply } from './generated/escalation_reply'
 // from `Guest` (the messaging binding). Contact details are personal data. See guest_list_service.ts and ADR 0046.
 export type { Household } from './generated/household'
 export type { WeddingGuest } from './generated/wedding_guest'
+// A wedding's events and the guests' answers per event (issue #29). No RSVP record = invited, pending. ADR 0048.
+export type { WeddingEvent } from './generated/wedding_event'
+export type { WeddingRsvp } from './generated/wedding_rsvp'

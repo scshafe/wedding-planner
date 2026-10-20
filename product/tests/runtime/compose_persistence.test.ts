@@ -115,9 +115,14 @@ describe('durable storage — data written before a restart is read back after i
     // A guest list (issue #27): a household and a guest on the new wedding.
     const household = api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/households`, { token, body: { name: 'The Rivera family' } }))
     const householdId = (household.body as { household: { household_id: string } }).household.household_id
-    expect(
-      api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/guests`, { token, body: { household_id: householdId, first_name: 'Ana', side: 'both' } })).status,
-    ).toBe(201)
+    const guestRes = api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/guests`, { token, body: { household_id: householdId, first_name: 'Ana', side: 'both' } }))
+    expect(guestRes.status).toBe(201)
+    const guestId = (guestRes.body as { guest: { guest_id: string } }).guest.guest_id
+    // Events and an RSVP (issue #29).
+    const eventRes = api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/events`, { token, body: { name: 'Reception', starts_at: '2028-06-10T18:00', meal_options: ['Fish'] } }))
+    expect(eventRes.status).toBe(201)
+    const eventId = (eventRes.body as { event: { event_id: string } }).event.event_id
+    expect(api1.handle(req('PUT', `/t/demo/weddings/${newWeddingId}/events/${eventId}/rsvps/${guestId}`, { token, body: { status: 'attending' } })).status).toBe(200)
     const provisioned = api1.handle(
       req('POST', '/admin/tenants', {
         token: OP,

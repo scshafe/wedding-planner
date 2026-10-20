@@ -10,6 +10,7 @@ import { ProductError } from '../product_error'
 import type { TenantContext } from '../tenant/tenant_context'
 import { TenantScopedRepository } from '../tenant/tenant_scoped_repository'
 import type { TenantLivenessCheck } from '../tenant/tenant_store'
+import { assertWeddingReach } from '../wedding/wedding_reach'
 import type { WeddingRepository } from '../wedding/wedding_repository'
 
 /**
@@ -72,6 +73,15 @@ export interface GuestImportResult {
   readonly households_created: number
 }
 
+/**
+ * What the guest list tells the stores that hang off its guests (issue #29: the event RSVPs), inside the same
+ * request and transaction, after its own reach-checked change.
+ */
+export interface GuestListHooks {
+  /** These guests of the wedding were removed: forget everything keyed by them. */
+  guestsRemoved(context: TenantContext, wedding_id: string, guest_ids: readonly string[]): void
+}
+
 export interface GuestInput {
   readonly household_id?: string
   readonly first_name: string
@@ -98,6 +108,7 @@ export class GuestListService {
     private readonly ids: IdGenerator,
     store?: RecordStore,
     private readonly limits: { readonly households: number; readonly guests: number } = GUEST_LIST_LIMITS,
+    private readonly hooks?: GuestListHooks,
   ) {
     this.#households = new TenantScopedRepository<Household>(liveness, (h) => groupedKey(h.wedding_id, h.household_id), COLLECTIONS.household, store)
     this.#guests = new TenantScopedRepository<WeddingGuest>(liveness, (g) => groupedKey(g.wedding_id, g.guest_id), COLLECTIONS.weddingGuest, store)
@@ -184,13 +195,16 @@ export class GuestListService {
     if (household === undefined || household.wedding_id !== wedding_id) return false
     const guests = this.#guestsOf(context, wedding_id)
     const leaving = new Set(guests.filter((g) => g.household_id === household_id).map((g) => g.guest_id))
+    const removed: string[] = []
     for (const guest of guests) {
       // The household's guests, and the plus-one of any of them (who is in the same household unless a stale
       // record says otherwise: never leave a plus-one whose host is gone).
       if (leaving.has(guest.guest_id) || (guest.plus_one_of !== undefined && leaving.has(guest.plus_one_of))) {
         this.#guests.delete(context, groupedKey(wedding_id, guest.guest_id))
+        removed.push(guest.guest_id)
       }
     }
+    if (removed.length > 0) this.hooks?.guestsRemoved(context, wedding_id, removed)
     return this.#households.delete(context, groupedKey(wedding_id, household_id))
   }
 
@@ -280,10 +294,16 @@ export class GuestListService {
     this.#reach(context, principal, wedding_id)
     const guest = this.#guests.read(context, groupedKey(wedding_id, guest_id))
     if (guest === undefined || guest.wedding_id !== wedding_id) return false
+    const removed = [guest_id]
     for (const other of this.#guestsOf(context, wedding_id)) {
-      if (other.plus_one_of === guest_id) this.#guests.delete(context, groupedKey(wedding_id, other.guest_id))
+      if (other.plus_one_of === guest_id) {
+        this.#guests.delete(context, groupedKey(wedding_id, other.guest_id))
+        removed.push(other.guest_id)
+      }
     }
-    return this.#guests.delete(context, groupedKey(wedding_id, guest_id))
+    const existed = this.#guests.delete(context, groupedKey(wedding_id, guest_id))
+    this.hooks?.guestsRemoved(context, wedding_id, removed)
+    return existed
   }
 
   /**
@@ -357,9 +377,7 @@ export class GuestListService {
 
   /** The wedding's boundary: a couple's other wedding, or a wedding that does not exist, is the masked not-found. */
   #reach(context: TenantContext, principal: Principal, wedding_id: string): void {
-    if (this.authorizer.authorizeRead(principal, wedding_id) !== 'allow' || this.weddings.get(context, wedding_id) === undefined) {
-      throw new ProductError('PRODUCT.NOT_FOUND', 'No such wedding.', {})
-    }
+    assertWeddingReach(this.authorizer, this.weddings, context, principal, wedding_id)
   }
 
   #householdsOf(context: TenantContext, wedding_id: string): Household[] {
