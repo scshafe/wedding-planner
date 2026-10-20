@@ -10,8 +10,11 @@ import {
   type ApiRequest,
   composeProductSurface,
   type ComposedSurface,
+  defineModelTask,
   InMemoryRecordStore,
   type RecordStore,
+  TenantContextResolver,
+  TenantStore,
 } from '@wedding-planner/product'
 
 import { COLLECTIONS } from '../../src/persistence/collections'
@@ -52,6 +55,8 @@ function boot(path: string, seed: string): { surface: ComposedSurface; store: Sq
     demoSlug: 'demo',
     store,
     passwordCost: { N: 16, r: 1, p: 1 },
+    // Issue #59: one simulated test task, so the census can make (and meter) a model call.
+    simulatedModelTasks: { census_echo: () => ({ tenant_id: 'x', site_name: 'census-echo', wedding_id: 'w' }) },
   })
   return { surface, store }
 }
@@ -70,7 +75,7 @@ function inbound(ref: string, pmr: string, text: string): ApiRequest {
 }
 
 describe('durable storage — data written before a restart is read back after it (issue #8)', () => {
-  it('every store survives a recomposition over the same database file', () => {
+  it('every store survives a recomposition over the same database file', async () => {
     const path = tempDb()
 
     // ---- Boot 1: seed the demo, then write through every store.
@@ -144,6 +149,10 @@ describe('durable storage — data written before a restart is read back after i
     expect(api1.handle(req('PUT', `/t/demo/weddings/${newWeddingId}/seating/seats/${guestId}`, { token, body: { table_id: tableId } })).status).toBe(200)
     // A wedding website (issue #47).
     expect(api1.handle(req('PUT', `/t/demo/weddings/${newWeddingId}/site`, { token, body: { site_name: 'ana-and-bo' } })).status).toBe(200)
+    // A model call, metered per workspace (issue #59).
+    const ctx = new TenantContextResolver(new TenantStore(new ManualClock('2027-05-01T00:00:00.000Z'), new SequentialIdGenerator('ctx'), first.store)).resolveBySlug('demo')
+    // (The test task borrows an existing contract for its output shape.)
+    await first.surface.model.run(ctx, defineModelTask({ task: 'census_echo', instructions: 'Echo.', output_contract: 'wedding_site_name' }), {})
     const provisioned = api1.handle(
       req('POST', '/admin/tenants', {
         token: OP,
