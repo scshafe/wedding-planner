@@ -1,4 +1,4 @@
-import { assertSynchronousResult, type Collection, type RecordStore } from './record_store'
+import { assertKeyPrefix, assertSynchronousResult, type Collection, type RecordStore } from './record_store'
 
 /**
  * @canonical in_memory_record_store -- the in-memory {@link RecordStore}: the test adapter and the demo default.
@@ -38,6 +38,13 @@ export class InMemoryRecordStore implements RecordStore {
     const rows = this.#tables.get(collection.name)?.get(partition)
     if (rows === undefined) return []
     return [...rows.values()].map((text) => JSON.parse(text) as T)
+  }
+
+  listByKeyPrefix<T>(collection: Collection<T>, partition: string, prefix: string): T[] {
+    assertKeyPrefix(prefix)
+    const rows = this.#tables.get(collection.name)?.get(partition)
+    if (rows === undefined) return []
+    return [...rows].filter(([key]) => key.startsWith(prefix)).map(([, text]) => JSON.parse(text) as T)
   }
 
   put<T>(collection: Collection<T>, partition: string, key: string, record: T): void {

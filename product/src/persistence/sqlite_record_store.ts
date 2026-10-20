@@ -4,7 +4,7 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite'
 import type { Clock } from '@wedding-planner/shared'
 
 import { ProductError } from '../product_error'
-import { assertSynchronousResult, type Collection, type RecordStore } from './record_store'
+import { assertKeyPrefix, assertSynchronousResult, type Collection, type RecordStore } from './record_store'
 import { SQLITE_MIGRATIONS, type SqliteMigration } from './sqlite_migrations'
 
 /**
@@ -62,10 +62,18 @@ interface AppliedMigrationRow {
   readonly older_builds_can_read: number
 }
 
+/**
+ * `listByKeyPrefix`'s query: a key range on the unique `(collection, partition, key)` index. Keys compare BINARY,
+ * which is UTF-8 byte order (the database encoding is SQLite's default, UTF-8; a test pins it and the query plan).
+ */
+export const LIST_BY_KEY_RANGE_SQL =
+  'SELECT body FROM records WHERE collection = ? AND partition = ? AND key >= ? AND key < ? ORDER BY seq'
+
 export class SqliteRecordStore implements RecordStore {
   readonly #db: DatabaseSync
   readonly #get: StatementSync
   readonly #list: StatementSync
+  readonly #listRange: StatementSync
   readonly #put: StatementSync
   readonly #delete: StatementSync
   readonly #any: StatementSync
@@ -75,6 +83,7 @@ export class SqliteRecordStore implements RecordStore {
     this.#db = db
     this.#get = db.prepare('SELECT body FROM records WHERE collection = ? AND partition = ? AND key = ?')
     this.#list = db.prepare('SELECT body FROM records WHERE collection = ? AND partition = ? ORDER BY seq')
+    this.#listRange = db.prepare(LIST_BY_KEY_RANGE_SQL)
     this.#put = db.prepare(
       'INSERT INTO records (collection, partition, key, body) VALUES (?, ?, ?, ?) ' +
         'ON CONFLICT (collection, partition, key) DO UPDATE SET body = excluded.body',
@@ -122,6 +131,15 @@ export class SqliteRecordStore implements RecordStore {
 
   list<T>(collection: Collection<T>, partition: string): T[] {
     const rows = storage(() => this.#list.all(collection.name, partition)) as unknown as BodyRow[]
+    return rows.map((row) => JSON.parse(row.body) as T)
+  }
+
+  listByKeyPrefix<T>(collection: Collection<T>, partition: string, prefix: string): T[] {
+    assertKeyPrefix(prefix)
+    // `p/` up to (not including) `p0`: '0' is the byte after '/', so in UTF-8 byte order the range holds exactly
+    // the keys starting `p/`.
+    const end = `${prefix.slice(0, -1)}0`
+    const rows = storage(() => this.#listRange.all(collection.name, partition, prefix, end)) as unknown as BodyRow[]
     return rows.map((row) => JSON.parse(row.body) as T)
   }
 

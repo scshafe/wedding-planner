@@ -25,6 +25,7 @@ import { WeddingPlannerError } from '@wedding-planner/shared'
  *   - PERSISTENCE.MIGRATION_MISMATCH   the database's migration history diverges from this build (boot refuses)
  *   - PERSISTENCE.INVALID_MIGRATIONS   the migration list itself is malformed (a programming error)
  *   - PERSISTENCE.INVALID_COLLECTION   a malformed collection name, or a global collection under a tenant repo
+ *   - PERSISTENCE.INVALID_KEY_PREFIX   a `listByKeyPrefix` prefix that is empty or does not end with `/`
  *   - PERSISTENCE.ASYNC_TRANSACTION    a transaction body returned a promise (a programming error)
  *   - PERSISTENCE.STORAGE_FAILED       a database operation failed at runtime (disk full, I/O, lock timeout)
  *   - PRODUCT.NO_OPERATOR            an /admin request carried no / an unknown operator token (Phase 15)

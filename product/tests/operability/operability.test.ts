@@ -166,6 +166,7 @@ describe('server errors — captured by code, never by message', () => {
     const store: RecordStore = {
       get: (c, p, k) => inner.get(c, p, k),
       list: (c, p) => inner.list(c, p),
+      listByKeyPrefix: (c, p, x) => inner.listByKeyPrefix(c, p, x),
       delete: (c, p, k) => inner.delete(c, p, k),
       isEmpty: (c) => inner.isEmpty(c),
       transaction: (fn) => inner.transaction(fn),

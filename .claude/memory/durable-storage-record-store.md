@@ -32,6 +32,12 @@ of collections is `persistence/collections.ts`: names are on-disk format, renami
   older build re-validating a record with an unknown field fails): deploy the schema that accepts it first.
 - The drift test migrates the FROZEN `tests/persistence/fixtures/records_vN.json` and validates every row against
   today's schemas. Never regenerate a fixture; add `records_vN.json` for a new schema version.
+- Per-wedding (per-parent) stores key records with `groupedKey(wedding_id, id)` (in `idOf` AND every read/delete)
+  and read one wedding with `TenantScopedRepository.listGroup(ctx, wedding_id)` (ADR 0039 addendum), never `list` +
+  filter: `list` decodes the whole tenant partition, and a tenant's weddings are unbounded. SQLite serves it as a
+  key range on the unique index (exact in UTF-8 byte order). Every RecordStore double in tests must forward
+  `listByKeyPrefix` too. Older stores (guest_registry, escalation reply/resolution logs) still list+filter: don't
+  copy them.
 - `collection()` is called only in `collections.ts` (architecture test); each handle has a scope (tenant/global)
   and the census checks rows honor it. The raw store is not on `ComposedSurface`; `SqliteRecordStore` is
   edge-only (relative imports, not the barrel).
