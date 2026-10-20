@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/wedding_document.json",
+  "title": "WeddingDocument",
+  "description": "A file attached to a wedding or one of its vendors (issue #48): its metadata. The bytes are a separate record (collection document_content) under the same key, groupedKey(wedding_id, document_id).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "document_id",
+    "tenant_id",
+    "wedding_id",
+    "title",
+    "kind",
+    "filename",
+    "content_type",
+    "size_bytes",
+    "sha256",
+    "shared_with_couple",
+    "created_at"
+  ],
+  "properties": {
+    "document_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Identity within the owning tenant's partition, from the injected id generator."
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The owning tenant. Compared to the context's tenant only; never selects the partition."
+    },
+    "wedding_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "vendor_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "The wedding's vendor (issue #33) the file belongs to, when it belongs to one."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "kind": {
+      "enum": ["contract", "floor_plan", "quote", "other"]
+    },
+    "filename": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "The uploaded file's name, without any path (the planner's reference; downloads are named from the title)."
+    },
+    "content_type": {
+      "enum": ["application/pdf", "image/png", "image/jpeg"],
+      "description": "Decided from the file's content (its signature), never from what the client declared."
+    },
+    "size_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5242880
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "The SHA-256 of the bytes, checked again on download."
+    },
+    "shared_with_couple": {
+      "type": "boolean",
+      "description": "Whether the couple sees and downloads it."
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO 8601 UTC upload time, from the injected clock."
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO 8601 UTC time of the last change, when changed."
+    }
+  }
+}

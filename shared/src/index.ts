@@ -114,4 +114,5 @@ export type {
   SeatAssignment,
   WeddingSite,
   WeddingSiteName,
+  WeddingDocument,
 } from './contracts/contract_types'

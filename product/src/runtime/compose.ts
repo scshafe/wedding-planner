@@ -17,6 +17,7 @@ import { ChecklistService } from '../checklist/checklist_service'
 import { VendorService } from '../vendors/vendor_service'
 import { BudgetService } from '../budget/budget_service'
 import { RunOfShowService } from '../run_of_show/run_of_show_service'
+import { DOCUMENT_LIMITS, DocumentService } from '../documents/document_service'
 import { SeatingService } from '../seating/seating_service'
 import { SITE_LIMITS, SiteService } from '../site/site_service'
 import { BillingLedger } from '../billing/billing_ledger'
@@ -332,6 +333,8 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     seating,
     // Each wedding's public website (issue #47): edited by the planner and the couple, read by guests when published.
     site: { sites: new SiteService(tenants, weddings, authorizer, events, clock, ids, store, SITE_LIMITS, limiter) },
+    // Each wedding's documents (issue #48): the bytes in the same store, so the stack's state backup covers them.
+    documents: new DocumentService(tenants, weddings, authorizer, vendors, clock, ids, store, DOCUMENT_LIMITS, limiter),
     // In-app feedback (issue #12): stored in the shared store, read by the operator at /admin/feedback.
     feedback: new FeedbackService(clock, ids, limiter, store),
     // Operability (issue #13): 500s are recorded (code + location, never data); /healthz names the build.
@@ -378,6 +381,11 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     themes,
     csrf: sessionStore,
     operatorCsrf: operators,
+    // Issue #48: a large upload body only from a live planner session of the slug's own workspace.
+    uploadGate: (token, slug) => {
+      const principal = sessionStore.resolve(token)
+      return principal?.role === 'planner' && principal.tenant_id === tenants.findBySlug(slug)?.tenant_id
+    },
     // Issue #10: password sign-in everywhere; the labeled picker only on the demo tenant in demo mode.
     accounts: {
       isSimulatedSlug: (slug) => seedDemo && demoTenantId() !== undefined && tenants.findBySlug(slug)?.tenant_id === demoTenantId(),

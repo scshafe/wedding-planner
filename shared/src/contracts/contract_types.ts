@@ -88,3 +88,5 @@ export type { SeatAssignment } from './generated/seat_assignment'
 // A wedding's public website and the workspace's site-name index (issue #47). ADR 0055.
 export type { WeddingSite } from './generated/wedding_site'
 export type { WeddingSiteName } from './generated/wedding_site_name'
+// A file attached to a wedding or one of its vendors (issue #48). ADR 0056.
+export type { WeddingDocument } from './generated/wedding_document'

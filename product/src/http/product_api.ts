@@ -17,6 +17,7 @@ import type { RateLimiter } from '../accounts/rate_limiter'
 import type { BudgetCategoryInput, BudgetService } from '../budget/budget_service'
 import type { RunOfShowInput, RunOfShowService } from '../run_of_show/run_of_show_service'
 import type { ModelService } from '../model/model_service'
+import { DOCUMENT_KINDS, type DocumentKind, type DocumentService, type DocumentUpdateInput, type DocumentUploadInput } from '../documents/document_service'
 import type { SeatingService, TableInput } from '../seating/seating_service'
 import { SITE_LIMITS, type SiteInput, type SiteService } from '../site/site_service'
 import type { ChecklistService, TaskInput } from '../checklist/checklist_service'
@@ -112,6 +113,9 @@ const RESP_UNAUTHORIZED: ApiResponse = deepFreeze({ status: 401, body: { error: 
 const RESP_FORBIDDEN: ApiResponse = deepFreeze({ status: 403, body: { error: 'forbidden' } })
 const RESP_BAD_REQUEST: ApiResponse = deepFreeze({ status: 400, body: { error: 'bad_request' } })
 const RESP_CONFLICT: ApiResponse = deepFreeze({ status: 409, body: { error: 'conflict' } })
+/** Issue #48: a document over the size limit, and a file that is not an accepted type. */
+const RESP_FILE_TOO_LARGE: ApiResponse = deepFreeze({ status: 413, body: { error: 'file_too_large' } })
+const RESP_UNSUPPORTED_FILE: ApiResponse = deepFreeze({ status: 415, body: { error: 'unsupported_file' } })
 const RESP_METHOD_NOT_ALLOWED: ApiResponse = deepFreeze({ status: 405, body: { error: 'method_not_allowed' } })
 const RESP_INTERNAL: ApiResponse = deepFreeze({ status: 500, body: { error: 'internal_error' } })
 /** Issue #10: a rate-limited sign-in or reset request (keyed on what was submitted — no existence oracle). */
@@ -195,6 +199,8 @@ export interface WeddingHandlerDeps {
   readonly seating?: SeatingService
   /** Issue #47: the wedding's public website (editing). Absent ⇒ the sub-routes are not mounted. */
   readonly site?: SiteService
+  /** Issue #48: the wedding's documents. Absent ⇒ the sub-routes are not mounted. */
+  readonly documents?: DocumentService
 }
 
 /** Issue #47: what the public website read needs — the sites. */
@@ -377,6 +383,8 @@ export interface ProductApiDeps {
   readonly seating?: SeatingService
   /** Issue #47: each wedding's website (…/weddings/:id/site) and the public read /t/:slug/site/:name. */
   readonly site?: PublicSiteDeps
+  /** Issue #48: each wedding's documents, under /t/:slug/weddings/:id/documents. */
+  readonly documents?: DocumentService
   /**
    * Issue #13: where a request that ends in a 500 is recorded (code + location, never data), and what the operator
    * reads at /admin/errors. Absent ⇒ nothing is recorded (fixtures).
@@ -493,6 +501,7 @@ export class ProductApi {
       ...(deps.runOfShow === undefined ? {} : { runOfShow: deps.runOfShow }),
       ...(deps.seating === undefined ? {} : { seating: deps.seating }),
       ...(deps.site === undefined ? {} : { site: deps.site.sites }),
+      ...(deps.documents === undefined ? {} : { documents: deps.documents }),
     }
     this.#publicSite = deps.site
     this.#householdRsvp = deps.householdRsvp
@@ -893,6 +902,11 @@ function errorToResponse(error: WeddingPlannerError): ApiResponse {
     case 'PRODUCT.SEATING_FULL':
     case 'PRODUCT.SITE_NAME_TAKEN':
       return RESP_CONFLICT
+    // Issue #48: honest answers to the planner who uploads (after the wedding's boundary and the capability).
+    case 'PRODUCT.FILE_TOO_LARGE':
+      return RESP_FILE_TOO_LARGE
+    case 'PRODUCT.UNSUPPORTED_FILE':
+      return RESP_UNSUPPORTED_FILE
     // FORGED_CONTEXT / FORGED_PRINCIPAL / CROSS_TENANT_WRITE / anything else: an internal invariant
     // violation a real request can never construct — a 500 bug, never a normal client path, never leaked.
     default:
@@ -935,6 +949,10 @@ function dispatchWeddings(
   // /t/:slug/weddings/:weddingId/seating[/tables[/:id] | /seats/:guestId | /households/:id] (issue #46).
   if (deps.seating !== undefined && weddingId !== undefined && segments[4] === 'seating' && segments.length <= 7) {
     return dispatchSeating(context, principal, req, weddingId, segments.slice(5), deps.seating)
+  }
+  // /t/:slug/weddings/:weddingId/documents[/:id] (issue #48).
+  if (deps.documents !== undefined && weddingId !== undefined && segments[4] === 'documents' && segments.length <= 6) {
+    return dispatchDocuments(context, principal, req, weddingId, segments[5], deps.documents)
   }
   // /t/:slug/weddings/:weddingId/run-of-show[/:id] (issue #45).
   if (deps.runOfShow !== undefined && weddingId !== undefined && segments[4] === 'run-of-show' && segments.length <= 6) {
@@ -1263,6 +1281,64 @@ function dispatchRunOfShow(
   if (req.method === 'PUT') return { status: 200, body: { item: runOfShow.updateItem(context, principal, weddingId, itemId, runOfShowInput(req)) } }
   if (req.method === 'DELETE') return { status: 200, body: { removed: runOfShow.removeItem(context, principal, weddingId, itemId) } }
   throw methodNotAllowed()
+}
+
+/**
+ * The document routes of one wedding (issue #48). The wedding's boundary first; the planner's capability before a body
+ * is parsed (the couple lists and downloads only what the planner shares). `GET …/documents/:id` is the download: the
+ * bytes as base64, which the web UI turns into a file response with safe headers.
+ */
+function dispatchDocuments(
+  context: TenantContext,
+  principal: Principal,
+  req: ApiRequest,
+  weddingId: string,
+  documentId: string | undefined,
+  documents: DocumentService,
+): ApiResponse {
+  documents.assertReach(context, principal, weddingId)
+  if (req.method === 'GET') {
+    if (documentId === undefined) return { status: 200, body: documents.view(context, principal, weddingId) }
+    return { status: 200, body: documents.download(context, principal, weddingId, documentId) }
+  }
+  if (principal.role !== 'planner') throw forbidden()
+  if (documentId === undefined) {
+    if (req.method !== 'POST') throw methodNotAllowed()
+    return { status: 201, body: { document: documents.upload(context, principal, weddingId, documentUploadInput(req)) } }
+  }
+  if (req.method === 'PUT') return { status: 200, body: { document: documents.update(context, principal, weddingId, documentId, documentUpdateInput(req)) } }
+  if (req.method === 'DELETE') return { status: 200, body: { removed: documents.remove(context, principal, weddingId, documentId) } }
+  throw methodNotAllowed()
+}
+
+/** The fields a document's upload and update share: `{title, kind, vendor_id?, shared_with_couple?}`. */
+function documentFields(body: Record<string, unknown>): { title: string; kind: DocumentKind; vendor_id?: string; shared_with_couple?: boolean } {
+  const kind = body.kind
+  if (typeof kind !== 'string' || !(DOCUMENT_KINDS as readonly string[]).includes(kind)) {
+    throw new ProductError('PRODUCT.BAD_REQUEST', 'kind must be contract, floor_plan, quote or other.', {})
+  }
+  const shared = body.shared_with_couple
+  if (shared !== undefined && typeof shared !== 'boolean') throw new ProductError('PRODUCT.BAD_REQUEST', 'shared_with_couple must be true or false.', {})
+  const vendor = optionalString(body, 'vendor_id')
+  return {
+    title: requireString(body, 'title'),
+    kind: kind as DocumentKind,
+    ...(vendor === undefined ? {} : { vendor_id: vendor }),
+    ...(shared === undefined ? {} : { shared_with_couple: shared }),
+  }
+}
+
+/** An upload body: the shared fields plus `{filename, content_base64}` (the file, base64; its size is checked first). */
+function documentUploadInput(req: ApiRequest): DocumentUploadInput {
+  const body = parseObjectBody(req.rawBody)
+  return { ...documentFields(body), filename: requireString(body, 'filename'), content_base64: requireString(body, 'content_base64') }
+}
+
+/** An update body: the shared fields, with `shared_with_couple` required. */
+function documentUpdateInput(req: ApiRequest): DocumentUpdateInput {
+  const fields = documentFields(parseObjectBody(req.rawBody))
+  if (fields.shared_with_couple === undefined) throw new ProductError('PRODUCT.BAD_REQUEST', 'shared_with_couple must be true or false.', {})
+  return { ...fields, shared_with_couple: fields.shared_with_couple }
 }
 
 /** A run-of-show body: `{starts_at, title, owner, ends_at?, location?, owner_vendor_id?, vendor_call_time?, event_id?, notes?}`. */

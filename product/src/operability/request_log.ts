@@ -29,6 +29,7 @@ const STATIC_SEGMENTS: ReadonlySet<string> = new Set([
   'run-of-show', 'show-add', 'show-update', 'show-remove',
   'seating', 'tables', 'seats', 'table-add', 'table-update', 'table-remove', 'seat-guest', 'seat-household',
   'site', 'w', 'published', 'site-save', 'site-publish',
+  'documents', 'upload', 'download', 'doc-save', 'doc-remove',
   'tenants', 'owner', 'activate', 'suspend', 'reactivate', 'outbox', 'errors',
 ])
 

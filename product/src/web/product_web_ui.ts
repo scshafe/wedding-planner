@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Wedding } from '@wedding-planner/shared'
 
 import type { TeamView } from '../accounts/membership_service'
@@ -9,6 +11,11 @@ import type { RunOfShowView } from '../run_of_show/run_of_show_service'
 import type { ModelUsageView } from '../model/model_service'
 import type { SeatingView } from '../seating/seating_service'
 import { type PublicSiteView, SITE_LIMITS, type SiteEditView } from '../site/site_service'
+import { DOCUMENT_LIMITS, type DocumentDownload, type DocumentsView } from '../documents/document_service'
+import { parseMultipartForm } from './multipart_form'
+import { TransferBudget } from './transfer_budget'
+import { toWellFormedText } from '../text/plain_text'
+import { MAX_BODY_BYTES } from '../http/node_server'
 import { toGuestCsv } from '../guests/guest_csv'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
@@ -51,6 +58,8 @@ import {
   renderRunOfShow,
   renderSeating,
   renderSiteEditor,
+  renderDocuments,
+  type DocumentsNotice,
   renderPublicSite,
   type SiteNotice,
   BLANK_SITE_ROWS,
@@ -130,6 +139,12 @@ const HOUSEHOLD_FORM_ROWS = 240
 /** The most fields a household RSVP form may carry: 6 per answer row, 3 per dietary row, and a few more. */
 const HOUSEHOLD_FORM_MAX_FIELDS = 6 * HOUSEHOLD_FORM_ROWS + 3 * HOUSEHOLD_FORM_ROWS + 10
 
+/**
+ * Issue #48: the body limit of a signed-in document upload — a 5 MiB file as base64 JSON (4/3 of it) or as a multipart
+ * form, with room for the other fields. Every other request keeps `MAX_BODY_BYTES`.
+ */
+export const DOCUMENT_UPLOAD_MAX_BODY_BYTES = 7 * 1024 * 1024
+
 /** A server-minted token charset guard — never emit a cookie value that could break the header. */
 const SAFE_TOKEN = /^[A-Za-z0-9_-]+$/
 
@@ -155,6 +170,13 @@ export interface ProductWebUiDeps {
   readonly accounts?: { readonly isSimulatedSlug: (slug: string) => boolean; readonly newToken: () => string }
   /** Issue #13: where a web-layer fault (a constant 500 page) is recorded for the operator. */
   readonly errors?: Pick<ErrorLog, 'record'>
+  /**
+   * Issue #48: whether a session may send a large upload body to a workspace — a live PLANNER session of that
+   * workspace (by its normalized slug). Read before the body is; absent ⇒ no large uploads.
+   */
+  readonly uploadGate?: (sessionToken: string, slug: string) => boolean
+  /** Issue #48: the process-wide budget of large bodies in flight. Absent ⇒ a fresh default budget. */
+  readonly transfers?: TransferBudget
 }
 
 export class ProductWebUi {
@@ -164,6 +186,9 @@ export class ProductWebUi {
   readonly #operatorConsole: OperatorConsole | undefined
   readonly #accounts: ProductWebUiDeps['accounts']
   readonly #errors: ProductWebUiDeps['errors']
+  readonly #uploadGate: ProductWebUiDeps['uploadGate']
+  /** Issue #48: large bodies in flight (the edge holds them; the download page checks before reading). */
+  readonly transfers: TransferBudget
 
   constructor(deps: ProductWebUiDeps) {
     this.#api = deps.api
@@ -172,6 +197,8 @@ export class ProductWebUi {
     this.#operatorConsole =
       deps.operatorCsrf === undefined ? undefined : new OperatorConsole({ api: deps.api, csrf: deps.operatorCsrf })
     this.#accounts = deps.accounts
+    this.#uploadGate = deps.uploadGate
+    this.transfers = deps.transfers ?? new TransferBudget()
     this.#errors = deps.errors
   }
 
@@ -181,6 +208,27 @@ export class ProductWebUi {
   }
 
   /** Run a request through the HTML front door. Never throws — any slip becomes the constant 500. */
+  /**
+   * Issue #48: the most body bytes the edge reads for a request, decided from its method, path and credential BEFORE
+   * the body is read. Everything gets `MAX_BODY_BYTES` except the web upload form, `POST /t/:slug/documents/upload`,
+   * whose session cookie is a live PLANNER session of that slug's workspace (`uploadGate`). So neither an anonymous
+   * client, a couple, nor another workspace's planner makes the server hold more than the default. The JSON route keeps
+   * the default: the form reaches it in-process, and a JSON body parsed at 7 MiB is a heap risk of its own.
+   */
+  bodyLimit(method: string, path: string, headers: Readonly<Record<string, string | undefined>>): number {
+    if (method !== 'POST') return MAX_BODY_BYTES
+    const s = splitPath(path)
+    if (!(s.length === 4 && s[0] === 't' && s[2] === 'documents' && s[3] === 'upload')) return MAX_BODY_BYTES
+    const slug = normalizeSlugForRoute(s[1] ?? '')
+    const token = readSessionCookie(headers.cookie)
+    return slug !== undefined && token !== undefined && this.#uploadGate?.(token, slug) === true ? DOCUMENT_UPLOAD_MAX_BODY_BYTES : MAX_BODY_BYTES
+  }
+
+  /** Issue #48: whose large upload a request is, for the one-per-workspace place (the normalized slug). */
+  uploadOwner(path: string): string {
+    return normalizeSlugForRoute(splitPath(path)[1] ?? '') ?? ''
+  }
+
   handle(req: ApiRequest): HttpResult {
     try {
       return this.#route(req)
@@ -276,6 +324,13 @@ export class ProductWebUi {
       if (segments.length === 4 && segments[2] === 'site' && req.method === 'POST') {
         if (slug === undefined) return GENERIC_404
         return this.#siteAction(req, slug, segments[3] ?? '')
+      }
+      // /t/:slug/documents/download (GET) and /t/:slug/documents/<action> (issue #48) — a document as a file, and the
+      // documents FORM posts (CSRF-protected; `upload` is the one multipart form).
+      if (segments.length === 4 && segments[2] === 'documents') {
+        if (slug === undefined) return GENERIC_404
+        if (segments[3] === 'download' && req.method === 'GET') return this.#documentDownload(req, slug)
+        if (req.method === 'POST') return segments[3] === 'upload' ? this.#documentUpload(req, slug) : this.#documentAction(req, slug, segments[3] ?? '')
       }
       // /t/:slug/seating/<action> (issue #46) — the seating FORM posts (CSRF-protected).
       if (segments.length === 4 && segments[2] === 'seating' && req.method === 'POST') {
@@ -382,6 +437,8 @@ export class ProductWebUi {
     const weddingId = queryParam(req.path, 'wedding')
     // ?wedding=ID&tab=guests (issue #27): the wedding's guest list (or one guest's edit page with &guest=ID).
     if (weddingId !== undefined && queryParam(req.path, 'tab') === 'guests') return this.#guestListPage(req, slug, weddingId)
+    // ?wedding=ID&tab=documents[&doc=ID] (issue #48): the wedding's documents.
+    if (weddingId !== undefined && queryParam(req.path, 'tab') === 'documents') return this.#documentsPage(req, slug, weddingId)
     // ?wedding=ID&tab=site (issue #47): edit the wedding's public website.
     if (weddingId !== undefined && queryParam(req.path, 'tab') === 'site') return this.#siteEditor(req, slug, weddingId)
     // ?wedding=ID&tab=seating[&event=ID][&print=1] (issue #46): the wedding's seating plan.
@@ -1015,6 +1072,121 @@ export class ProductWebUi {
   }
 
   /** POST /t/:slug/seating/<action> (issue #46) — CSRF first, then the JSON route of the form's wedding; a notice back. */
+  /** GET /t/:slug?wedding=ID&tab=documents[&doc=ID] (issue #48) — the wedding, then its documents; any non-200 is masked. */
+  #documentsPage(req: ApiRequest, slug: string, weddingId: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const id = encodeURIComponent(weddingId)
+    const weddingRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}`, token))
+    if (weddingRes.status !== 200) return this.#renderNonData(slug, weddingRes.status)
+    const docsRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}/documents`, token))
+    if (docsRes.status !== 200) return this.#renderNonData(slug, docsRes.status)
+    const theme = this.#themes.resolveActiveTheme(slug)
+    const csrf = this.#csrf.issueCsrf(token)
+    const wedding = readWedding(weddingRes.body)
+    if (theme === undefined || wedding === undefined) return GENERIC_404
+    if (csrf === undefined) return ERROR_500
+    const raw = queryParam(req.path, 'notice')
+    const notice = (['uploaded', 'saved', 'removed', 'invalid', 'too_large', 'unsupported', 'full', 'forbidden'] as const).find((n) => n === raw)
+    return htmlResult(200, renderDocuments(theme, slug, wedding, docsRes.body as DocumentsView, csrf, notice, queryParam(req.path, 'doc')))
+  }
+
+  /**
+   * POST /t/:slug/documents/upload (issue #48) — the one multipart form. The body was capped by the edge (a larger cap
+   * only for a live session); the bounded parser runs, then CSRF (a malformed form has no token: the masked 403), then
+   * the file goes to the JSON route as base64. What a file IS is decided there, from its bytes.
+   */
+  #documentUpload(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = req.bodyBytes === undefined ? undefined : parseMultipartForm(req.bodyBytes, req.headers['content-type'])
+    if (form === undefined || !this.#csrf.verifyCsrf(token, form.fields.get('_csrf'))) return this.#renderNonData(slug, 403)
+    const value = (name: string): string => (form.fields.get(name) ?? '').trim()
+    const weddingId = value('wedding_id')
+    const back = (notice: DocumentsNotice) => redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=documents&notice=${notice}`)
+    const file = form.file
+    if (file === undefined || file.bytes.length === 0) return back('invalid')
+    // Refused before it is encoded: no base64 work for a file over the limit.
+    if (file.bytes.length > DOCUMENT_LIMITS.file_bytes) return back('too_large')
+    const vendor = value('vendor_id')
+    const res = this.#api.handle(
+      bearerJson('POST', `/t/${slug}/weddings/${encodeURIComponent(weddingId)}/documents`, token, {
+        title: value('title'),
+        kind: value('kind'),
+        ...(vendor.length === 0 ? {} : { vendor_id: vendor }),
+        shared_with_couple: value('shared_with_couple') === 'true',
+        filename: file.filename,
+        content_base64: Buffer.from(file.bytes.buffer, file.bytes.byteOffset, file.bytes.byteLength).toString('base64'),
+      }),
+    )
+    if (res.status === 404 || res.status === 401) return this.#renderNonData(slug, res.status)
+    if (res.status === 201) return back('uploaded')
+    return back(res.status === 413 ? 'too_large' : res.status === 415 ? 'unsupported' : res.status === 409 ? 'full' : res.status === 403 ? 'forbidden' : 'invalid')
+  }
+
+  /** POST /t/:slug/documents/<doc-save|doc-remove> (issue #48) — CSRF first, then the JSON route; a notice back. */
+  #documentAction(req: ApiRequest, slug: string, action: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    const value = (name: string): string => (form.get(name) ?? '').trim()
+    const weddingId = value('wedding_id')
+    const path = `/t/${slug}/weddings/${encodeURIComponent(weddingId)}/documents/${encodeURIComponent(value('document_id'))}`
+    const vendor = value('vendor_id')
+    const res =
+      action === 'doc-save'
+        ? this.#api.handle(
+            bearerJson('PUT', path, token, {
+              title: value('title'),
+              kind: value('kind'),
+              ...(vendor.length === 0 ? {} : { vendor_id: vendor }),
+              shared_with_couple: value('shared_with_couple') === 'true',
+            }),
+          )
+        : action === 'doc-remove'
+          ? this.#api.handle(bearerJson('DELETE', path, token, {}))
+          : undefined
+    if (res === undefined) return GENERIC_404
+    if (res.status === 404 || res.status === 401) return this.#renderNonData(slug, res.status)
+    const notice: DocumentsNotice = res.status === 200 ? (action === 'doc-remove' ? 'removed' : 'saved') : res.status === 403 ? 'forbidden' : 'invalid'
+    return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=documents&notice=${notice}`)
+  }
+
+  /**
+   * GET /t/:slug/documents/download?wedding=ID&doc=ID (issue #48) — a document as a file. Always an attachment, sent
+   * as the type its bytes were sniffed as, with `nosniff`, `no-store` and a sandbox CSP: it is never rendered as a page
+   * of this origin. The JSON route decides who may have it; anything else is the masked not-found.
+   */
+  #documentDownload(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const weddingId = queryParam(req.path, 'wedding') ?? ''
+    const documentId = queryParam(req.path, 'doc') ?? ''
+    if (weddingId.length === 0 || documentId.length === 0) return GENERIC_404
+    // Checked before a document is read: when the large-response budget is full, nothing is built (the edge would
+    // refuse to hold it anyway).
+    // A download is held under its session's key, so one session cannot hold the budget on its own.
+    const transferKey = token === undefined ? undefined : createHash('sha256').update(token).digest('hex')
+    if (!this.transfers.canSend(DOCUMENT_LIMITS.file_bytes, transferKey)) return busy(503, 'The server is busy. Try the download again in a moment.', '5')
+    const res = this.#api.handle(bearerGet(`/t/${slug}/weddings/${encodeURIComponent(weddingId)}/documents/${encodeURIComponent(documentId)}`, token))
+    if (res.status === 429) return busy(429, 'Too many downloads. Try again in a minute.', '60')
+    if (res.status !== 200) return this.#renderNonData(slug, res.status)
+    const file = res.body as DocumentDownload
+    if (typeof file.content_base64 !== 'string' || !DOWNLOAD_TYPES.has(file.content_type)) return ERROR_500
+    return {
+      status: 200,
+      headers: {
+        'content-type': file.content_type,
+        'content-disposition': attachmentDisposition(file.download_name),
+        'x-content-type-options': 'nosniff',
+        'cache-control': 'no-store',
+        'content-security-policy': "default-src 'none'; sandbox",
+        'cross-origin-resource-policy': 'same-origin',
+        'referrer-policy': 'no-referrer',
+      },
+      body: '',
+      bytes: Buffer.from(file.content_base64, 'base64'),
+      ...(transferKey === undefined ? {} : { transferKey }),
+    }
+  }
+
   #seatingAction(req: ApiRequest, slug: string, action: string): HttpResult {
     const token = readSessionCookie(req.headers.cookie)
     const form = parseForm(req.rawBody)
@@ -1784,6 +1956,29 @@ function readSessionCookie(cookieHeader: string | undefined): string | undefined
   return readCookie(cookieHeader, SESSION_COOKIE)
 }
 
+
+/** A small plain-text refusal with `Retry-After` (issue #48: a busy server, too many downloads). */
+function busy(status: number, text: string, retryAfter: string): HttpResult {
+  return {
+    status,
+    headers: { 'content-type': 'text/plain; charset=utf-8', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store', 'retry-after': retryAfter },
+    body: text,
+  }
+}
+
+/** The only types a download is sent as (issue #48): the accepted document types. */
+const DOWNLOAD_TYPES: ReadonlySet<string> = new Set(['application/pdf', 'image/png', 'image/jpeg'])
+
+/**
+ * A `Content-Disposition: attachment` header for a download name (issue #48): an ASCII `filename` (anything outside a
+ * safe set becomes `_`, so no quote, CR, LF or `;` reaches the header) and the exact name as RFC 5987 `filename*`.
+ */
+export function attachmentDisposition(name: string): string {
+  const ascii = name.replace(/[^A-Za-z0-9 ._()-]/g, '_').slice(0, 150) || 'document'
+  // toWellFormed: a lone surrogate would make encodeURIComponent throw (titles refuse them; this is the backstop).
+  const exact = encodeURIComponent(toWellFormedText(name)).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${exact}`
+}
 
 /** Parse a urlencoded form body into a params map (empty when absent). */
 function parseForm(rawBody: string | undefined): URLSearchParams {

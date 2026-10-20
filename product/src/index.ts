@@ -113,8 +113,8 @@ export { createProductApiServer, MAX_BODY_BYTES } from './http/node_server'
 // it inherits both boundaries; the Phase-21 csrf guard adds the browser-form anti-forgery check.
 export type { HttpResult } from './web/web_response'
 export { ThemeResolver } from './web/theme_resolver'
-export { ProductWebUi, type ProductWebUiDeps } from './web/product_web_ui'
-export { createProductWebUiServer } from './web/web_server'
+export { attachmentDisposition, DOCUMENT_UPLOAD_MAX_BODY_BYTES, ProductWebUi, type ProductWebUiDeps } from './web/product_web_ui'
+export { createProductWebUiServer, MAX_PENDING_RESPONSES_PER_SOCKET, SOCKET_IDLE_TIMEOUT_MS } from './web/web_server'
 
 // The engine↔surface seam (Phase 17): the pure projection of the loop's champion StrategyGenome into
 // read-only, planner-facing guidance. A deterministic function of the genome alone (no context/principal/
@@ -347,6 +347,23 @@ export { defineModelTask, type ModelPort, type ModelRequest, type ModelResult, t
 export { estimateTokens, SIMULATED_MODEL, SIMULATED_PROVIDER_PRICE, SimulatedModelAdapter, type SimulatedTask } from './model/simulated_model_adapter'
 export { SIMULATED_MODEL_TASKS } from './model/simulated_tasks'
 export { MODEL_LIMITS, ModelService, type ModelUsageRecord, type ModelUsageView } from './model/model_service'
+// Files attached to a wedding or its vendors (issue #48, ADR 0056), and the upload form's parser.
+export {
+  DOCUMENT_DOWNLOADS,
+  DOCUMENT_KINDS,
+  DOCUMENT_LIMITS,
+  type DocumentDownload,
+  type DocumentLimits,
+  type DocumentLine,
+  DocumentService,
+  type DocumentsView,
+  type DocumentUpdateInput,
+  type DocumentUploadInput,
+  maxBase64Length,
+  sniffDocumentType,
+} from './documents/document_service'
+export { MULTIPART_LIMITS, type MultipartForm, multipartBoundary, parseMultipartForm } from './web/multipart_form'
+export { LARGE_TRANSFER_BYTES, TRANSFER_LIMITS, TransferBudget, type TransferLimits } from './web/transfer_budget'
 // A wedding's public website and the workspace's site names (issue #47, ADR 0055).
 export { type HotelInput, type PublicSiteView, SITE_LIMITS, SITE_NAME, type SiteEditView, type SiteInput, SiteService } from './site/site_service'
 // A wedding's seating plan: tables, seats, capacity (issue #46, ADR 0054).
