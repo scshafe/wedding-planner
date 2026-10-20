@@ -11,6 +11,8 @@ import type { ContractKey } from '@wedding-planner/shared'
  *     So what the model is asked to do is fixed by the product, never assembled per request.
  *   - `input` is the facts the model may use, as JSON data — an allow-listed projection, since with a real provider it
  *     leaves the system. Text a user wrote (a guest's question) appears only here, as data.
+ *   - The output contract is one of {@link MODEL_OUTPUT_CONTRACTS}: shapes made for model output, never a persisted
+ *     record's.
  *   - The output is untrusted: `ModelService` validates it against the task's contract, and each feature then checks
  *     it against its own input (an answer cites only projected facts, a due date falls before the wedding). Model
  *     output never carries a tenant or record id the caller trusts, and is never persisted as-is: accepting it goes
@@ -27,20 +29,24 @@ import type { ContractKey } from '@wedding-planner/shared'
  * related: simulated_model_adapter.ts (the only adapter), model_service.ts (validation and metering).
  */
 
+/** The contracts a model's output may be validated against: model outputs only, never a persisted record's. */
+export const MODEL_OUTPUT_CONTRACTS = ['copilot_draft_output'] as const satisfies readonly ContractKey[]
+export type ModelOutputContract = (typeof MODEL_OUTPUT_CONTRACTS)[number]
+
 /** One task the product asks a model for: defined once, in code. `T` is what its validated output is. */
 export interface ModelTaskDefinition<T> {
   /** The task's name (`checklist_draft`, …): the simulated adapter's behaviour and the usage line. */
   readonly task: string
   /** Fixed instructions. */
   readonly instructions: string
-  /** The contract the output must satisfy. */
-  readonly output_contract: ContractKey
+  /** The contract the output must satisfy (a model-output contract). */
+  readonly output_contract: ModelOutputContract
   /** Phantom marker tying the output type to the definition — never set at runtime. */
   readonly __output?: T
 }
 
 /** Define a task (a module constant in the feature that asks for it). */
-export function defineModelTask<T>(definition: { readonly task: string; readonly instructions: string; readonly output_contract: ContractKey }): ModelTaskDefinition<T> {
+export function defineModelTask<T>(definition: { readonly task: string; readonly instructions: string; readonly output_contract: ModelOutputContract }): ModelTaskDefinition<T> {
   return Object.freeze({ ...definition })
 }
 
@@ -50,7 +56,7 @@ export interface ModelRequest {
   readonly instructions: string
   /** The facts the model may use. User-written text appears only here, as data. */
   readonly input: Readonly<Record<string, unknown>>
-  readonly output_contract: ContractKey
+  readonly output_contract: ModelOutputContract
 }
 
 /** How much a call used and cost, as the provider reports it. */

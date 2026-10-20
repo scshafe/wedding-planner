@@ -73,6 +73,12 @@ function main(): void {
     store,
     ...(config.publicUrl === undefined ? {} : { publicUrl: config.publicUrl }),
     buildCommit: config.buildCommit,
+    // Issue #61: a model job's run is bounded by a real timer (unref'd: it never keeps the process alive).
+    jobTimer: (ms, onTimeout) => {
+      const timer = setTimeout(onTimeout, ms)
+      timer.unref()
+      return () => clearTimeout(timer)
+    },
   })
 
   // Precompute the dummy password hash so no request pays for it (uniform sign-in timing from the first request).
@@ -85,6 +91,8 @@ function main(): void {
   })
   server.listen(config.port, config.host, () => {
     console.log(buildBootLog(config, surface.demo))
+    // Issue #61: jobs left by a restart (queued, or claimed by a process that stopped) run at boot too.
+    void surface.drainJobs().catch(() => undefined)
   })
 
   let shuttingDown = false

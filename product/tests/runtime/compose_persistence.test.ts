@@ -56,7 +56,7 @@ function boot(path: string, seed: string): { surface: ComposedSurface; store: Sq
     store,
     passwordCost: { N: 16, r: 1, p: 1 },
     // Issue #59: one simulated test task, so the census can make (and meter) a model call.
-    simulatedModelTasks: { census_echo: () => ({ tenant_id: 'x', site_name: 'census-echo', wedding_id: 'w' }) },
+    simulatedModelTasks: { census_echo: () => ({ tasks: [], run_of_show: [] }) },
   })
   return { surface, store }
 }
@@ -151,11 +151,15 @@ describe('durable storage — data written before a restart is read back after i
     expect(api1.handle(req('PUT', `/t/demo/weddings/${newWeddingId}/site`, { token, body: { site_name: 'ana-and-bo' } })).status).toBe(200)
     // A model call, metered per workspace (issue #59).
     const ctx = new TenantContextResolver(new TenantStore(new ManualClock('2027-05-01T00:00:00.000Z'), new SequentialIdGenerator('ctx'), first.store)).resolveBySlug('demo')
-    // (The test task borrows an existing contract for its output shape.)
-    await first.surface.model.run(ctx, defineModelTask({ task: 'census_echo', instructions: 'Echo.', output_contract: 'wedding_site_name' }), {})
+    // (The test task answers in the copilot's output shape.)
+    await first.surface.model.run(ctx, defineModelTask({ task: 'census_echo', instructions: 'Echo.', output_contract: 'copilot_draft_output' }), {})
     // A document, its bytes and the storage counters (issue #48).
     const pdf = Buffer.from('%PDF-1.4\n%%EOF\n').toString('base64')
     expect(api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/documents`, { token, body: { title: 'Contract', kind: 'contract', filename: 'contract.pdf', content_base64: pdf } })).status).toBe(201)
+    // A copilot draft made through the job queue, and one still queued (issue #61): job, job_queue, copilot_draft.
+    expect(api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/copilot`, { token })).status).toBe(202)
+    expect(await first.surface.drainJobs()).toBe(1)
+    expect(api1.handle(req('POST', `/t/demo/weddings/${demo?.weddingId}/copilot`, { token })).status).toBe(202)
     const provisioned = api1.handle(
       req('POST', '/admin/tenants', {
         token: OP,

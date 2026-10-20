@@ -43,8 +43,8 @@ Nothing names a vendor, a model family or a wire format.
      - #62: every statement maps to a computed signal.
 - **Never trusted, never persisted as-is.** Model output never carries a tenant or record id the caller trusts.
   Accepting it goes through the existing services, with their limits, validation and boundaries.
-- **Output contracts.** A closed set of output contracts will come with the first real task's contract (#61). Until
-  then, tests borrow an existing contract for a shape and say so.
+- **Output contracts.** A closed set: `ModelOutputContract` (ADR 0058), so no task can declare a persisted record's
+  contract as its output.
 
 ### Asynchronous, and never inside a request's transaction
 
@@ -57,7 +57,7 @@ request (ADR 0039).
 **Alternative rejected: a synchronous port.** It would be simpler today, but no real adapter could implement it, and
 the owner's line is to build up to the crossing, not short of it.
 
-### The job queue (built by whichever of #60 and #61 lands first)
+### The job queue (built by #61: ADR 0058)
 
 The queue is ADR 0039's planned outbox dispatcher: one implementation, generic over job kinds. M5's real email and
 SMS adapters will reuse it (their ports are synchronous today). It must get these right:

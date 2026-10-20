@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
-import { ManualClock, SequentialIdGenerator, type Tenant } from '@wedding-planner/shared'
+import { type CopilotDraftOutput, ManualClock, SequentialIdGenerator, type Tenant } from '@wedding-planner/shared'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -29,13 +29,13 @@ import { COLLECTIONS } from '../../src/persistence/collections'
 
 const THEME: Tenant['theme'] = { brand_name: 'B', primary_color_hex: '#111111', accent_color_hex: '#222222', logo_ref: 'l' }
 
-// Test tasks BORROW an existing contract for their output shape (a real task defines its own under product/schemas/).
-type Named = { site_name: string }
-const NAME = defineModelTask<Named>({ task: 'name', instructions: 'Name the site.', output_contract: 'wedding_site_name' })
-const GARBAGE = defineModelTask<Named>({ task: 'garbage', instructions: 'Say anything.', output_contract: 'wedding_site_name' })
-const BROKEN = defineModelTask<Named>({ task: 'broken', instructions: 'Fail.', output_contract: 'wedding_site_name' })
-const UNKNOWN = defineModelTask<Named>({ task: 'nope', instructions: 'Nobody answers this.', output_contract: 'wedding_site_name' })
-const named = (input: Readonly<Record<string, unknown>>) => ({ tenant_id: 'x', site_name: `name-${String(input.n)}`, wedding_id: 'w' })
+// Test tasks use the copilot's output contract for their shape (the only model-output contract so far).
+type Named = CopilotDraftOutput
+const NAME = defineModelTask<Named>({ task: 'name', instructions: 'Name the site.', output_contract: 'copilot_draft_output' })
+const GARBAGE = defineModelTask<Named>({ task: 'garbage', instructions: 'Say anything.', output_contract: 'copilot_draft_output' })
+const BROKEN = defineModelTask<Named>({ task: 'broken', instructions: 'Fail.', output_contract: 'copilot_draft_output' })
+const UNKNOWN = defineModelTask<Named>({ task: 'nope', instructions: 'Nobody answers this.', output_contract: 'copilot_draft_output' })
+const named = (input: Readonly<Record<string, unknown>>) => ({ tasks: [{ title: `name-${String(input.n)}`, due_date: '2028-06-01', assignee: 'planner' }], run_of_show: [] })
 const TASKS = {
   name: named,
   garbage: () => ({ nope: true }),
@@ -81,13 +81,13 @@ async function codeOf(promise: Promise<unknown>): Promise<string> {
 describe('ModelService over the simulated adapter', () => {
   it('is deterministic: the same request gives the same output, usage and cost', async () => {
     const adapter = new SimulatedModelAdapter(TASKS)
-    const request = { task: 'name', instructions: 'Name the site.', input: { n: 7 }, output_contract: 'wedding_site_name' } as const
+    const request = { task: 'name', instructions: 'Name the site.', input: { n: 7 }, output_contract: 'copilot_draft_output' } as const
     const a = await adapter.complete(request)
     expect(await adapter.complete(request)).toEqual(a)
     expect(a.model).toBe('simulated')
     expect(a.usage.cost_micro_cents).toBe(a.usage.input_tokens * SIMULATED_PROVIDER_PRICE.input_cents_per_mtok + a.usage.output_tokens * SIMULATED_PROVIDER_PRICE.output_cents_per_mtok)
     const w = world()
-    expect((await w.model.run(w.ctx, NAME, { n: 7 })).site_name).toBe('name-7')
+    expect((await w.model.run(w.ctx, NAME, { n: 7 })).tasks[0]?.title).toBe('name-7')
   })
 
   it('a suspended workspace is refused before the model is called (nothing is paid)', async () => {
@@ -132,7 +132,7 @@ describe('ModelService over the simulated adapter', () => {
 
   it('meters per workspace, month and task; the tenant sees calls and tokens, the record keeps the cost', async () => {
     const w = world(spy().port)
-    const OTHER = defineModelTask<Named>({ task: 'other', instructions: 'Name it again.', output_contract: 'wedding_site_name' })
+    const OTHER = defineModelTask<Named>({ task: 'other', instructions: 'Name it again.', output_contract: 'copilot_draft_output' })
     await w.model.run(w.ctx, NAME, {})
     await w.model.run(w.ctx, NAME, {})
     await w.model.run(w.ctx, OTHER, {})

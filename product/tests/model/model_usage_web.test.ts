@@ -25,10 +25,10 @@ function surface(store = new InMemoryRecordStore(), simulatedModelTasks?: Parame
 
 describe('model usage on the billing page', () => {
   it("shows the month's calls and tokens; nothing is charged, and the provider's cost is not shown", async () => {
-    // (The test task borrows an existing contract for its output shape.)
-    const { s, clock, store } = surface(undefined, { echo: () => ({ tenant_id: 'x', site_name: 'echo-site', wedding_id: 'w' }) })
+    // (The test task answers in the copilot's output shape.)
+    const { s, clock, store } = surface(undefined, { echo: () => ({ tasks: [], run_of_show: [] }) })
     const ctx = new TenantContextResolver(new TenantStore(clock, new SequentialIdGenerator('c'), store)).resolveBySlug('demo')
-    await s.model.run(ctx, defineModelTask({ task: 'echo', instructions: 'Echo.', output_contract: 'wedding_site_name' }), {})
+    await s.model.run(ctx, defineModelTask({ task: 'echo', instructions: 'Echo.', output_contract: 'copilot_draft_output' }), {})
     const login = s.api.handle({ method: 'POST', path: '/t/demo/sessions', headers: {}, rawBody: JSON.stringify({ role: 'planner' }) } as ApiRequest)
     const token = (login.body as { token: string }).token
     const billing = s.api.handle({ method: 'GET', path: '/t/demo/billing', headers: { authorization: `Bearer ${token}` } })

@@ -71,3 +71,4 @@
 - [Wedding documents](wedding-documents.md) — #48 / ADR 0056: bytes in the store (never listed), type by signature, caps with counters, per-request body limit, attachment-only downloads
 - [Guest list CSV](guest-list-csv.md) — #28 / ADR 0047: export neutralizes formulas; import plans every row, applies all-or-nothing, matches by household + name
 - [Model port](model-port.md) — #59 / ADR 0057: tasks defined in code, async port run outside transactions, output validated + never trusted, usage metered per task (cost hidden from tenants), simulated adapter ONLY (owner decision)
+- [Model jobs and the copilot](model-jobs-and-copilot.md) — #61 / ADR 0058: the outbox queue for model calls (lease, claim check, retries, drain after responses/boot); copilot drafts checked against input, kept via services

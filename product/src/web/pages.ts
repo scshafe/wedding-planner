@@ -24,6 +24,7 @@ import type { SeatedGuest, SeatingView } from '../seating/seating_service'
 import type { PublicSiteView, SiteEditView } from '../site/site_service'
 import type { ModelUsageView } from '../model/model_service'
 import { DOCUMENT_KINDS, type DocumentKind, type DocumentLine, type DocumentsView } from '../documents/document_service'
+import type { CopilotView } from '../copilot/copilot_service'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -1053,7 +1054,7 @@ export function renderDetail(
     <p>Status: <span class="status">${wedding.status}</span></p>
     <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=guests">Guest list →</a></p>
     ${checklistLine}
-    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=vendors">Vendors →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=budget">Budget →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=run-of-show">Run of show →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=seating">Seating →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=site">Website →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=documents">Documents →</a></p>
+    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=vendors">Vendors →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=budget">Budget →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=run-of-show">Run of show →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=seating">Seating →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=site">Website →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=documents">Documents →</a>${inviteCouple === undefined ? html`` : html` · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=copilot">Assistant →</a>`}</p>
     <p class="note">Wedding id: <code>${wedding.wedding_id}</code> · created ${wedding.created_at}</p>
     <p class="note">Active strategy: <a href="/t/${slug}/strategy">the platform’s data-optimized planning defaults</a> (applied to every wedding in this workspace).</p>
   </div>
@@ -2178,7 +2179,7 @@ export function renderRunOfShow(
     theme,
     slug,
     'Run of show',
-    html`<p><a href="/t/${slug}?wedding=${w}">← ${wedding.couple_display_name}</a> · <a href="/t/${slug}?wedding=${w}&amp;tab=run-of-show&amp;print=1">Print view</a></p>
+    html`<p><a href="/t/${slug}?wedding=${w}">← ${wedding.couple_display_name}</a> · <a href="/t/${slug}?wedding=${w}&amp;tab=run-of-show&amp;print=1">Print view</a>${view.can_manage ? html` · <a href="/t/${slug}?wedding=${w}&amp;tab=copilot">Draft with the assistant →</a>` : html``}</p>
   <h2>Run of show</h2>
   ${notice === undefined ? html`` : html`<p class="note">${RUN_OF_SHOW_NOTICES[notice]}</p>`}
   <div class="card">${timeline}</div>
@@ -2487,3 +2488,60 @@ export function renderDocuments(
     'wedding',
   )
 }
+export type CopilotNotice = 'requested' | 'kept' | 'discarded' | 'invalid' | 'full' | 'forbidden' | 'changed'
+
+const COPILOT_NOTICES: Readonly<Record<CopilotNotice, string>> = Object.freeze({
+  requested: 'The assistant is drafting.',
+  kept: 'Added to the checklist and the run of show.',
+  discarded: 'The draft is gone.',
+  invalid: 'That could not be done. Refresh the page and try again.',
+  full: 'The checklist or the run of show is full.',
+  forbidden: 'Only the planner uses the assistant.',
+  changed: 'The draft changed since you looked (a new draft was asked for). Look again before keeping anything.',
+})
+
+/**
+ * The planner copilot's page (issue #61): ask for a draft, wait for it, keep what fits. Nothing in a draft is on the
+ * checklist or the run of show until the planner keeps it.
+ */
+export function renderCopilot(theme: Tenant['theme'], slug: string, wedding: Wedding, view: CopilotView, csrfToken: string, notice?: CopilotNotice): string {
+  const w = wedding.wedding_id
+  const hidden = (fields: Record<string, string>) => html`${csrfField(csrfToken)}${Object.entries(fields).map(([k, v]) => html`<input type="hidden" name="${k}" value="${v}">`)}`
+  const draft = view.draft
+  const vendorName = new Map(view.vendors.map((v) => [v.vendor_id, v.business_name]))
+  const eventName = new Map(view.events.map((e) => [e.event_id, e.name]))
+  const requestForm = (label: string) => html`<form method="post" action="/t/${slug}/copilot/draft-request">${hidden({ wedding_id: w })}<button type="submit">${label}</button></form>`
+  const owner = (o: string, vendor_id?: string) => (o === 'vendor' ? (vendor_id === undefined ? 'A vendor' : (vendorName.get(vendor_id) ?? 'A vendor')) : o === 'couple' ? 'Couple' : 'Planner')
+  let body: SafeHtml
+  if (draft === undefined) {
+    body = html`<div class="card"><p>The assistant drafts checklist tasks and run-of-show items from this wedding's date, events and vendors. You choose what to keep.</p>${requestForm('Draft a checklist and run of show')}</div>`
+  } else if (draft.status === 'drafting') {
+    body = html`<div class="card"><p>The assistant is drafting. <a href="/t/${slug}?wedding=${w}&amp;tab=copilot">Refresh</a> to see the draft.</p></div>`
+  } else if (draft.status === 'failed') {
+    body = html`<div class="card"><p>The draft could not be made.</p>${requestForm('Try again')}</div>`
+  } else {
+    const nothing = draft.tasks.length === 0 && draft.run_of_show.length === 0
+    body = html`<div class="card">${
+      nothing
+        ? html`<p class="note">Nothing left in this draft.</p>`
+        : html`<form method="post" action="/t/${slug}/copilot/draft-accept">${hidden({ wedding_id: w, draft: draft.requested_at })}
+      ${draft.tasks.length === 0 ? html`` : html`<h3>Checklist tasks</h3><ul>${draft.tasks.map((t) => html`<li><label><input type="checkbox" name="task" value="${t.draft_id}" checked> ${t.title} <span class="note">${`due ${t.due_date} · ${t.assignee === 'couple' ? 'Couple' : 'Planner'}`}</span></label></li>`)}</ul>`}
+      ${draft.run_of_show.length === 0 ? html`` : html`<h3>Run of show</h3><ul>${draft.run_of_show.map((i) => html`<li><label><input type="checkbox" name="item" value="${i.draft_id}" checked> ${`${i.starts_at.replace('T', ' ')} ${i.title}`} <span class="note">${[owner(i.owner, i.vendor_id), ...(i.event_id === undefined ? [] : [eventName.get(i.event_id) ?? ''])].filter((x) => x.length > 0).join(' · ')}</span></label></li>`)}</ul>`}
+      <p><button type="submit">Keep the selected</button></p></form>`
+    }
+    <form method="post" action="/t/${slug}/copilot/draft-discard">${hidden({ wedding_id: w })}<button type="submit">Discard the draft</button></form>
+    ${requestForm('Draft again')}</div>`
+  }
+  return signedInShell(
+    theme,
+    slug,
+    'Assistant',
+    html`<p><a href="/t/${slug}?wedding=${w}">← ${wedding.couple_display_name}</a></p>
+  <h2>Assistant draft</h2>
+  ${notice === undefined ? html`` : html`<p class="note">${COPILOT_NOTICES[notice]}</p>`}
+  ${body}
+  <p class="note">The assistant runs on a simulated model in this version.</p>`,
+    'wedding',
+  )
+}
+
