@@ -19,6 +19,7 @@ import {
 } from '@wedding-planner/product'
 
 import { COLLECTIONS } from '../../src/persistence/collections'
+import { groupedKey } from '../../src/persistence/record_store'
 
 /**
  * Issue #30 — households' RSVP links and what a resolved link may do: the token is stored only as its hash, a new
@@ -170,12 +171,50 @@ describe('the household RSVP page (WeddingEventService + GuestListService with a
     w.events.recordAnswer(w.ctx, w.planner, w.ours, w.brunch.event_id, w.ana.guest_id, { invited: false, status: 'pending' })
     const brunch = () => w.events.view(w.ctx, w.planner, w.ours).events.find((e) => e.event.name === 'Brunch')?.counts
     expect(brunch()).toMatchObject({ invited: 0, attending: 0 })
+    // Ana is invited again: Sam follows her, with the answer he gave.
     w.events.recordAnswer(w.ctx, w.planner, w.ours, w.brunch.event_id, w.ana.guest_id, { invited: true, status: 'pending' })
-    expect(brunch()).toMatchObject({ invited: 2, attending: 0 })
+    expect(brunch()).toMatchObject({ invited: 2, attending: 1 })
     // Once the planner sets Sam's invitation, Ana's no longer moves it.
     w.events.recordAnswer(w.ctx, w.planner, w.ours, w.brunch.event_id, w.sam.guest_id, { invited: true, status: 'attending' })
     w.events.recordAnswer(w.ctx, w.planner, w.ours, w.brunch.event_id, w.ana.guest_id, { invited: false, status: 'pending' })
     expect(brunch()).toMatchObject({ invited: 1, attending: 1 })
+  })
+
+  it('a plus-one the planner invited keeps the invitation after the household answers for them (issue #41, case C)', () => {
+    const w = withEvents()
+    // The brunch is invite-only: Ana is invited, and the planner invites Sam (her plus-one) directly too.
+    w.events.recordAnswer(w.ctx, w.planner, w.ours, w.brunch.event_id, w.sam.guest_id, { invited: true, status: 'pending' })
+    w.events.answerAsHousehold(w.grant, [{ guest_id: w.sam.guest_id, event_id: w.brunch.event_id, status: 'attending' }])
+    w.events.recordAnswer(w.ctx, w.planner, w.ours, w.brunch.event_id, w.ana.guest_id, { invited: false, status: 'pending' })
+    const brunch = w.events.view(w.ctx, w.planner, w.ours).events.find((e) => e.event.name === 'Brunch')?.counts
+    expect(brunch).toMatchObject({ invited: 1, attending: 1 })
+    expect(w.events.guestRsvps(w.ctx, w.planner, w.ours, w.sam.guest_id).find((r) => r.event.name === 'Brunch')).toMatchObject({ invited: true, answered_by: 'household' })
+  })
+
+  it('an event switched to invite-only drops a household-answered plus-one with their host (issue #41, case D)', () => {
+    const w = withEvents()
+    // The dinner invites everyone; the household answers for Sam only, and Ana has no record.
+    w.events.answerAsHousehold(w.grant, [{ guest_id: w.sam.guest_id, event_id: w.dinner.event_id, status: 'attending' }])
+    w.events.updateEvent(w.ctx, w.planner, w.ours, w.dinner.event_id, { name: 'Dinner', starts_at: '2028-06-10T18:00', invitation: 'selected', meal_options: w.dinner.meal_options })
+    const dinner = w.events.view(w.ctx, w.planner, w.ours).events.find((e) => e.event.name === 'Dinner')?.counts
+    expect(dinner).toMatchObject({ invited: 0, attending: 0 })
+  })
+
+  it('a record written before invitation_by by the planner still counts as the planner\'s invitation', () => {
+    const w = withEvents()
+    // As #29 wrote it: the planner un-invited Mei from the dinner, with no invitation_by on the record.
+    w.store.put(COLLECTIONS.weddingRsvp, w.ctx.tenant_id, groupedKey(w.ours, `${w.dinner.event_id}:${w.mei.guest_id}`), {
+      tenant_id: w.ctx.tenant_id,
+      wedding_id: w.ours,
+      event_id: w.dinner.event_id,
+      guest_id: w.mei.guest_id,
+      invited: false,
+      status: 'pending',
+      answered_by: 'planner',
+      updated_at: '2027-06-01T00:00:00.000Z',
+    })
+    expect(w.events.guestRsvps(w.ctx, w.planner, w.ours, w.mei.guest_id).find((r) => r.event.name === 'Dinner')?.invited).toBe(false)
+    expect(w.events.view(w.ctx, w.planner, w.ours).events.find((e) => e.event.name === 'Dinner')?.counts.invited).toBe(2)
   })
 
   it('an answer that changes nothing writes nothing: the planner\'s recorded answer keeps its provenance', () => {

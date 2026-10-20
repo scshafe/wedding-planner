@@ -19,7 +19,8 @@ Since issue #30 (2026-10-19): `product/src/rsvp/rsvp_link_service.ts`, household
   unknown/replaced/foreign token = generic not-found; `wp_pre` anti-forgery; `no-referrer`; 20 posts/link/10 min.
 - The web POST resolves the token BEFORE touching the form (double-submit CSRF is no gate), indexes the form once,
   caps fields; only changed rows are sent (hidden originals) and unchanged answers write nothing.
-- A household-written plus-one record follows the host's later invitation changes (recordAnswer cascades).
+- Invitation provenance is `invitation_by`, not `answered_by` (issue #41): the household never sets an invitation,
+  so a household-answered plus-one follows the host by inheritance (no cascade).
 - `GuestListHooks` methods are optional; compose fans out with `fanOutGuestListHooks(events, rsvpLinks)`.
 
 Related: [[events-and-rsvps]], [[guest-list]], [[real-planner-accounts]].

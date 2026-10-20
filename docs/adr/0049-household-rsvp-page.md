@@ -42,11 +42,13 @@ minted only there (a module-private WeakSet, like `TenantContext`). It is the ho
 - **The invitation is never the household's to change:** answers go through the one answer writer with the invitation
   taken from the record or the default and `answered_by: household`. An answer for a guest outside the household, or
   for an event the guest is not invited to, refuses the whole submission (400).
-- **A plus-one keeps following their host:** a plus-one's record written by the household holds `invited` only
-  because the household answered while the plus-one was invited through the host. When the planner or the couple
-  then changes the host's invitation, that plus-one's invitation follows. A plus-one invitation the planner or the
-  couple set themselves is kept. (When an event switches from everyone to selected, guests who already answered
-  stay invited, and the planner un-invites whoever should not be there.)
+- **Who invited is not who answered (issue #41):** a record's `invitation_by` says the planner or the couple set
+  the invitation themselves. A household's answer carries it over unchanged and never sets one. Where nobody set it,
+  the invitation is inherited: the host's for a plus-one, else the event's default. So a plus-one answered by the
+  household keeps following their host, a plus-one the planner invited keeps that invitation, and switching an
+  event to "selected" reaches guests who already answered. A record written before the field counts as set by the
+  planner or couple who answered it. (The first version inferred this from `answered_by`, with a cascade on host
+  changes; the review found the two cases that got wrong.)
 - **A stale tab never reverts newer answers:** each row carries the answer it showed, and the page sends only what
   the household changed. On the server, an answer that changes nothing writes nothing, so the answer the planner
   recorded keeps its provenance.

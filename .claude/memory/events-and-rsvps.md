@@ -8,7 +8,10 @@ metadata:
 Since issue #29 (2026-10-19): `product/src/wedding_events/wedding_event_service.ts`.
 
 - RSVP key `groupedKey(wedding_id, rsvpId(event_id, guest_id))`. NO record = the event's `invitation` default (a
-  plus-one without a record follows their host) + pending. Never pre-create records; counts iterate the wedding's
+  plus-one without a record follows their host) + pending.
+- `invited` counts only when someone SET it: `invitation_by` (planner|couple), or a pre-#41 record answered by the
+  planner/couple (`invitationSetBy`). Household answers carry `invitation_by` over and never set one. Use
+  `effectiveInvitation` everywhere; never read `rsvp.invited` directly. Never pre-create records; counts iterate the wedding's
   GUESTS and look records up (stale records can't count).
 - Guests are read through `GuestDirectory` (guests/guest_directory.ts): a read side with no boundary check, for
   services that already checked reach (and #30's resolved link). Never route it.
