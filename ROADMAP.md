@@ -16,21 +16,28 @@ direction (target customer, pricing, business model) are the owner's call (`stat
 The job, in the planner's words: *"keep every wedding on track without chasing my couples, my
 vendors and 150 guests by hand."*
 
-## Where we are (2026-10-19, M2 done)
+## Where we are (2026-10-20, M3 done)
 
-M1 and M2 are done. On top of M1's secure multi-tenant workspace (durable storage, real accounts, invitations, the
-outbox and operator console, feedback, operability), a wedding now has its planning core:
+M1, M2 and M3 are done. On top of M1's secure multi-tenant workspace (durable storage, real accounts, invitations, the
+outbox and operator console, feedback, operability), a wedding has its planning core (M2):
 - a guest list of households and guests with plus-ones, CSV import and export;
 - events with per-event RSVPs and meal choices, and a public RSVP page per household (a link stored only as a hash);
 - a checklist from a built-in template, the date-move shift, and the planner's overdue / due-this-week view;
 - vendors with payment schedules in integer cents, and a budget whose lines can follow a vendor's schedule.
 
-The couple sees its own wedding: what the planner shares, and what is the couple's to do. Every M2 change had a
-security review before it landed, and the reviews' findings are fixed (1400 tests). Production still runs in demo
-mode: the demo tenant keeps its labeled role picker, every other workspace signs in for real.
+and its event day and guest experience (M3):
+- a run of show with vendor call times, and a seating plan with a printable table list;
+- a public wedding website per wedding (schedule, travel, hotel blocks, FAQ, registry), allow-listed;
+- documents (contracts, floor plans, quotes) stored in the state database, downloaded only as attachments, within a
+  process-wide budget for bytes in flight.
 
-Next is M3 (event day and guest experience: #45 run of show, #46 seating, #47 wedding website, #48 documents), then
-M4 with the model port's simulated adapter only. Guest Q&A is still keyword matching until M4.
+The couple sees its own wedding: what the planner shares, and what is the couple's to do. Every change had a security
+or architecture review before it landed, and the reviews' findings are fixed (about 1470 tests). Production still runs
+in demo mode: the demo tenant keeps its labeled role picker, every other workspace signs in for real.
+
+M4 has begun with the model port (#59, the simulated adapter only, by the owner's decision); next are the planner
+copilot and the job queue (#61), the guest concierge (#60) and the weekly risk summary (#62). Guest Q&A is still
+keyword matching until #60.
 
 ## Milestones
 
@@ -74,7 +81,10 @@ ADRs 0046–0052 and the ADR 0039 addendum (grouped keys).
 - **Budget.** Categories with estimated vs actual, payments due, linked to vendors; the couple
   sees what the planner shares.
 
-### M3: Event day and guest experience
+### M3: Event day and guest experience — done (2026-10-20)
+
+Shipped as #45 (run of show), #46 (seating), #47 (wedding website), #48 (documents) and #54 (one-row editing on the
+budget and vendors pages); ADRs 0053–0056.
 
 - **Events and run of show.** Several events per wedding (rehearsal, ceremony, reception); a
   day-of timeline with times, owners and vendor call times.
