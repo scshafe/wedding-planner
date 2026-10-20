@@ -323,6 +323,17 @@ export {
   type WeddingEventsView,
 } from './wedding_events/wedding_event_service'
 export { GuestDirectory } from './guests/guest_directory'
+// A wedding's checklist and the built-in template (issue #31, ADR 0050).
+export {
+  CHECKLIST_LIMITS,
+  ChecklistService,
+  type ChecklistView,
+  isDate,
+  type TaskAssignee,
+  type TaskInput,
+  type TaskStatus,
+} from './checklist/checklist_service'
+export { CHECKLIST_TEMPLATE, type ChecklistOffset, type ChecklistTemplateItem, dateBefore, daysBetween, shiftDate } from './checklist/checklist_template'
 // Households' RSVP links and the grant a resolved link carries (issue #30, ADR 0049).
 export { assertHouseholdGrant, type HouseholdRsvpGrant, RsvpLinkService } from './rsvp/rsvp_link_service'
 export { assertWeddingReach } from './wedding/wedding_reach'

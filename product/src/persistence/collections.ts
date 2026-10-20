@@ -12,6 +12,7 @@ import type {
   WeddingRsvp,
   WeddingRsvpSettings,
   RsvpLink,
+  WeddingTask,
 } from '@wedding-planner/shared'
 
 import type { AccountEmailIndex, UserAccount } from '../accounts/account_store'
@@ -99,4 +100,6 @@ export const COLLECTIONS = Object.freeze({
   rsvpLinkByHousehold: collection<RsvpLink>('rsvp_link_household', 'tenant', 'rsvp_link'),
   /** Key wedding_id: whether a wedding's RSVPs are closed (issue #30). */
   weddingRsvpSettings: collection<WeddingRsvpSettings>('wedding_rsvp_settings', 'tenant', 'wedding_rsvp_settings'),
+  /** Key groupedKey(wedding_id, task_id): a wedding's checklist (issue #31). */
+  weddingTask: collection<WeddingTask>('wedding_task', 'tenant', 'wedding_task'),
 })

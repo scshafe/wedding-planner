@@ -13,6 +13,7 @@ import { OneTimeTokenStore } from '../accounts/one_time_token_store'
 import { PendingResetQueue } from '../accounts/pending_reset_queue'
 import { PasswordHasher, PRODUCTION_SCRYPT_COST, type ScryptCost } from '../accounts/password_hasher'
 import { RateLimiter } from '../accounts/rate_limiter'
+import { ChecklistService } from '../checklist/checklist_service'
 import { BillingLedger } from '../billing/billing_ledger'
 import { WeddingEventService } from '../wedding_events/wedding_event_service'
 import { FeedbackService } from '../feedback/feedback_service'
@@ -292,6 +293,8 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     guestList,
     events,
     householdRsvp: { links: rsvpLinks, events, guestList, limiter },
+    // Each wedding's checklist (issue #31): the planner's tasks, the couple's own to tick off.
+    checklist: new ChecklistService(tenants, weddings, authorizer, clock, ids, store),
     // In-app feedback (issue #12): stored in the shared store, read by the operator at /admin/feedback.
     feedback: new FeedbackService(clock, ids, limiter, store),
     // Operability (issue #13): 500s are recorded (code + location, never data); /healthz names the build.

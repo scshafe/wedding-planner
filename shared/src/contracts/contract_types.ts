@@ -73,3 +73,5 @@ export type { WeddingRsvp } from './generated/wedding_rsvp'
 // A household's RSVP link (stored as its token's hash) and a wedding's RSVP settings (issue #30). ADR 0049.
 export type { RsvpLink } from './generated/rsvp_link'
 export type { WeddingRsvpSettings } from './generated/wedding_rsvp_settings'
+// One task on a wedding's checklist (issue #31). ADR 0050.
+export type { WeddingTask } from './generated/wedding_task'
