@@ -168,15 +168,16 @@ describe('web_server guards (issue #48 security review)', () => {
     if (s !== undefined) await new Promise<void>((resolve) => s.close(() => resolve()))
   })
 
-  type Limits = { response_bytes: number; response_deadline_ms: number; large_uploads: number; upload_deadline_ms: number }
-  const LIMITS: Limits = { response_bytes: 1024 * 1024, response_deadline_ms: 5000, large_uploads: 2, upload_deadline_ms: 5000 }
+  type Limits = { in_flight_bytes: number; per_key_bytes: number; response_deadline_ms: number; large_uploads: number; upload_deadline_ms: number }
+  const LIMITS: Limits = { in_flight_bytes: 1024 * 1024, per_key_bytes: 1024 * 1024, response_deadline_ms: 5000, large_uploads: 2, upload_deadline_ms: 5000 }
 
   /**
    * A stub UI: a large body limit on /big*, its owner the path; a 300 KiB response on /large and a 16 MiB one on
    * /huge; a body-limit check that throws on /boom.
    */
-  async function start(limits: Partial<Limits> = {}): Promise<{ base: string; port: number; transfers: TransferBudget }> {
+  async function start(limits: Partial<Limits> = {}): Promise<{ base: string; port: number; transfers: TransferBudget; counts: { handled: number; deferred: number } }> {
     const transfers = new TransferBudget({ ...LIMITS, ...limits })
+    const counts = { handled: 0, deferred: 0 }
     const stub = {
       transfers,
       bodyLimit: (_method: string, path: string) => {
@@ -184,18 +185,20 @@ describe('web_server guards (issue #48 security review)', () => {
         return path.startsWith('/big') ? 2 * 1024 * 1024 : MAX_BODY_BYTES
       },
       uploadOwner: (path: string) => path,
-      handle: (req: { path: string }) => ({
+      handle: (req: { path: string }) => (counts.handled++, {
         status: 200,
         headers: { 'content-type': 'text/plain' },
         body: req.path === '/large' ? 'x'.repeat(300 * 1024) : 'ok',
         ...(req.path === '/huge' ? { bytes: Buffer.alloc(16 * 1024 * 1024) } : {}),
       }),
-      runDeferredWork: () => undefined,
+      runDeferredWork: () => {
+        counts.deferred++
+      },
     }
     server = createProductWebUiServer(stub as unknown as ProductWebUi)
     await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve))
     const port = (server?.address() as AddressInfo).port
-    return { base: `http://127.0.0.1:${port}`, port, transfers }
+    return { base: `http://127.0.0.1:${port}`, port, transfers, counts }
   }
 
   /** Start a POST with a declared length and send only part of it; resolves with the response when one comes. */
@@ -222,7 +225,7 @@ describe('web_server guards (issue #48 security review)', () => {
   })
 
   it('large upload bodies take one of a few places, one per owner: the next is 503 until a place frees', async () => {
-    const { base } = await start()
+    const { base } = await start({ in_flight_bytes: 8 * 1024 * 1024 })
     const first = partial(`${base}/big-a`, 2_000_000, 1000)
     await pause(50)
     // The same owner cannot take a second place, though one is free.
@@ -246,13 +249,13 @@ describe('web_server guards (issue #48 security review)', () => {
   })
 
   it('a response that does not fit the budget is refused (503), not held; one within it is sent and released', async () => {
-    const tight = await start({ response_bytes: 100 * 1024 })
+    const tight = await start({ in_flight_bytes: 100 * 1024 })
     const res = await fetch(`${tight.base}/large`)
     expect([res.status, res.headers.get('retry-after')]).toEqual([503, '5'])
     expect((await fetch(`${tight.base}/small`)).status).toBe(200)
     await new Promise<void>((resolve) => server?.close(() => resolve()))
     server = undefined
-    const roomy = await start({ response_bytes: 400 * 1024 })
+    const roomy = await start({ in_flight_bytes: 400 * 1024 })
     for (let i = 0; i < 3; i++) {
       const ok = await fetch(`${roomy.base}/large`)
       expect(ok.status).toBe(200)
@@ -268,7 +271,7 @@ describe('web_server guards (issue #48 security review)', () => {
   }
 
   it('an unread large response holds the budget only until its deadline; the connection is dropped and the budget freed', async () => {
-    const { port, transfers } = await start({ response_bytes: 20 * 1024 * 1024, response_deadline_ms: 300 })
+    const { port, transfers } = await start({ in_flight_bytes: 20 * 1024 * 1024, response_deadline_ms: 300 })
     const socket = new (await import('node:net')).Socket()
     socket.on('error', () => undefined)
     socket.connect(port, '127.0.0.1', () => socket.write('GET /huge HTTP/1.1\r\nHost: x\r\n\r\n'))
@@ -282,7 +285,7 @@ describe('web_server guards (issue #48 security review)', () => {
   })
 
   it(`a connection with more than ${MAX_PENDING_RESPONSES_PER_SOCKET} unfinished responses is dropped, releasing what it queued`, async () => {
-    const { port, transfers } = await start({ response_bytes: 80 * 1024 * 1024 })
+    const { port, transfers } = await start({ in_flight_bytes: 80 * 1024 * 1024 })
     const socket = new (await import('node:net')).Socket()
     socket.on('error', () => undefined)
     // All in one write, so the server reads them as one batch of pipelined requests.
@@ -292,5 +295,37 @@ describe('web_server guards (issue #48 security review)', () => {
     await pause(100)
     expect(await eventually(() => transfers.canSend(80 * 1024 * 1024))).toBe(true)
     socket.destroy()
+  })
+  it('a write is checked for room before it runs; once applied its response is always sent; a read that does not fit is refused', async () => {
+    const { base, transfers, counts } = await start({ in_flight_bytes: 1024 * 1024 })
+    // Nothing held: the 16 MiB answer to a write is sent although it passes the budget; the same read is refused.
+    const write = await fetch(`${base}/huge`, { method: 'POST', body: 'x' })
+    expect(write.status).toBe(200)
+    expect((await write.arrayBuffer()).byteLength).toBe(16 * 1024 * 1024)
+    expect(await eventually(() => transfers.canSend(1024 * 1024))).toBe(true)
+    const read = await fetch(`${base}/huge`)
+    expect([read.status, read.headers.get('retry-after')]).toEqual([503, '5'])
+    // Almost full: a write is refused BEFORE it runs.
+    const release = transfers.hold(900 * 1024)
+    const before = counts.handled
+    expect((await fetch(`${base}/ok`, { method: 'POST', body: 'x' })).status).toBe(503)
+    expect(counts.handled).toBe(before)
+    release?.()
+    expect((await fetch(`${base}/ok`, { method: 'POST', body: 'x' })).status).toBe(200)
+  })
+
+  it('request bodies are held as they arrive: one that does not fit ends its request, and everything is released', async () => {
+    const { base, transfers } = await start({ in_flight_bytes: 300 * 1024 })
+    const big = partial(`${base}/ok`, 900 * 1024, 600 * 1024)
+    expect(await big.response).toBe(503)
+    expect(await eventually(() => transfers.canSend(300 * 1024))).toBe(true)
+    expect((await fetch(`${base}/ok`, { method: 'POST', body: 'x'.repeat(10 * 1024) })).status).toBe(200)
+  })
+
+  it('deferred work runs after every response, the refused ones too', async () => {
+    const { base, counts } = await start({ in_flight_bytes: 100 * 1024 })
+    await fetch(`${base}/large`)
+    await fetch(`${base}/ok`)
+    expect(await eventually(() => counts.deferred === 2)).toBe(true)
   })
 })

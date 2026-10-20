@@ -171,7 +171,7 @@ describe('documents', () => {
     const id = (w.api('POST', `/t/demo/weddings/${w.ours}/documents`, w.bearer, { title: 'T', kind: 'other', filename: 't.pdf', content_base64: PDF.toString('base64') }).body as { document: { document_id: string } }).document.document_id
     const planner = w.login({ role: 'planner' })
     const path = `/t/demo/documents/download?wedding=${w.ours}&doc=${id}`
-    const release = w.ui.transfers.holdResponse(w.ui.transfers.limits.response_bytes)
+    const release = w.ui.transfers.hold(w.ui.transfers.limits.in_flight_bytes)
     const busy = w.ui.handle(get(path, planner))
     expect([busy.status, busy.headers['retry-after'], busy.bytes]).toEqual([503, '5', undefined])
     release?.()

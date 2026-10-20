@@ -63,6 +63,11 @@ function whenDone(res: http.ServerResponse, socket: Socket, fn: () => void): voi
 
 /** Issue #48: a connection with no traffic for this long is closed (a stalled reader holds nothing for long). */
 export const SOCKET_IDLE_TIMEOUT_MS = 120_000
+/** Issue #48: connections at once (the serving proxy needs a handful); each one costs kernel buffers the budget cannot see. */
+export const MAX_CONNECTIONS = 256
+/** Issue #48: how long a request's headers, and the whole request, may take to arrive. */
+export const HEADERS_TIMEOUT_MS = 30_000
+export const REQUEST_TIMEOUT_MS = 60_000
 
 export function createProductWebUiServer(ui: ProductWebUi, logging?: RequestLogging): http.Server {
   const pending = new WeakMap<Socket, number>()
@@ -142,6 +147,11 @@ export function createProductWebUiServer(ui: ProductWebUi, logging?: RequestLogg
       whenDone(res, socket, done)
     }
 
+    // The body is held against the budget as it arrives, until the exchange is done.
+    const bodyHolds: (() => void)[] = []
+    whenDone(res, socket, () => {
+      for (const release of bodyHolds) release()
+    })
     req.on('data', (chunk: Buffer) => {
       if (aborted) return
       total += chunk.length
@@ -149,11 +159,25 @@ export function createProductWebUiServer(ui: ProductWebUi, logging?: RequestLogg
         refuse(413, 'payload_too_large')
         return
       }
+      const release = ui.transfers.hold(chunk.length)
+      if (release === undefined) {
+        refuse(503, 'busy', { 'retry-after': '5' })
+        return
+      }
+      bodyHolds.push(release)
       chunks.push(chunk)
     })
 
     req.on('end', () => {
       if (aborted) return
+      const method = req.method ?? 'GET'
+      const read = method === 'GET' || method === 'HEAD'
+      // A write is checked for room BEFORE it runs: once applied, its response is always sent (never a 503 after a change).
+      if (!read && !ui.transfers.canSend(LARGE_TRANSFER_BYTES)) {
+        res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '5', 'cache-control': 'no-store' })
+        res.end(JSON.stringify({ error: 'busy' }))
+        return
+      }
       try {
         const bytes = chunks.length === 0 ? undefined : Buffer.concat(chunks)
         // A multipart body is binary: only its bytes are passed (no UTF-8 copy nobody reads).
@@ -166,9 +190,10 @@ export function createProductWebUiServer(ui: ProductWebUi, logging?: RequestLogg
         }
         const result = ui.handle(apiReq)
         if (res.headersSent) return
-        // Every response is held until it is written or its connection closes; one that does not fit is not held.
+        // Every response is held until it is written or its connection closes. A read's that does not fit (overall, or for
+        // its key) is refused instead; a write's is held regardless (the budget may be passed by that one response).
         const size = result.bytes?.byteLength ?? Buffer.byteLength(result.body)
-        const release = ui.transfers.holdResponse(size)
+        const release = ui.transfers.hold(size, { ...(result.transferKey === undefined ? {} : { key: result.transferKey }), force: !read })
         if (release === undefined) {
           res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '5', 'cache-control': 'no-store' })
           res.end(JSON.stringify({ error: 'busy' }))
@@ -186,14 +211,15 @@ export function createProductWebUiServer(ui: ProductWebUi, logging?: RequestLogg
         }
         res.writeHead(result.status, result.headers)
         res.end(result.bytes ?? result.body)
-        // Issue #10: work whose cost must not show in the response's timing runs after the response is written.
-        setImmediate(() => ui.runDeferredWork())
       } catch {
         // The pure handler never throws (it maps slips to a constant 500), but stay fail-closed.
         if (!res.headersSent) {
           res.writeHead(500, { 'content-type': 'application/json' })
           res.end(JSON.stringify({ error: 'internal_error' }))
         }
+      } finally {
+        // Issue #10: work whose cost must not show in the response's timing runs after the response — on every path.
+        setImmediate(() => ui.runDeferredWork())
       }
     })
 
@@ -205,6 +231,9 @@ export function createProductWebUiServer(ui: ProductWebUi, logging?: RequestLogg
     })
   })
   server.setTimeout(SOCKET_IDLE_TIMEOUT_MS)
+  server.maxConnections = MAX_CONNECTIONS
+  server.headersTimeout = HEADERS_TIMEOUT_MS
+  server.requestTimeout = REQUEST_TIMEOUT_MS
   return server
 }
 

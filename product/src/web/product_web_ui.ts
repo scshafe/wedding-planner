@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Wedding } from '@wedding-planner/shared'
 
 import type { TeamView } from '../accounts/membership_service'
@@ -1160,7 +1162,9 @@ export class ProductWebUi {
     if (weddingId.length === 0 || documentId.length === 0) return GENERIC_404
     // Checked before a document is read: when the large-response budget is full, nothing is built (the edge would
     // refuse to hold it anyway).
-    if (!this.transfers.canSend(DOCUMENT_LIMITS.file_bytes)) return busy(503, 'The server is busy. Try the download again in a moment.', '5')
+    // A download is held under its session's key, so one session cannot hold the budget on its own.
+    const transferKey = token === undefined ? undefined : createHash('sha256').update(token).digest('hex')
+    if (!this.transfers.canSend(DOCUMENT_LIMITS.file_bytes, transferKey)) return busy(503, 'The server is busy. Try the download again in a moment.', '5')
     const res = this.#api.handle(bearerGet(`/t/${slug}/weddings/${encodeURIComponent(weddingId)}/documents/${encodeURIComponent(documentId)}`, token))
     if (res.status === 429) return busy(429, 'Too many downloads. Try again in a minute.', '60')
     if (res.status !== 200) return this.#renderNonData(slug, res.status)
@@ -1179,6 +1183,7 @@ export class ProductWebUi {
       },
       body: '',
       bytes: Buffer.from(file.content_base64, 'base64'),
+      ...(transferKey === undefined ? {} : { transferKey }),
     }
   }
 

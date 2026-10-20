@@ -97,25 +97,38 @@ The boundary is the wedding's (`assertWeddingReach`).
   CSRF is checked on the parsed form before anything else. A form that does not parse has no token, so it gets the
   masked 403. The file then goes to the JSON route as base64, so the JSON API stays the only data path.
 
-### Responses: one budget for the process
+### Bytes in flight: one budget for the process
 
 The security review showed that one couple session could pipeline 100 downloads of a 5 MiB document without reading
-them, and make the process hold over 500 MB: an out-of-memory kill of the 512 MiB container, for every tenant. So:
-- **The edge holds every response** against one 48 MiB budget until it is written, closed, or its connection closes
-  (`TransferBudget`, `whenDone`).
+them, and make the process hold over 500 MB: an out-of-memory kill of the 512 MiB container, for every tenant. Two
+re-reviews then closed the gaps. So, in `web_server.ts` and `TransferBudget`:
+- **Everything is held.** Every request body (chunk by chunk, as it arrives) and every response is held against one
+  48 MiB budget until the exchange is done: written, closed, or its connection closed (`whenDone`).
   - The connection matters: on Node 22 (production), a pipelined response still queued behind another never emits
-    `close` when the connection dies (Node 24 does). A re-review found that releasing only on the response's own
-    `close` leaked the budget permanently.
-- **A response that does not fit is answered 503 with `Retry-After`**, and is not held.
-- **Large responses (256 KiB or more) must be written within 120 seconds**, or the connection is dropped. Any
-  connection idle for 120 seconds is closed, so an unread response holds the budget for a bounded time.
-- **One connection may have at most 4 unfinished responses.** Browsers and the serving proxy send one at a time; a
-  client that pipelines more is dropped, along with everything it queued.
-- **The download page checks the budget before reading a document**, so a full budget costs no reads or decoding.
+    `close` when the connection dies (Node 24 does). Releasing only on the response's own `close` leaked the budget
+    permanently.
+- **What does not fit is refused, never half-applied.**
+  - A body chunk that does not fit ends its request (503, connection closed).
+  - A read (GET/HEAD) whose response does not fit gets a 503 instead.
+  - A write is checked for room before it runs; once applied, its response is always sent (the budget may be passed
+    by that one response), so a 503 never follows a change that happened.
+  - Deferred work runs after every response, refused ones included.
+- **One session cannot hold it alone.** A download is held under its session's key, at most 12 MiB per key (two full
+  documents), checked before anything is read.
+- **Time is bounded.**
+  - A large response (256 KiB or more) must be written within 120 seconds, or the connection is dropped.
+  - Any connection idle for 120 seconds is closed.
+  - Headers must arrive within 30 seconds and the whole request within 60.
+- **Connections are bounded.** One connection may have at most 4 unfinished responses (browsers and the serving proxy
+  send one at a time; a client that pipelines more is dropped, with everything it queued). The server accepts at most
+  256 connections, which also bounds the kernel buffers the budget cannot see.
 
-**The trade:** a client that holds the budget gets everyone else 503s for at most two minutes at a time. That is a
-denial, not an out-of-memory kill, and a client identity (to limit per client) is not available behind the proxy. In
-production the proxy does not pipeline, so the per-connection cap is reached only by direct connections.
+**The trade:**
+- **The cost of the bound.** A client that keeps holding the budget gets everyone's large downloads and reads 503s
+  for as long as it keeps it up: a denial, not an out-of-memory kill. It is bounded per session, so it takes several
+  sessions. On a real workspace sessions need passwords; on the demo workspace anyone can open them.
+- **Where the per-connection cap applies.** In production the serving proxy does not pipeline, so the cap is reached
+  only by direct connections.
 
 ### Downloads: never a page of this origin
 
