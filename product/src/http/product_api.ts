@@ -16,6 +16,7 @@ import type { MembershipService } from '../accounts/membership_service'
 import type { RateLimiter } from '../accounts/rate_limiter'
 import type { BudgetCategoryInput, BudgetService } from '../budget/budget_service'
 import type { RunOfShowInput, RunOfShowService } from '../run_of_show/run_of_show_service'
+import type { ModelService } from '../model/model_service'
 import type { SeatingService, TableInput } from '../seating/seating_service'
 import { SITE_LIMITS, type SiteInput, type SiteService } from '../site/site_service'
 import type { ChecklistService, TaskInput } from '../checklist/checklist_service'
@@ -324,6 +325,8 @@ export interface BillingHandlerDeps {
   readonly ledger: Pick<BillingLedger, 'summarize' | 'settleBalance' | 'eventsFor'>
   readonly tenants: Pick<TenantStore, 'findById'>
   readonly authorizer: GuestAuthorizer
+  /** Issue #59: the workspace's model usage this month (read only). Absent ⇒ not shown. */
+  readonly modelUsage?: Pick<ModelService, 'usageFor'>
 }
 
 /** Everything the pipeline needs. resolver/sessionStore/operators live ONLY here, never in a handler. */
@@ -1944,7 +1947,8 @@ function dispatchBilling(
     // The itemized financial line items behind the summary totals (Phase 32), keyed by the SAME minted
     // partition (`context.tenant_id`, never a body field) the summary uses — own tenant only, financial-only.
     const activity = buildBillingActivity(deps.ledger.eventsFor(context.tenant_id))
-    return { status: 200, body: { billing, activity } }
+    // Issue #59: the model calls this month, metered per workspace (own tenant only, by the minted context).
+    return { status: 200, body: { billing, activity, ...(deps.modelUsage === undefined ? {} : { model_usage: deps.modelUsage.usageFor(context) }) } }
   }
   if (req.method === 'POST') {
     // Settle the owed balance. The amount is sourced from the caller's OWN trusted fold inside `settleBalance`

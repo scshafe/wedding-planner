@@ -22,6 +22,7 @@ import type { BudgetLine, BudgetView } from '../budget/budget_service'
 import type { RunOfShowLine, RunOfShowView } from '../run_of_show/run_of_show_service'
 import type { SeatedGuest, SeatingView } from '../seating/seating_service'
 import type { PublicSiteView, SiteEditView } from '../site/site_service'
+import type { ModelUsageView } from '../model/model_service'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -1126,6 +1127,7 @@ export function renderBilling(
   summary: BillingSummary,
   activity: readonly BillingActivityEntry[],
   csrfToken: string,
+  modelUsage?: ModelUsageView,
 ): string {
   // The Pay form posts to the 4-seg web route (CSRF), distinct from the 3-seg JSON route. It carries ONLY the
   // CSRF field — no amount: the JSON handler settles the trusted owed balance, so the browser cannot influence
@@ -1159,6 +1161,15 @@ export function renderBilling(
     <p>${`${summary.messages_sent} message(s) sent`} · ${`${dollars(summary.messaging_spend_cents)} in metered messaging`}</p>
     <p class="note">Guest replies are metered per message and priced by your plan tier.</p>
   </div>
+  ${
+    modelUsage === undefined
+      ? html``
+      : html`<div class="card">
+    <h2>AI assistant usage</h2>
+    <p>${`${modelUsage.calls} call(s) in ${modelUsage.month}`} · ${`${modelUsage.input_tokens + modelUsage.output_tokens} tokens`}</p>
+    <p class="note">${`The assistant runs on a simulated model: nothing is charged. At a typical provider's price these calls would cost about ${dollars(modelUsage.simulated_cost_cents)}.`}</p>
+  </div>`
+  }
   <div class="card">
     <h2>Account balance</h2>
     <p><strong>${`${dollars(summary.balance_cents)} owed`}</strong></p>

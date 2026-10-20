@@ -45,6 +45,9 @@ import { TenantStore } from '../tenant/tenant_store'
 import { ProductWebUi } from '../web/product_web_ui'
 import { ThemeResolver } from '../web/theme_resolver'
 import { WeddingRepository } from '../wedding/wedding_repository'
+import { ModelService } from '../model/model_service'
+import { SimulatedModelAdapter, type SimulatedTask } from '../model/simulated_model_adapter'
+import { SIMULATED_MODEL_TASKS } from '../model/simulated_tasks'
 
 /**
  * @canonical compose_product_surface -- the composition root: wires every product-surface dependency into
@@ -122,6 +125,11 @@ export interface ComposeProductSurfaceConfig {
    * Absent ⇒ site-relative links. Never derived from a request's Host header (a requester controls that).
    */
   readonly publicUrl?: string
+  /**
+   * Issue #59: the simulated model's tasks. Absent ⇒ the product's own ({@link SIMULATED_MODEL_TASKS}); a test may add
+   * one. There is deliberately no option for a real model: wiring one is an owner decision (ADR 0057).
+   */
+  readonly simulatedModelTasks?: Readonly<Record<string, SimulatedTask>>
 }
 
 /** A handle to the demo tenant seeded by THIS composition — present only when the seed ran (empty store). */
@@ -165,6 +173,8 @@ export interface ComposedSurface {
   readonly email: SimulatedEmailAdapter
   /** Issue #10: precompute what the first request would otherwise pay for (the dummy password hash). */
   readonly warmUp: () => void
+  /** Issue #59: model calls (the simulated adapter only), validated and metered per workspace. */
+  readonly model: ModelService
 }
 
 /** The demo theme — an obvious offline placeholder (no real brand). Colors are lowercase 6-hex per contract. */
@@ -193,6 +203,8 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
 
   // The shared backbone: one tenant store the resolver, theme resolver, onboarding, and repo all read.
   const tenants = new TenantStore(clock, ids, store)
+  // Issue #59: the model — the simulated adapter only (ADR 0057). Calls run outside request transactions.
+  const model = new ModelService(tenants, new SimulatedModelAdapter(config.simulatedModelTasks ?? SIMULATED_MODEL_TASKS), clock, (fn) => store.transaction(fn), store)
   const resolver = new TenantContextResolver(tenants)
   // Sessions persist, so they expire (7 days) and lapsed ones are swept at boot (below). Issue #10: the simulated
   // role picker signs in (and its sessions resolve) ONLY on the demo tenant, and only in demo mode.
@@ -343,7 +355,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     // The planner billing & usage summary (Phase 30): the ledger NARROWED to its read fold (`summarize`), the
     // tenant store narrowed to `findById` (the trusted plan_tier of the caller's own tenant), and the
     // management-capability authorizer for the planner-only gate. Always wired (a compose e2e pins reachability).
-    billing: { ledger: billing, tenants, authorizer: guestAuthorizer },
+    billing: { ledger: billing, tenants, authorizer: guestAuthorizer, modelUsage: model },
     ...(config.championStrategy === undefined ? {} : { championStrategy: config.championStrategy }),
     // One transaction per request over the shared store (issue #8).
     transactions: store,
@@ -415,5 +427,5 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     operators.sweepExpired()
   })
 
-  return { ui, api, themes, operatorToken, demo, messaging, escalations, resolutions, email, warmUp: () => accounts.warm() }
+  return { ui, api, themes, operatorToken, demo, messaging, escalations, resolutions, email, warmUp: () => accounts.warm(), model }
 }

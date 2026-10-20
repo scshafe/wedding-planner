@@ -29,6 +29,7 @@ import type { StoredOneTimeToken } from '../accounts/one_time_token_store'
 import type { PendingReset } from '../accounts/pending_reset_queue'
 import type { StoredOperatorSession } from '../auth/operator_credential'
 import type { StoredSession } from '../auth/session_store'
+import type { ModelUsageRecord } from '../model/model_service'
 import type { StoredOutboxMessage } from '../email/simulated_email_adapter'
 import type { FeedbackSubmission } from '../feedback/feedback_service'
 import type { ServerError } from '../operability/error_log'
@@ -126,4 +127,6 @@ export const COLLECTIONS = Object.freeze({
   weddingSite: collection<WeddingSite>('wedding_site', 'tenant', 'wedding_site'),
   /** Key site_name: which wedding holds a site name in the workspace (issue #47). */
   weddingSiteName: collection<WeddingSiteName>('wedding_site_name', 'tenant', 'wedding_site_name'),
+  /** Key `YYYY-MM`: the workspace's model calls and tokens that month (issue #59). */
+  modelUsage: collection<ModelUsageRecord>('model_usage', 'tenant'),
 })

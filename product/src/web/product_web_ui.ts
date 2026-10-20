@@ -6,6 +6,7 @@ import type { ChecklistView, DueAcrossWeddings } from '../checklist/checklist_se
 import { centsFromText, VENDOR_LIMITS, type VendorsView } from '../vendors/vendor_service'
 import type { BudgetView } from '../budget/budget_service'
 import type { RunOfShowView } from '../run_of_show/run_of_show_service'
+import type { ModelUsageView } from '../model/model_service'
 import type { SeatingView } from '../seating/seating_service'
 import { type PublicSiteView, SITE_LIMITS, type SiteEditView } from '../site/site_service'
 import { toGuestCsv } from '../guests/guest_csv'
@@ -735,7 +736,7 @@ export class ProductWebUi {
       const csrf = this.#csrf.issueCsrf(token)
       if (theme === undefined || summary === undefined) return GENERIC_404
       if (csrf === undefined) return ERROR_500
-      return htmlResult(200, renderBilling(theme, slug, summary, activity, csrf))
+      return htmlResult(200, renderBilling(theme, slug, summary, activity, csrf, readModelUsage(apiRes.body)))
     }
     return this.#renderNonData(slug, apiRes.status)
   }
@@ -1892,6 +1893,16 @@ function readBilling(body: unknown): BillingSummary | undefined {
  * Read the activity line items from a billing (200) JSON body, or `[]` (tolerant — never throws). An absent or
  * malformed `activity` yields the empty list (the page renders "No activity yet."), never a 500 on the 200 path.
  */
+/** Issue #59: the model usage from a billing (200) JSON body, when present and well-formed (tolerant — never throws). */
+function readModelUsage(body: unknown): ModelUsageView | undefined {
+  if (typeof body !== 'object' || body === null) return undefined
+  const usage = (body as { model_usage?: unknown }).model_usage
+  if (typeof usage !== 'object' || usage === null) return undefined
+  const u = usage as Record<string, unknown>
+  const counts = ['calls', 'input_tokens', 'output_tokens', 'simulated_cost_cents'].every((k) => typeof u[k] === 'number')
+  return counts && typeof u.month === 'string' ? (usage as ModelUsageView) : undefined
+}
+
 function readBillingActivity(body: unknown): readonly BillingActivityEntry[] {
   if (typeof body !== 'object' || body === null) return []
   const activity = (body as { activity?: unknown }).activity
