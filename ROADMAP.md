@@ -85,8 +85,9 @@ ADRs 0046–0052 and the ADR 0039 addendum (grouped keys).
 
 ### M4: AI planning assistant
 
-- **A model port** with a simulated adapter (deterministic, for tests and the demo) and a real
-  model adapter that is off unless the owner supplies a key (an owner crossing).
+- **A model port** with a simulated adapter (deterministic, for tests and the demo). Owner decision
+  (2026-10-19): only the simulated adapter is built. A real model costs money, so wiring one (an
+  account, a key, a price) is an owner crossing, not agent work.
 - **Guest concierge.** Answer guest questions from the facts guests may see (the allow-list in
   `projectGuestVisibleFacts`, extended with schedule, travel and FAQ), escalate the rest to the
   existing inbox; an eval set in `eval-harness/` scores accuracy and refusals.

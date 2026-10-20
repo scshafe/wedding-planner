@@ -28,6 +28,12 @@ import { WeddingPlannerError } from '@wedding-planner/shared'
  *   - PERSISTENCE.INVALID_KEY_PREFIX   a `listByKeyPrefix` prefix that is empty or does not end with `/`
  *   - PERSISTENCE.ASYNC_TRANSACTION    a transaction body returned a promise (a programming error)
  *   - PERSISTENCE.STORAGE_FAILED       a database operation failed at runtime (disk full, I/O, lock timeout)
+ * The model service (issue #59, ADR 0057) raises MODEL.<FAILURE_MODE>:
+ *   - MODEL.UNKNOWN_TASK             the adapter has no such task (a programming error)
+ *   - MODEL.DUPLICATE_TASK           a test task would replace a product task (a programming error, at composition)
+ *   - MODEL.UNAVAILABLE              the adapter failed or did not answer
+ *   - MODEL.INVALID_USAGE            the adapter's usage report is not whole numbers within bounds (untrusted input)
+ *   - MODEL.INVALID_OUTPUT           the output does not satisfy the task's contract
  *   - PRODUCT.NO_OPERATOR            an /admin request carried no / an unknown operator token (Phase 15)
  *   - PRODUCT.FORGED_OPERATOR        an Operator reached a check without the OperatorCredentialStore's brand
  *   - PRODUCT.DUPLICATE_OPERATOR_TOKEN two seeded operator credential tokens collided

@@ -7,11 +7,16 @@ import type { ContractKey } from '@wedding-planner/shared'
  * contract. Nothing here names a vendor, a model family or a wire format: an adapter maps a {@link ModelRequest} to
  * whatever a provider speaks.
  *
- *   - `instructions` come from code, never from a user: what the model is asked to do is fixed by the product.
- *   - `input` is the facts the model may use, as JSON data. Text a user wrote (a guest's question) appears only here,
- *     as data — never spliced into the instructions.
- *   - `output_contract` names the JSON Schema contract the output must satisfy. The caller-side `ModelService`
- *     validates it before anyone uses it, so an adapter's output is untrusted until then.
+ *   - A task is DEFINED ONCE, in code ({@link defineModelTask}): its name, its instructions and its output contract.
+ *     So what the model is asked to do is fixed by the product, never assembled per request.
+ *   - `input` is the facts the model may use, as JSON data — an allow-listed projection, since with a real provider it
+ *     leaves the system. Text a user wrote (a guest's question) appears only here, as data.
+ *   - The output is untrusted: `ModelService` validates it against the task's contract, and each feature then checks
+ *     it against its own input (an answer cites only projected facts, a due date falls before the wedding). Model
+ *     output never carries a tenant or record id the caller trusts, and is never persisted as-is: accepting it goes
+ *     through the existing services.
+ *   - The adapter reports what the call cost the provider (`cost_micro_cents`), as a messaging adapter reports its
+ *     per-message cost: a provider's price is a fact about the adapter, never the domain.
  *
  * The port is asynchronous because every real provider is: callers run it OUTSIDE a request's store transaction
  * (deferred work), never holding the database lock across a model call.
@@ -21,25 +26,43 @@ import type { ContractKey } from '@wedding-planner/shared'
  *
  * related: simulated_model_adapter.ts (the only adapter), model_service.ts (validation and metering).
  */
-export interface ModelRequest {
-  /** What the product asks for (`checklist_draft`, …): names the adapter's behaviour and the usage line. */
+
+/** One task the product asks a model for: defined once, in code. `T` is what its validated output is. */
+export interface ModelTaskDefinition<T> {
+  /** The task's name (`checklist_draft`, …): the simulated adapter's behaviour and the usage line. */
   readonly task: string
-  /** Fixed instructions, from code. */
+  /** Fixed instructions. */
+  readonly instructions: string
+  /** The contract the output must satisfy. */
+  readonly output_contract: ContractKey
+  /** Phantom marker tying the output type to the definition — never set at runtime. */
+  readonly __output?: T
+}
+
+/** Define a task (a module constant in the feature that asks for it). */
+export function defineModelTask<T>(definition: { readonly task: string; readonly instructions: string; readonly output_contract: ContractKey }): ModelTaskDefinition<T> {
+  return Object.freeze({ ...definition })
+}
+
+/** What an adapter is asked: a task's definition and this call's facts. */
+export interface ModelRequest {
+  readonly task: string
   readonly instructions: string
   /** The facts the model may use. User-written text appears only here, as data. */
   readonly input: Readonly<Record<string, unknown>>
-  /** The contract the output must satisfy. */
   readonly output_contract: ContractKey
 }
 
-/** How much a call used, in the provider's units (tokens). */
+/** How much a call used and cost, as the provider reports it. */
 export interface ModelUsage {
   readonly input_tokens: number
   readonly output_tokens: number
+  /** What the call cost the provider's customer (us), in millionths of a cent. */
+  readonly cost_micro_cents: number
 }
 
 export interface ModelResult {
-  /** The model's output — untrusted until validated against the request's contract. */
+  /** The model's output — untrusted until validated. */
   readonly output: unknown
   readonly usage: ModelUsage
   /** Which model answered (`simulated` for the simulated adapter). */

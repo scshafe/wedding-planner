@@ -46,6 +46,7 @@ import { ProductWebUi } from '../web/product_web_ui'
 import { ThemeResolver } from '../web/theme_resolver'
 import { WeddingRepository } from '../wedding/wedding_repository'
 import { ModelService } from '../model/model_service'
+import { ProductError } from '../product_error'
 import { SimulatedModelAdapter, type SimulatedTask } from '../model/simulated_model_adapter'
 import { SIMULATED_MODEL_TASKS } from '../model/simulated_tasks'
 
@@ -126,8 +127,8 @@ export interface ComposeProductSurfaceConfig {
    */
   readonly publicUrl?: string
   /**
-   * Issue #59: the simulated model's tasks. Absent ⇒ the product's own ({@link SIMULATED_MODEL_TASKS}); a test may add
-   * one. There is deliberately no option for a real model: wiring one is an owner decision (ADR 0057).
+   * Issue #59: tasks a test ADDS to the simulated model's own ({@link SIMULATED_MODEL_TASKS}); a name the product already
+   * uses is refused. There is deliberately no option for a real model: wiring one is an owner decision (ADR 0057).
    */
   readonly simulatedModelTasks?: Readonly<Record<string, SimulatedTask>>
 }
@@ -191,6 +192,13 @@ const DEMO_THEME: Tenant['theme'] = {
   logo_ref: 'demo_logo',
 }
 
+/** The simulated model's tasks: the product's own, plus a test's extra ones (never replacing a product task). */
+function simulatedTasks(extra: Readonly<Record<string, SimulatedTask>> | undefined): Readonly<Record<string, SimulatedTask>> {
+  const clash = Object.keys(extra ?? {}).find((name) => name in SIMULATED_MODEL_TASKS)
+  if (clash !== undefined) throw new ProductError('MODEL.DUPLICATE_TASK', `A test task may not replace the product's task '${clash}'.`, { context: { task: clash } })
+  return { ...SIMULATED_MODEL_TASKS, ...extra }
+}
+
 /** Build the fully-wired product surface from injected primitives. Performs no ambient reads. */
 export function composeProductSurface(config: ComposeProductSurfaceConfig): ComposedSurface {
   const { clock, ids, operatorToken } = config
@@ -204,7 +212,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   // The shared backbone: one tenant store the resolver, theme resolver, onboarding, and repo all read.
   const tenants = new TenantStore(clock, ids, store)
   // Issue #59: the model — the simulated adapter only (ADR 0057). Calls run outside request transactions.
-  const model = new ModelService(tenants, new SimulatedModelAdapter(config.simulatedModelTasks ?? SIMULATED_MODEL_TASKS), clock, (fn) => store.transaction(fn), store)
+  const model = new ModelService(tenants, new SimulatedModelAdapter(simulatedTasks(config.simulatedModelTasks)), clock, store)
   const resolver = new TenantContextResolver(tenants)
   // Sessions persist, so they expire (7 days) and lapsed ones are swept at boot (below). Issue #10: the simulated
   // role picker signs in (and its sessions resolve) ONLY on the demo tenant, and only in demo mode.

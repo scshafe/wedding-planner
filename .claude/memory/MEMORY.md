@@ -69,4 +69,4 @@
 - [Seating plan](seating-plan.md) — #46 / ADR 0054: one seat per guest, hard capacity, plan per event; guest-list hook fans out to seating
 - [Wedding website](wedding-website.md) — #47 / ADR 0055: public allow-listed page per wedding, unique site names (changes rate-limited), https links, public reads never rate-limited
 - [Guest list CSV](guest-list-csv.md) — #28 / ADR 0047: export neutralizes formulas; import plans every row, applies all-or-nothing, matches by household + name
-- [Model port](model-port.md) — #59 / ADR 0057: async task-shaped port, run outside transactions, validated + metered, simulated adapter ONLY (owner decision)
+- [Model port](model-port.md) — #59 / ADR 0057: tasks defined in code, async port run outside transactions, output validated + never trusted, usage metered per task (cost hidden from tenants), simulated adapter ONLY (owner decision)

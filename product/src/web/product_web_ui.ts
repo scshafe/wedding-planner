@@ -1893,18 +1893,18 @@ function readBilling(body: unknown): BillingSummary | undefined {
  * Read the activity line items from a billing (200) JSON body, or `[]` (tolerant — never throws). An absent or
  * malformed `activity` yields the empty list (the page renders "No activity yet."), never a 500 on the 200 path.
  */
+function readBillingActivity(body: unknown): readonly BillingActivityEntry[] {
+  if (typeof body !== 'object' || body === null) return []
+  const activity = (body as { activity?: unknown }).activity
+  return Array.isArray(activity) ? (activity as BillingActivityEntry[]) : []
+}
+
 /** Issue #59: the model usage from a billing (200) JSON body, when present and well-formed (tolerant — never throws). */
 function readModelUsage(body: unknown): ModelUsageView | undefined {
   if (typeof body !== 'object' || body === null) return undefined
   const usage = (body as { model_usage?: unknown }).model_usage
   if (typeof usage !== 'object' || usage === null) return undefined
   const u = usage as Record<string, unknown>
-  const counts = ['calls', 'input_tokens', 'output_tokens', 'simulated_cost_cents'].every((k) => typeof u[k] === 'number')
+  const counts = ['calls', 'input_tokens', 'output_tokens'].every((k) => typeof u[k] === 'number')
   return counts && typeof u.month === 'string' ? (usage as ModelUsageView) : undefined
-}
-
-function readBillingActivity(body: unknown): readonly BillingActivityEntry[] {
-  if (typeof body !== 'object' || body === null) return []
-  const activity = (body as { activity?: unknown }).activity
-  return Array.isArray(activity) ? (activity as BillingActivityEntry[]) : []
 }

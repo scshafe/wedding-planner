@@ -1167,7 +1167,7 @@ export function renderBilling(
       : html`<div class="card">
     <h2>AI assistant usage</h2>
     <p>${`${modelUsage.calls} call(s) in ${modelUsage.month}`} · ${`${modelUsage.input_tokens + modelUsage.output_tokens} tokens`}</p>
-    <p class="note">${`The assistant runs on a simulated model: nothing is charged. At a typical provider's price these calls would cost about ${dollars(modelUsage.simulated_cost_cents)}.`}</p>
+    <p class="note">The assistant runs on a simulated model: nothing is charged.</p>
   </div>`
   }
   <div class="card">
