@@ -3,7 +3,7 @@
 Interactive-session context. The loop's roles keep their continuity on GitHub (issues, PRs) and in
 `~/.wedding-planner-loop/journal.jsonl`; this file is for a human-driven session picking things up.
 
-## Where things stand (2026-10-19)
+## Where things stand (2026-10-20)
 
 - **M1 "Real foundations" is built** (owner request, interactive session, 2026-10-19): #8 durable storage (ADR 0039),
   #9 email outbox + operator console (0040), #10 real accounts (0041), #11 invitations (0042), #12 in-app feedback
@@ -24,10 +24,14 @@ Interactive-session context. The loop's roles keep their continuity on GitHub (i
   addendum). Each had a `security-reviewer` pass (and `architecture-reviewer` for #29 and #36) before landing; the
   reviews caught real DoS (CSV planner, meal dedupe, RSVP form loop, regex), disclosure (budget labels) and
   integrity bugs — all fixed. Each merge deployed and passed `/healthz`.
-- **Next:** M3 (#45 run of show — in progress, #46 seating, #47 wedding website, #48 documents), then M4 (simulated
-  model adapter only). Patterns to follow for a per-wedding store: [[events-and-rsvps]] (assertWeddingReach,
-  grouped keys, couple boundary), [[durable-storage-record-store]] (census; new state in new collections; expand
-  before use), and cap raw input before per-item work.
+- **M3 "Event day and guest experience" is built** (2026-10-20): #45 run of show (0053), #46 seating (0054), #47
+  wedding website (0055), #48 documents (0056, three security reviews: the edge's transfer budget), #54 one-row editing.
+- **M4 "AI planning assistant" is built** (2026-10-20), on the SIMULATED model only: #59 model port (0057, metered,
+  a tripwire test pins no outbound clients), #61 copilot + job queue (0058), #60 guest concierge (0059, its eval set
+  in `eval-harness/`), #62 weekly risk summary (0060). Each had a `security-reviewer` pass; must-fixes applied; each
+  merge deployed and passed `/healthz`. Patterns: [[model-port]], [[model-jobs-and-copilot]], [[weekly-risk-summary]].
+- **Next:** nothing agent-owned on the roadmap. M5 is owner crossings (skip unless the owner asks); a real model
+  adapter is an owner decision. Open owner asks: #14–#16.
 - **Dashboard:** the reporter publishes it to GitHub Pages once the owner turns Pages on (unchanged).
 - **Last product work before M1:** Phase 38, the guest-conversation transcript (ADR 0038).
 
