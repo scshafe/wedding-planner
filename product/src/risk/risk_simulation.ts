@@ -1,6 +1,6 @@
 import type { RiskSummaryOutput } from '@wedding-planner/shared'
 
-import type { RiskSignalKey, RiskSignals } from './risk_signals'
+import { RISK_URGENCY } from './risk_signals'
 
 /**
  * @canonical risk_simulation -- what the simulated model writes for the weekly risk summary (issue #62, ADR 0060): a
@@ -11,15 +11,14 @@ import type { RiskSignalKey, RiskSignals } from './risk_signals'
  * is present; `on_track` when none is. It mentions the signals most urgent first, at most four.
  */
 
-const URGENCY: readonly RiskSignalKey[] = ['payments_overdue', 'overdue_tasks', 'guests_unseated', 'rsvps_missing', 'payments_due_soon', 'tasks_due_soon', 'contracts_unsigned']
-
 export function simulateRiskSummary(raw: Readonly<Record<string, unknown>>): RiskSummaryOutput {
-  const input = raw as unknown as RiskSignals
+  // What the model is sent: the days to go and each signal's key and count — never the names behind them.
+  const input = raw as unknown as { readonly days_to_wedding: number; readonly signals: readonly { readonly key: string; readonly count: number }[] }
   const present = new Set(input.signals.map((s) => s.key))
   const days = input.days_to_wedding
   const late = present.has('overdue_tasks') || present.has('payments_overdue') || (present.has('rsvps_missing') && days <= 21) || (present.has('guests_unseated') && days <= 14)
   return {
     level: present.size === 0 ? 'on_track' : late ? 'at_risk' : 'watch',
-    mention: URGENCY.filter((k) => present.has(k)).slice(0, 4),
+    mention: RISK_URGENCY.filter((k) => present.has(k)).slice(0, 4),
   }
 }

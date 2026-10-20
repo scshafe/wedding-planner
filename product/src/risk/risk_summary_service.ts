@@ -18,7 +18,7 @@ import type { VendorService } from '../vendors/vendor_service'
 import type { WeddingEventService } from '../wedding_events/wedding_event_service'
 import { assertWeddingReach } from '../wedding/wedding_reach'
 import type { WeddingRepository } from '../wedding/wedding_repository'
-import { computeRiskSignals, isoWeek, renderRiskLine, type RiskSignals } from './risk_signals'
+import { computeRiskSignals, isoWeek, renderRiskLine, RISK_URGENCY, type RiskSignals } from './risk_signals'
 
 /**
  * @canonical risk_summary_service -- each wedding's weekly "what is at risk" summary (issue #62, ADR 0060), the planner's
@@ -52,16 +52,25 @@ export const RISK_OVERVIEW_LIMIT = 50
 /** The most lines one summary carries. */
 export const MAX_RISK_LINES = 4
 
+/** After a summary fails to be written, how long reads wait before asking again (a failing model is not hammered). */
+export const RISK_RETRY_COOLDOWN_MS = 60 * 60_000
+
 export interface RiskView {
   /** This week's summary, once written. */
   readonly summary?: RiskSummary
   /** True while this week's summary is being written. */
   readonly preparing: boolean
+  /** True when this week's summary could not be written lately (it is asked for again after a cooldown). */
+  readonly unavailable?: boolean
+  /** True for a wedding no longer planned (cancelled or completed): nothing is summarized. */
+  readonly untracked?: boolean
 }
 
 export interface RiskOverview {
   readonly week: string
   readonly weddings: readonly { readonly wedding_id: string; readonly couple_display_name: string; readonly event_date: string; readonly summary?: RiskSummary }[]
+  /** Upcoming weddings beyond the {@link RISK_OVERVIEW_LIMIT} soonest, not covered. */
+  readonly more: number
 }
 
 /** What a job produced, for its completion to store. */
@@ -84,7 +93,7 @@ export class RiskSummaryService {
     private readonly guests: Pick<GuestDirectory, 'guestsOf' | 'householdsOf'>,
     private readonly seating: Pick<SeatingService, 'planOf'>,
     private readonly model: Pick<ModelService, 'run'>,
-    private readonly jobs: Pick<JobQueue, 'enqueue'>,
+    private readonly jobs: Pick<JobQueue, 'enqueue' | 'jobFor'>,
     private readonly clock: Clock,
     store?: RecordStore,
   ) {
@@ -93,8 +102,10 @@ export class RiskSummaryService {
 
   /** A wedding's summary for this week (the planner); a stale one asks for this week's. */
   view(context: TenantContext, principal: Principal, wedding_id: string): RiskView {
-    assertWeddingReach(this.authorizer, this.weddings, context, principal, wedding_id)
+    const wedding = assertWeddingReach(this.authorizer, this.weddings, context, principal, wedding_id)
     this.#planner(principal)
+    // A wedding no longer planned is not summarized (and costs nothing).
+    if (wedding.status !== 'planning' && wedding.status !== 'active') return { preparing: false, untracked: true }
     return this.#current(context, wedding_id, principal.principal_id)
   }
 
@@ -102,13 +113,14 @@ export class RiskSummaryService {
   overview(context: TenantContext, principal: Principal): RiskOverview {
     this.#planner(principal)
     const today = this.#today()
-    const upcoming = this.weddings
+    const all = this.weddings
       .list(context)
       .filter((w) => (w.status === 'planning' || w.status === 'active') && w.event_date >= today)
       .sort((a, b) => (a.event_date < b.event_date ? -1 : a.event_date > b.event_date ? 1 : a.couple_display_name.localeCompare(b.couple_display_name)))
-      .slice(0, RISK_OVERVIEW_LIMIT)
+    const upcoming = all.slice(0, RISK_OVERVIEW_LIMIT)
     return {
       week: isoWeek(today),
+      more: all.length - upcoming.length,
       weddings: upcoming.map((w) => {
         const { summary } = this.#current(context, w.wedding_id, principal.principal_id)
         return { wedding_id: w.wedding_id, couple_display_name: w.couple_display_name, event_date: w.event_date, ...(summary === undefined ? {} : { summary }) }
@@ -116,8 +128,8 @@ export class RiskSummaryService {
     }
   }
 
-  /** The wedding's signals now, read fresh (no boundary check: the job's caller established reach when it asked). */
-  signalsFor(context: TenantContext, wedding_id: string): RiskSignals | undefined {
+  /** The wedding's signals now, read fresh (no boundary check: only the job calls it, for a wedding a planner reached). */
+  #signalsFor(context: TenantContext, wedding_id: string): RiskSignals | undefined {
     const wedding = this.weddings.get(context, wedding_id)
     if (wedding === undefined) return undefined
     const guests = this.guests.guestsOf(context, wedding_id)
@@ -137,8 +149,14 @@ export class RiskSummaryService {
       vendors: this.vendors.vendorsOf(context, wedding_id),
       rsvps_closed: this.events.rsvpsClosed(context, wedding_id),
       unanswered_households: [...waiting].map((id) => households.get(id) ?? 'A household'),
-      unseated_guests: this.seating.planOf(context, wedding_id).unseated.map((g) => g.name),
+      unseated_guests: this.#unseated(context, wedding_id),
     })
+  }
+
+  /** Attending guests without a seat — only for a wedding that uses a seating plan (it has an event and a table). */
+  #unseated(context: TenantContext, wedding_id: string): string[] {
+    const plan = this.seating.planOf(context, wedding_id)
+    return plan.event === undefined || plan.tables.length === 0 ? [] : plan.unseated.map((g) => g.name)
   }
 
   /** The job kind the queue runs for a summary. */
@@ -161,15 +179,24 @@ export class RiskSummaryService {
 
   /** Read the signals, ask the model, and keep only what the signals hold. */
   async #write(context: TenantContext, job: Job): Promise<WrittenSummary | undefined> {
-    const signals = this.signalsFor(context, job.subject_id)
+    const signals = this.#signalsFor(context, job.subject_id)
     if (signals === undefined) return undefined
-    const output = await this.model.run(context, RISK_SUMMARY, signals as unknown as Readonly<Record<string, unknown>>)
+    // Nothing slipping: nothing to judge, and no model call.
+    if (signals.signals.length === 0) return { week: signals.week, level: 'on_track', lines: [] }
+    // The model is sent the days to go and each signal's key and count — never the names behind them (data
+    // minimization; a household or guest name a couple typed never reaches a model prompt).
+    const output = await this.model.run(context, RISK_SUMMARY, { days_to_wedding: signals.days_to_wedding, signals: signals.signals.map(({ key, count }) => ({ key, count })) })
     return checkRiskSummary(signals, output)
   }
 
   #current(context: TenantContext, wedding_id: string, requested_by: string): RiskView {
     const stored = this.#summaries.read(context, wedding_id)
     if (stored !== undefined && stored.wedding_id === wedding_id && stored.week === isoWeek(this.#today())) return { summary: stored, preparing: false }
+    // A summary that just failed is not asked for again on every read: a failing model is not hammered by refreshes.
+    const job = this.jobs.jobFor(context, RISK_JOB, wedding_id)
+    if (job?.status === 'failed' && job.updated_at !== undefined && Date.parse(this.clock.now()) - Date.parse(job.updated_at) < RISK_RETRY_COOLDOWN_MS) {
+      return { preparing: false, unavailable: true }
+    }
     this.jobs.enqueue(context, RISK_JOB, wedding_id, requested_by)
     return { preparing: true }
   }
@@ -189,8 +216,10 @@ export class RiskSummaryService {
  */
 export function checkRiskSummary(signals: RiskSignals, output: RiskSummaryOutput): WrittenSummary {
   const byKey = new Map(signals.signals.map((s) => [s.key, s]))
-  const mentioned = [...new Set(output.mention)].filter((k) => byKey.has(k)).slice(0, MAX_RISK_LINES)
+  // In the product's own order of urgency, whatever order the model gave.
+  const chosen = new Set(output.mention)
+  const mentioned = RISK_URGENCY.filter((k) => chosen.has(k) && byKey.has(k)).slice(0, MAX_RISK_LINES)
   const level: RiskSummary['level'] = signals.signals.length === 0 ? 'on_track' : output.level === 'on_track' ? 'watch' : output.level
-  const shown = mentioned.length > 0 ? mentioned : signals.signals.slice(0, MAX_RISK_LINES).map((s) => s.key)
+  const shown = mentioned.length > 0 ? mentioned : RISK_URGENCY.filter((k) => byKey.has(k)).slice(0, MAX_RISK_LINES)
   return { week: signals.week, level, lines: shown.map((k) => renderRiskLine(byKey.get(k) as NonNullable<ReturnType<typeof byKey.get>>, signals.days_to_wedding)) }
 }

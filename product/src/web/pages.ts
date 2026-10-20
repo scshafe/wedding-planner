@@ -508,16 +508,19 @@ function riskOverviewCard(slug: string, risk: RiskOverview): SafeHtml {
       : html`<ul>${flagged.map(
           (w) => html`<li><a href="/t/${slug}?wedding=${w.wedding_id}">${w.couple_display_name}</a> <span class="note">${`${RISK_LEVELS[w.summary?.level ?? 'watch']} · ${w.summary?.lines[0] ?? ''}`}</span></li>`,
         )}</ul>`
-  }<p class="note">${`${onTrack} on track${preparing > 0 ? ` · ${preparing} being summarized (refresh in a moment)` : ''}.`}</p></div>`
+  }<p class="note">${`${onTrack} on track${preparing > 0 ? ` · ${preparing} not summarized yet (refresh in a moment)` : ''}${risk.more > 0 ? ` · ${risk.more} later weddings not shown` : ''}. Each summary is as of when it was made this week.`}</p></div>`
 }
 
 /** Issue #62: a wedding's summary for this week (the planner's only). */
 function riskCard(risk: RiskView): SafeHtml {
+  if (risk.untracked === true) return html``
+  if (risk.unavailable === true) return html`<div class="card"><h3>This week</h3><p class="note">This week's summary could not be prepared. It will be tried again later.</p></div>`
   if (risk.summary === undefined) return html`<div class="card"><h3>This week</h3><p class="note">This week's summary is being prepared. Refresh in a moment.</p></div>`
   const s = risk.summary
+  const asOf = s.generated_at.slice(0, 10)
   return html`<div class="card"><h3>${`This week: ${RISK_LEVELS[s.level]}`}</h3>${
-    s.lines.length === 0 ? html`<p class="note">Nothing is slipping.</p>` : html`<ul>${s.lines.map((l) => html`<li>${l}</li>`)}</ul>`
-  }<p class="note">${`Week ${s.week}. From the checklist, payments, RSVPs, seating and contracts.`}</p></div>`
+    s.lines.length === 0 ? html`<p class="note">${`Nothing was slipping on ${asOf}.`}</p>` : html`<ul>${s.lines.map((l) => html`<li>${l}</li>`)}</ul>`
+  }<p class="note">${`As of ${asOf} (week ${s.week}), from the checklist, payments, RSVPs, seating and contracts.`}</p></div>`
 }
 
 export interface AccountOverview {

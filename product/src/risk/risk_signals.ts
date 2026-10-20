@@ -22,6 +22,9 @@ import type { WeddingTask, WeddingVendor } from '@wedding-planner/shared'
 export const RISK_SIGNAL_KEYS = ['overdue_tasks', 'tasks_due_soon', 'payments_overdue', 'payments_due_soon', 'rsvps_missing', 'guests_unseated', 'contracts_unsigned'] as const
 export type RiskSignalKey = (typeof RISK_SIGNAL_KEYS)[number]
 
+/** The product's own order of urgency: summaries list signals in this order, whatever order a model gives. */
+export const RISK_URGENCY: readonly RiskSignalKey[] = ['payments_overdue', 'overdue_tasks', 'guests_unseated', 'rsvps_missing', 'payments_due_soon', 'tasks_due_soon', 'contracts_unsigned']
+
 export interface RiskSignal {
   readonly key: RiskSignalKey
   readonly count: number
@@ -45,7 +48,7 @@ export interface RiskInputs {
   readonly rsvps_closed: boolean
   /** Households with an invited guest who has not answered, by name. */
   readonly unanswered_households: readonly string[]
-  /** Attending guests without a seat, by name. */
+  /** Attending guests without a seat, by name (empty when the wedding does not use a seating plan). */
   readonly unseated_guests: readonly string[]
 }
 
@@ -87,7 +90,7 @@ export function renderRiskLine(signal: RiskSignal, days_to_wedding: number): str
     case 'overdue_tasks':
       return `${n} ${plural('task is', 'tasks are')} overdue${list}.`
     case 'tasks_due_soon':
-      return `${n} ${plural('task is', 'tasks are')} due this week${list}.`
+      return `${n} ${plural('task is', 'tasks are')} due in the next 7 days${list}.`
     case 'payments_overdue':
       return `${n} ${plural('payment is', 'payments are')} overdue${list}.`
     case 'payments_due_soon':

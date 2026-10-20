@@ -4,7 +4,22 @@ import { describe, expect, it } from 'vitest'
 import {
   type ApiRequest,
   type ApiResponse,
+  ChecklistService,
   checkRiskSummary,
+  GuestDirectory,
+  InMemoryRecordStore,
+  JobQueue,
+  ModelService,
+  RISK_RETRY_COOLDOWN_MS,
+  RiskSummaryService,
+  SeatingService,
+  SessionStore,
+  TenantContextResolver,
+  TenantStore,
+  VendorService,
+  WeddingAuthorizer,
+  WeddingEventService,
+  WeddingRepository,
   composeProductSurface,
   computeRiskSignals,
   type HttpResult,
@@ -90,12 +105,18 @@ describe('the summary judgement and the second check', () => {
     expect(checkRiskSummary(signals, { level: 'at_risk', mention: ['payments_overdue', 'tasks_due_soon', 'tasks_due_soon'] })).toEqual({
       week: '2028-W20',
       level: 'at_risk',
-      lines: ['1 task is due this week: Soon.'],
+      lines: ['1 task is due in the next 7 days: Soon.'],
     })
     // On track with a signal is not honest: watch. A mention of nothing real still lists the signals.
-    expect(checkRiskSummary(signals, { level: 'on_track', mention: ['guests_unseated'] })).toMatchObject({ level: 'watch', lines: ['1 task is due this week: Soon.'] })
+    expect(checkRiskSummary(signals, { level: 'on_track', mention: ['guests_unseated'] })).toMatchObject({ level: 'watch', lines: ['1 task is due in the next 7 days: Soon.'] })
     const none = computeRiskSignals(inputs())
     expect(checkRiskSummary(none, { level: 'at_risk', mention: ['overdue_tasks'] })).toEqual({ week: '2028-W20', level: 'on_track', lines: [] })
+  })
+
+  it("lists lines in the product's own urgency order, whatever order the model gives", () => {
+    const signals = computeRiskSignals(inputs({ tasks: [task('Soon', '2028-05-22')], vendors: [vendor('V', 'none', [{ label: 'Late', due_date: '2028-05-01' }])] }))
+    const written = checkRiskSummary(signals, { level: 'at_risk', mention: ['contracts_unsigned', 'tasks_due_soon', 'payments_overdue'] })
+    expect(written.lines.map((l) => l.split(' ').slice(1, 3).join(' '))).toEqual(['payment is', 'task is', 'vendor contract'])
   })
 })
 
@@ -152,5 +173,98 @@ describe('the weekly summary through the surface', () => {
     const couple = w.login({ role: 'couple', wedding_id: w.wedding })
     expect(w.page(`/t/demo?wedding=${w.wedding}`, couple).body).not.toContain('This week')
     expect(w.page('/t/demo', couple).body).not.toContain('This week across')
+  })
+
+  it('a cancelled wedding is not summarized: no card, no job', async () => {
+    const w = setup()
+    const wedding = (w.api('GET', `/t/demo/weddings/${w.wedding}`, w.planner).body as { wedding: Record<string, unknown> }).wedding
+    expect(w.api('PUT', `/t/demo/weddings/${w.wedding}`, w.planner, { couple_display_name: wedding.couple_display_name, event_date: wedding.event_date, status: 'cancelled' }).status).toBe(200)
+    expect(w.api('GET', `/t/demo/weddings/${w.wedding}/risk-summary`, w.planner).body).toEqual({ preparing: false, untracked: true })
+    expect(w.page(`/t/demo?wedding=${w.wedding}`, w.login({ role: 'planner' })).body).not.toContain('This week')
+    expect(await w.drainJobs()).toBe(0)
+  })
+
+  it('guests without a seat count only for a wedding that uses a seating plan (an event and a table)', async () => {
+    const w = setup() // 2028-05-20: 21 days before the wedding, inside the seating window
+    const household = (w.api('POST', `/t/demo/weddings/${w.wedding}/households`, w.planner, { name: 'Rivera' }).body as { household: { household_id: string } }).household.household_id
+    const guest = (w.api('POST', `/t/demo/weddings/${w.wedding}/guests`, w.planner, { household_id: household, first_name: 'Ana', last_name: 'Rivera', side: 'both' }).body as { guest: { guest_id: string } }).guest.guest_id
+    const read = async (): Promise<string> => {
+      w.api('GET', `/t/demo/weddings/${w.wedding}/risk-summary`, w.planner)
+      await w.drainJobs()
+      return (w.api('GET', `/t/demo/weddings/${w.wedding}/risk-summary`, w.planner).body as { summary: RiskSummary }).summary.lines.join(' ')
+    }
+    // No event and no table: the wedding does not use a seating plan, so nobody is "without a seat".
+    expect(await read()).not.toContain('no seat')
+    const event = (w.api('POST', `/t/demo/weddings/${w.wedding}/events`, w.planner, { name: 'Reception', starts_at: '2028-06-10T18:00' }).body as { event: { event_id: string } }).event.event_id
+    expect(w.api('PUT', `/t/demo/weddings/${w.wedding}/events/${event}/rsvps/${guest}`, w.planner, { status: 'attending' }).status).toBe(200)
+    expect(w.api('POST', `/t/demo/weddings/${w.wedding}/seating/tables`, w.planner, { name: 'Table 1', capacity: 8 }).status).toBe(201)
+    // Monday: a new week's summary, now with a seating plan.
+    w.clock.advance(2 * 86_400_000)
+    expect(await read()).toContain('1 attending guest has no seat, 19 days before the wedding: Ana Rivera.')
+  })
+})
+
+describe('the summary job (service level)', () => {
+  it('a failing model is asked once, not on every read; the card says so; it is asked again after the cooldown', async () => {
+    const clock = new ManualClock('2028-05-20T12:00:00.000Z')
+    const store = new InMemoryRecordStore()
+    const tenants = new TenantStore(clock, new SequentialIdGenerator('t'), store)
+    tenants.create({ slug: 'alpha', display_name: 'Alpha', theme: { brand_name: 'B', primary_color_hex: '#111111', accent_color_hex: '#222222', logo_ref: 'l' }, plan_tier: 'studio', lifecycle_status: 'active' })
+    const resolver = new TenantContextResolver(tenants)
+    const ctx = resolver.resolveBySlug('alpha')
+    const ids = new SequentialIdGenerator('x')
+    const weddings = new WeddingRepository(tenants, clock, ids, store)
+    const wedding = weddings.create(ctx, { couple_display_name: 'Jo & Lee', event_date: '2028-06-10' }).wedding_id
+    const planner = new SessionStore(new SequentialIdGenerator('s')).login(ctx, { role: 'planner' }).principal
+    const authorizer = new WeddingAuthorizer()
+    const directory = new GuestDirectory(tenants, store)
+    const events = new WeddingEventService(tenants, weddings, authorizer, directory, clock, ids, store)
+    const vendors = new VendorService(tenants, weddings, authorizer, clock, ids, store)
+    const checklist = new ChecklistService(tenants, weddings, authorizer, clock, ids, store)
+    checklist.addTask(ctx, planner, wedding, { title: 'Book band', due_date: '2028-05-01', assignee: 'planner' })
+    const seen: unknown[] = []
+    const model = new ModelService(tenants, { complete: (request) => (seen.push(request.input), Promise.resolve({ output: { nonsense: true }, usage: { input_tokens: 1, output_tokens: 1, cost_micro_cents: 1 }, model: 'm' })) }, clock, store)
+    const jobs = new JobQueue(tenants, resolver, clock, ids, store)
+    const risk = new RiskSummaryService(tenants, weddings, authorizer, checklist, vendors, events, directory, new SeatingService(tenants, weddings, authorizer, directory, events, clock, ids, store), model, jobs, clock, store)
+    jobs.register(risk.jobKind())
+    risk.view(ctx, planner, wedding)
+    await jobs.drain()
+    for (let i = 0; i < 5; i++) {
+      expect(risk.view(ctx, planner, wedding)).toEqual({ preparing: false, unavailable: true })
+      await jobs.drain()
+    }
+    expect(seen).toHaveLength(1)
+    // The model saw keys and counts only: never a name.
+    expect(JSON.stringify(seen[0])).not.toContain('Book band')
+    expect(seen[0]).toEqual({ days_to_wedding: 21, signals: [{ key: 'overdue_tasks', count: 1 }] })
+    clock.advance(RISK_RETRY_COOLDOWN_MS)
+    expect(risk.view(ctx, planner, wedding)).toEqual({ preparing: true })
+    await jobs.drain()
+    expect(seen).toHaveLength(2)
+  })
+
+  it('nothing slipping: on track, without a model call', async () => {
+    const clock = new ManualClock('2028-01-10T12:00:00.000Z')
+    const store = new InMemoryRecordStore()
+    const tenants = new TenantStore(clock, new SequentialIdGenerator('t'), store)
+    tenants.create({ slug: 'alpha', display_name: 'Alpha', theme: { brand_name: 'B', primary_color_hex: '#111111', accent_color_hex: '#222222', logo_ref: 'l' }, plan_tier: 'studio', lifecycle_status: 'active' })
+    const resolver = new TenantContextResolver(tenants)
+    const ctx = resolver.resolveBySlug('alpha')
+    const ids = new SequentialIdGenerator('x')
+    const weddings = new WeddingRepository(tenants, clock, ids, store)
+    const wedding = weddings.create(ctx, { couple_display_name: 'Jo & Lee', event_date: '2028-06-10' }).wedding_id
+    const planner = new SessionStore(new SequentialIdGenerator('s')).login(ctx, { role: 'planner' }).principal
+    const authorizer = new WeddingAuthorizer()
+    const directory = new GuestDirectory(tenants, store)
+    const events = new WeddingEventService(tenants, weddings, authorizer, directory, clock, ids, store)
+    let calls = 0
+    const model = new ModelService(tenants, { complete: () => ((calls += 1), Promise.reject(new Error('not expected'))) }, clock, store)
+    const jobs = new JobQueue(tenants, resolver, clock, ids, store)
+    const risk = new RiskSummaryService(tenants, weddings, authorizer, new ChecklistService(tenants, weddings, authorizer, clock, ids, store), new VendorService(tenants, weddings, authorizer, clock, ids, store), events, directory, new SeatingService(tenants, weddings, authorizer, directory, events, clock, ids, store), model, jobs, clock, store)
+    jobs.register(risk.jobKind())
+    risk.view(ctx, planner, wedding)
+    await jobs.drain()
+    expect(calls).toBe(0)
+    expect(risk.view(ctx, planner, wedding).summary).toMatchObject({ level: 'on_track', lines: [] })
   })
 })

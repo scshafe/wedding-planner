@@ -367,9 +367,9 @@ export { type DeadlineTimer, JOB_LIMITS, type JobKind, JobQueue } from './jobs/j
 export { checkDraft, COPILOT_DRAFT, COPILOT_JOB, COPILOT_LIMITS, type CopilotAcceptance, type CopilotAcceptResult, CopilotService, type CopilotView } from './copilot/copilot_service'
 export { type CopilotDraftInput, simulateCopilotDraft } from './copilot/copilot_simulation'
 // Each wedding's weekly "what is at risk" summary (issue #62, ADR 0060).
-export { computeRiskSignals, isoWeek, renderRiskLine, RISK_SIGNAL_KEYS, type RiskInputs, type RiskSignal, type RiskSignalKey, type RiskSignals } from './risk/risk_signals'
+export { computeRiskSignals, isoWeek, renderRiskLine, RISK_SIGNAL_KEYS, RISK_URGENCY, type RiskInputs, type RiskSignal, type RiskSignalKey, type RiskSignals } from './risk/risk_signals'
 export { simulateRiskSummary } from './risk/risk_simulation'
-export { checkRiskSummary, MAX_RISK_LINES, RISK_JOB, RISK_OVERVIEW_LIMIT, RISK_SUMMARY, type RiskOverview, RiskSummaryService, type RiskView } from './risk/risk_summary_service'
+export { checkRiskSummary, MAX_RISK_LINES, RISK_JOB, RISK_OVERVIEW_LIMIT, RISK_RETRY_COOLDOWN_MS, RISK_SUMMARY, type RiskOverview, RiskSummaryService, type RiskView } from './risk/risk_summary_service'
 // A wedding's public website and the workspace's site names (issue #47, ADR 0055).
 export { type HotelInput, type PublicSiteView, SITE_LIMITS, SITE_NAME, type SiteEditView, type SiteInput, SiteService } from './site/site_service'
 // A wedding's seating plan: tables, seats, capacity (issue #46, ADR 0054).
