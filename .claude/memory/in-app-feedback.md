@@ -1,6 +1,6 @@
 ---
 name: in-app-feedback
-description: Issue #12 / ADR 0043 — "Send feedback" footer on signed-in pages, CSRF/length/rate-limited form, stores only typed text + tenant + role + page (no identity), operator-only /admin/feedback; exporting feedback to the agents is an OWNER decision
+description: Issue #12 / ADR 0043 + 0045 — "Send feedback" footer on signed-in pages, CSRF/length/rate-limited form, stores only typed text + tenant + role + page key, operator-only /admin/feedback; owner decided feedback STAYS IN THE APP (never exported to GitHub or agents)
 metadata:
   type: project
 ---
@@ -11,7 +11,9 @@ workspace. `page` is a KEY from the closed `FEEDBACK_PAGES` list — never a pag
 couple's names). Signed-in pages use `signedInShell(…, pageKey)` (footer link `/t/<slug>/feedback?page=<key>`). Rate limits 10/person/hour,
 100/tenant/hour on the shared in-process limiter. The operator reads it at `/admin/feedback` (console page or JSON).
 
-**How feedback reaches the agents is an owner decision** (public repo; agents cannot reach production) — do not build
-an export, issue creation or digest without the owner saying how.
+**Owner decision (ADR 0045, 2026-10-19): feedback STAYS IN THE APP.** The operator reads it in `/admin/feedback` and
+files issues by hand. Nothing users write ever goes to GitHub or to an agent automatically: never build an export,
+API, digest or issue creation for it without a new owner decision. The loop's feedback role (which reads untrusted
+GitHub issue text) stays off; enabling it is the owner's host action, and `ops/` is human-reserved.
 
 Related: [[operator-console-and-email-outbox]], [[real-planner-accounts]].

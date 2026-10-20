@@ -13,8 +13,11 @@ Interactive-session context. The loop's roles keep their continuity on GitHub (i
 - **Production** stays in demo mode (the demo tenant keeps its labeled role picker; every other workspace has real
   sign-in only) and now keeps its data in `state/app/wedding-planner.sqlite` (backed up). The operator console is at
   `/admin` (sign in with `WP_OPERATOR_TOKEN`): Tenants (set up owners), Outbox (simulated email), Feedback, Errors.
-- **Owner decisions still open:** how feedback reaches the agents (#12 out of scope), a real email provider (M5),
-  `WP_PUBLIC_URL` for absolute links in emails, #14–#16 (loop timers, old Mac loop, `main` protection).
+- **Owner decisions:** feedback STAYS IN THE APP (ADR 0045: operator console only, issues filed by hand, the loop's
+  feedback role stays off); `WP_PUBLIC_URL` is an owner value in the host's `.env` (#25). Still open: a real email
+  provider (M5), #14–#16 (loop timers, old Mac loop, `main` protection).
+- **Owner direction (2026-10-19):** build M2, then M3, then M4 with the model port's SIMULATED adapter only (a real
+  model costs money: owner decision); skip M5 (owner crossings). Issues first, per ROADMAP "How the loop uses this file".
 - **Next:** M2 "Planning core" in `ROADMAP.md` (guest list, RSVPs, checklist, vendors, budget). Durable-storage rules
   for new records: [[durable-storage-record-store]] (add every collection to the census; ship new fields
   expand-then-contract; never regenerate a drift fixture).

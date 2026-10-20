@@ -1,6 +1,6 @@
 # ADR 0043 — In-app feedback
 
-- **Status:** accepted
+- **Status:** accepted (the open routing question is settled by ADR 0045)
 - **Date:** 2026-10-19
 - **Decider:** the building agent (an agent-owned engineering decision per [[agents-own-buildout-decisions]]),
   for issue #12 (M1 "Real foundations")
@@ -49,8 +49,9 @@ consumer.
 
 ## Consequences
 
-- The owner can read feedback on the deployed node today. Routing it to the agents (an export, a digest, a
-  sanitized issue) is still an owner decision. Nothing here sends it anywhere.
+- The owner can read feedback on the deployed node today. The routing question is settled by ADR 0045: feedback
+  stays in the app, the operator files issues by hand, and nothing users write goes to GitHub or an agent
+  automatically.
 - Feedback text can contain anything a user types, including personal data they choose to write. It stays in
   production, in the backed-up database, behind the operator credential.
 - Not done: replying to the submitter (there is no identity to reply to, by design), attachments, screenshots.
