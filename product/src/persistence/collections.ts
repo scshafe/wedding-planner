@@ -4,8 +4,10 @@ import type {
   EscalationResolution,
   Guest,
   GuestEscalation,
+  Household,
   Tenant,
   Wedding,
+  WeddingGuest,
 } from '@wedding-planner/shared'
 
 import type { AccountEmailIndex, UserAccount } from '../accounts/account_store'
@@ -79,4 +81,8 @@ export const COLLECTIONS = Object.freeze({
   feedback: collection<FeedbackSubmission>('feedback', 'global'),
   /** Key error_id: the server errors the operator lists at /admin/errors (issue #13). */
   serverError: collection<ServerError>('server_error', 'global'),
+  /** Key household_id: a wedding's households (issue #27). */
+  household: collection<Household>('household', 'tenant', 'household'),
+  /** Key guest_id: the people on a wedding's guest list (issue #27). Not the messaging `guest_binding`. */
+  weddingGuest: collection<WeddingGuest>('wedding_guest', 'tenant', 'wedding_guest'),
 })

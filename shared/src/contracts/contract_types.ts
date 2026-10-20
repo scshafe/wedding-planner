@@ -63,3 +63,7 @@ export type { EscalationResolution } from './generated/escalation_resolution'
 // (tenant_id, `${escalation_id}:${seq}`); a console reply appends one + sends a metered message WITHOUT
 // auto-resolving. The thread is the question->answer transcript (replaced Phase-29 resolution.reply_text). ADR 0034.
 export type { EscalationReply } from './generated/escalation_reply'
+// A wedding's guest list (issue #27): households (the party an RSVP link goes to) and the people in them. Distinct
+// from `Guest` (the messaging binding). Contact details are personal data. See guest_list_service.ts and ADR 0046.
+export type { Household } from './generated/household'
+export type { WeddingGuest } from './generated/wedding_guest'

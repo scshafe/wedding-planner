@@ -59,3 +59,4 @@
 - [Invitations and members](invitations-and-members.md) — issue #11 / ADR 0042: single-use invitation links via the outbox, accept creates exactly the invited account, owner is an account role (manages), couples inherit the intra-tenant boundary
 - [In-app feedback](in-app-feedback.md) — issue #12 / ADRs 0043+0045: footer link on signed-in pages, stores only typed text + tenant/role/page key, operator-only /admin/feedback; owner decided it STAYS IN THE APP (no export to GitHub/agents; feedback role stays off)
 - [Operability: logs, errors, build](operability-logs-errors-build.md) — issue #13 / ADR 0044: route-pattern-only request logs, 500s by code+frames never message, /healthz commit from WP_BUILD_COMMIT or the WP_IMAGE_REF tag
+- [Guest list](guest-list.md) — issue #27 / ADR 0046: household + wedding_guest contracts (not the messaging guest), wedding boundary with NOT_FOUND masking, plus-one model, bounds

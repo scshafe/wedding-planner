@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/wedding_guest.json",
+  "title": "WeddingGuest",
+  "description": "A person on a wedding's guest list (issue #27), in exactly one household of that wedding. Distinct from the `guest` contract (the messaging binding of an opaque sender ref). Owned by one tenant and one wedding; always reached through a tenant-scoped repository keyed (tenant_id, guest_id) and filtered by wedding_id. Contact details are personal data: never logged, shown only to the wedding's planner and couple.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["guest_id", "tenant_id", "wedding_id", "household_id", "first_name", "last_name", "side", "tags", "plus_one_allowed", "created_at"],
+  "properties": {
+    "guest_id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Identity within the owning tenant's partition, from the injected id generator." },
+    "tenant_id": { "type": "string", "minLength": 1, "description": "The owning tenant. Compared to the context's tenant only; never selects the partition." },
+    "wedding_id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "The wedding (equal to the household's)." },
+    "household_id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "The household of the same wedding the guest belongs to." },
+    "first_name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "last_name": { "type": "string", "maxLength": 80, "description": "May be empty (a plus-one whose name is not known yet is 'Guest of …' by first name)." },
+    "side": { "type": "string", "enum": ["partner_one", "partner_two", "both"], "description": "Whose guest: the first partner's, the second's, or both." },
+    "tags": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 32 }, "description": "Free labels the planner and couple use (e.g. 'family', 'college'). At most 20 (enforced by the guest-list service: a maxItems here would generate a tuple type)." },
+    "plus_one_allowed": { "type": "boolean", "description": "Whether this guest may bring a plus-one. Always false for a plus-one." },
+    "plus_one_of": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Present iff this guest IS a plus-one: the guest_id of the guest who brings them (same wedding and household)." },
+    "dietary": { "type": "string", "minLength": 1, "maxLength": 300, "description": "Optional dietary needs (free text)." },
+    "email": { "type": "string", "minLength": 3, "maxLength": 254, "description": "Optional contact email. Personal data." },
+    "phone": { "type": "string", "minLength": 3, "maxLength": 40, "description": "Optional contact phone. Personal data." },
+    "created_at": { "type": "string", "minLength": 1, "description": "ISO 8601 UTC creation time, from the injected clock." },
+    "updated_at": { "type": "string", "minLength": 1, "description": "ISO 8601 UTC time of the last edit, when edited." }
+  }
+}
