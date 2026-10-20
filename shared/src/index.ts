@@ -109,4 +109,5 @@ export type {
   ChecklistDateMove,
   WeddingVendor,
   BudgetCategory,
+  RunOfShowItem,
 } from './contracts/contract_types'

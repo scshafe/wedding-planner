@@ -5,6 +5,7 @@ import type { GuestEventRsvp, HouseholdAnswer, HouseholdRsvpView, WeddingEventsV
 import type { ChecklistView, DueAcrossWeddings } from '../checklist/checklist_service'
 import { centsFromText, VENDOR_LIMITS, type VendorsView } from '../vendors/vendor_service'
 import type { BudgetView } from '../budget/budget_service'
+import type { RunOfShowView } from '../run_of_show/run_of_show_service'
 import { toGuestCsv } from '../guests/guest_csv'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
@@ -44,6 +45,8 @@ import {
   renderChecklist,
   renderVendors,
   renderBudget,
+  renderRunOfShow,
+  type RunOfShowNotice,
   type BudgetNotice,
   type VendorsNotice,
   BLANK_INSTALLMENT_ROWS,
@@ -255,6 +258,11 @@ export class ProductWebUi {
       if (segments.length === 4 && segments[2] === 'rsvp' && this.#accounts !== undefined) {
         return slug === undefined ? GENERIC_404 : this.#householdRsvp(req, slug, segments[3] ?? '')
       }
+      // /t/:slug/run-of-show/<action> (issue #45) — the run-of-show FORM posts (CSRF-protected).
+      if (segments.length === 4 && segments[2] === 'run-of-show' && req.method === 'POST') {
+        if (slug === undefined) return GENERIC_404
+        return this.#runOfShowAction(req, slug, segments[3] ?? '')
+      }
       // /t/:slug/budget/<action> (issue #34) — the budget FORM posts (CSRF-protected).
       if (segments.length === 4 && segments[2] === 'budget' && req.method === 'POST') {
         if (slug === undefined) return GENERIC_404
@@ -350,6 +358,8 @@ export class ProductWebUi {
     const weddingId = queryParam(req.path, 'wedding')
     // ?wedding=ID&tab=guests (issue #27): the wedding's guest list (or one guest's edit page with &guest=ID).
     if (weddingId !== undefined && queryParam(req.path, 'tab') === 'guests') return this.#guestListPage(req, slug, weddingId)
+    // ?wedding=ID&tab=run-of-show[&print=1] (issue #45): the wedding's run of show.
+    if (weddingId !== undefined && queryParam(req.path, 'tab') === 'run-of-show') return this.#runOfShowPage(req, slug, weddingId)
     // ?wedding=ID&tab=budget (issue #34): the wedding's budget.
     if (weddingId !== undefined && queryParam(req.path, 'tab') === 'budget') return this.#budgetPage(req, slug, weddingId)
     // ?wedding=ID&tab=vendors (issue #33): the wedding's vendors and what is due next.
@@ -875,6 +885,58 @@ export class ProductWebUi {
     const notice =
       res.status === 200 || res.status === 201 ? (action === 'event-remove' ? 'removed' : 'saved') : res.status === 409 ? 'conflict' : 'invalid'
     return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=events&notice=${notice}`)
+  }
+
+  /** GET /t/:slug?wedding=ID&tab=run-of-show (issue #45) — the wedding, then its run of show; any non-200 is masked. */
+  #runOfShowPage(req: ApiRequest, slug: string, weddingId: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const id = encodeURIComponent(weddingId)
+    const weddingRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}`, token))
+    if (weddingRes.status !== 200) return this.#renderNonData(slug, weddingRes.status)
+    const showRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}/run-of-show`, token))
+    if (showRes.status !== 200) return this.#renderNonData(slug, showRes.status)
+    const theme = this.#themes.resolveActiveTheme(slug)
+    const csrf = this.#csrf.issueCsrf(token)
+    const wedding = readWedding(weddingRes.body)
+    if (theme === undefined || wedding === undefined) return GENERIC_404
+    if (csrf === undefined) return ERROR_500
+    const raw = queryParam(req.path, 'notice')
+    const notice = (['saved', 'removed', 'invalid', 'forbidden', 'conflict'] as const).find((n) => n === raw)
+    return htmlResult(
+      200,
+      renderRunOfShow(theme, slug, wedding, showRes.body as RunOfShowView, csrf, queryParam(req.path, 'print') === '1', notice, queryParam(req.path, 'item')),
+    )
+  }
+
+  /** POST /t/:slug/run-of-show/<action> (issue #45) — CSRF first, then the JSON route of the form's wedding; a notice back. */
+  #runOfShowAction(req: ApiRequest, slug: string, action: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    const value = (name: string): string => (form.get(name) ?? '').trim()
+    const weddingId = value('wedding_id')
+    const base = `/t/${slug}/weddings/${encodeURIComponent(weddingId)}/run-of-show`
+    const item = encodeURIComponent(value('item_id'))
+    const call = (method: string, path: string, body?: unknown) => this.#api.handle(bearerJson(method, path, token, body ?? {}))
+    const itemBody = () => {
+      const choice = value('owner_choice')
+      const owner = choice.startsWith('vendor:') ? { owner: 'vendor', owner_vendor_id: choice.slice('vendor:'.length) } : { owner: choice }
+      const optional = (name: string) => (value(name).length === 0 ? {} : { [name]: value(name) })
+      return { title: value('title'), starts_at: value('starts_at'), ...owner, ...optional('ends_at'), ...optional('location'), ...optional('vendor_call_time'), ...optional('event_id'), ...optional('notes') }
+    }
+    const res =
+      action === 'show-add'
+        ? call('POST', base, itemBody())
+        : action === 'show-update'
+          ? call('PUT', `${base}/${item}`, itemBody())
+          : action === 'show-remove'
+            ? call('DELETE', `${base}/${item}`)
+            : undefined
+    if (res === undefined) return GENERIC_404
+    if (res.status === 404 || res.status === 401) return this.#renderNonData(slug, res.status)
+    const notice: RunOfShowNotice =
+      res.status === 200 || res.status === 201 ? (action === 'show-remove' ? 'removed' : 'saved') : res.status === 403 ? 'forbidden' : res.status === 409 ? 'conflict' : 'invalid'
+    return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=run-of-show&notice=${notice}`)
   }
 
   /** GET /t/:slug?wedding=ID&tab=budget (issue #34) — the wedding, then its budget; any non-200 takes the masking. */

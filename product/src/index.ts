@@ -342,6 +342,15 @@ export {
   type TaskStatus,
 } from './checklist/checklist_service'
 export { CHECKLIST_TEMPLATE, type ChecklistOffset, type ChecklistTemplateItem, dateBefore, daysBetween, shiftDate } from './checklist/checklist_template'
+// A wedding's run of show: the day-of timeline and vendor call times (issue #45, ADR 0053).
+export {
+  RUN_OF_SHOW_LIMITS,
+  type RunOfShowInput,
+  type RunOfShowLine,
+  type RunOfShowOwner,
+  RunOfShowService,
+  type RunOfShowView,
+} from './run_of_show/run_of_show_service'
 // A wedding's budget, lines optionally following a vendor's schedule (issue #34, ADR 0052).
 export {
   BUDGET_LIMITS,

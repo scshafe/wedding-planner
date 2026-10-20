@@ -65,4 +65,5 @@
 - [Wedding checklist](wedding-checklist.md) — #31 / ADR 0050: template applied by persisted key; today = clock UTC date; couple ticks only its own; date move offers a shift
 - [Vendors per wedding](vendors-per-wedding.md) — #33 / ADR 0051: installments in integer cents with stable ids; couple sees shared only, no notes; assertPlainText
 - [Budget per wedding](budget-per-wedding.md) — #34 / ADR 0052: linked lines computed from the vendor schedule; couple sees shared lines only, never an unshared vendor
+- [Run of show](run-of-show.md) — #45 / ADR 0053: timeline lines with vendor arrivals; couple sees unshared vendors by category
 - [Guest list CSV](guest-list-csv.md) — #28 / ADR 0047: export neutralizes formulas; import plans every row, applies all-or-nothing, matches by household + name
