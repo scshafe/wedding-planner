@@ -1,4 +1,4 @@
-import { type Clock, getSchemaRegistry, type IdGenerator, type Wedding, type WeddingTask } from '@wedding-planner/shared'
+import { type ChecklistDateMove, type Clock, getSchemaRegistry, type IdGenerator, type Wedding, type WeddingTask } from '@wedding-planner/shared'
 
 import type { Principal } from '../auth/principal'
 import type { WeddingAuthorizer } from '../auth/wedding_authorizer'
@@ -8,9 +8,10 @@ import { ProductError } from '../product_error'
 import type { TenantContext } from '../tenant/tenant_context'
 import { TenantScopedRepository } from '../tenant/tenant_scoped_repository'
 import type { TenantLivenessCheck } from '../tenant/tenant_store'
+import { isDate } from '../wedding/calendar_date'
 import { assertWeddingReach } from '../wedding/wedding_reach'
 import type { WeddingRepository } from '../wedding/wedding_repository'
-import { CHECKLIST_TEMPLATE, type ChecklistTemplateItem, dateBefore, shiftDate } from './checklist_template'
+import { CHECKLIST_TEMPLATE, type ChecklistTemplateItem, dateBefore, daysBetween, shiftDate } from './checklist_template'
 
 /**
  * @canonical checklist_service -- a wedding's checklist (issue #31, ADR 0050): tasks with a due date and an assignee,
@@ -26,8 +27,8 @@ import { CHECKLIST_TEMPLATE, type ChecklistTemplateItem, dateBefore, shiftDate }
  * related: checklist_template.ts (the template and the date arithmetic), wedding_task_schema.json (the contract).
  */
 
-/** Bounds on one wedding's checklist; a shift moves tasks by at most ten years either way. */
-export const CHECKLIST_LIMITS = Object.freeze({ tasks: 300, shift_days: 3650 })
+/** Bounds on one wedding's checklist. */
+export const CHECKLIST_LIMITS = Object.freeze({ tasks: 300 })
 
 export type TaskStatus = WeddingTask['status']
 export type TaskAssignee = WeddingTask['assignee']
@@ -49,10 +50,13 @@ export interface ChecklistView {
   readonly done: readonly WeddingTask[]
   /** How many template items are not on the checklist yet. */
   readonly template_missing: number
+  /** The wedding date moved since the open tasks were scheduled (server data): the planner may move them by `days`. */
+  readonly date_move?: { readonly from_date: string; readonly to_date: string; readonly days: number }
 }
 
 export class ChecklistService {
   readonly #tasks: TenantScopedRepository<WeddingTask>
+  readonly #moves: TenantScopedRepository<ChecklistDateMove>
 
   constructor(
     liveness: TenantLivenessCheck,
@@ -61,10 +65,11 @@ export class ChecklistService {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     store?: RecordStore,
-    private readonly limits: { readonly tasks: number; readonly shift_days: number } = CHECKLIST_LIMITS,
+    private readonly limits: { readonly tasks: number } = CHECKLIST_LIMITS,
     private readonly template: readonly ChecklistTemplateItem[] = CHECKLIST_TEMPLATE,
   ) {
     this.#tasks = new TenantScopedRepository<WeddingTask>(liveness, (t) => groupedKey(t.wedding_id, t.task_id), COLLECTIONS.weddingTask, store)
+    this.#moves = new TenantScopedRepository<ChecklistDateMove>(liveness, (m) => m.wedding_id, COLLECTIONS.checklistDateMove, store)
   }
 
   /** The wedding's boundary alone (the HTTP edge calls it before parsing a body). */
@@ -83,12 +88,14 @@ export class ChecklistService {
     const tasks = this.tasksOf(context, wedding_id)
     const open = tasks.filter((t) => t.status === 'todo')
     const keys = new Set(tasks.flatMap((t) => (t.template_key === undefined ? [] : [t.template_key])))
+    const move = this.#move(context, wedding_id)
     return {
       today,
       overdue: open.filter((t) => t.due_date < today),
       upcoming: open.filter((t) => t.due_date >= today),
       done: tasks.filter((t) => t.status === 'done'),
       template_missing: this.template.filter((item) => !keys.has(item.key)).length,
+      ...(move === undefined || open.length === 0 ? {} : { date_move: { from_date: move.from_date, to_date: move.to_date, days: daysBetween(move.from_date, move.to_date) } }),
     }
   }
 
@@ -172,7 +179,7 @@ export class ChecklistService {
       assignee: existing.assignee,
       status,
       ...(existing.template_key === undefined ? {} : { template_key: existing.template_key }),
-      ...(status === 'done' ? { completed_at: this.clock.now() } : {}),
+      ...(status === 'done' ? { completed_at: existing.completed_at ?? this.clock.now() } : {}),
       created_at: existing.created_at,
       updated_at: this.clock.now(),
     })
@@ -186,17 +193,47 @@ export class ChecklistService {
     return this.#tasks.delete(context, groupedKey(wedding_id, task_id))
   }
 
-  /** Move every task that is not done by `days` (the wedding date moved). Returns how many moved. */
-  shiftOpenTasks(context: TenantContext, principal: Principal, wedding_id: string, days: number): number {
+  /**
+   * The wedding's date changed (the API calls this after its own reach-checked update): remember where the open tasks
+   * were scheduled from, so the planner is offered to move them. A second move keeps the first date; a move back
+   * forgets it.
+   */
+  noteDateMoved(context: TenantContext, wedding_id: string, from_date: string, to_date: string): void {
+    if (from_date === to_date) return
+    const earlier = this.#move(context, wedding_id)
+    const from = earlier?.from_date ?? from_date
+    if (from === to_date) {
+      this.#moves.delete(context, wedding_id)
+      return
+    }
+    const move: ChecklistDateMove = { tenant_id: context.tenant_id, wedding_id, from_date: from, to_date, noted_at: this.clock.now() }
+    getSchemaRegistry().assertValid<ChecklistDateMove>('checklist_date_move', move)
+    this.#moves.put(context, move)
+  }
+
+  /** Move every task that is not done by the recorded date move, and forget the move. Returns how many moved. */
+  shiftOpenTasks(context: TenantContext, principal: Principal, wedding_id: string): number {
     this.assertReach(context, principal, wedding_id)
     this.#planner(principal)
-    if (!Number.isInteger(days) || Math.abs(days) > this.limits.shift_days) {
-      throw new ProductError('PRODUCT.BAD_REQUEST', `A shift is a whole number of days, at most ${this.limits.shift_days} either way.`, {})
-    }
+    const move = this.#move(context, wedding_id)
+    if (move === undefined) throw new ProductError('PRODUCT.BAD_REQUEST', 'The wedding date has not moved since the tasks were scheduled.', {})
+    const days = daysBetween(move.from_date, move.to_date)
     const open = this.tasksOf(context, wedding_id).filter((t) => t.status === 'todo')
-    if (days === 0) return 0
     for (const task of open) this.#put(context, { ...task, due_date: shiftDate(task.due_date, days), updated_at: this.clock.now() })
+    this.#moves.delete(context, wedding_id)
     return open.length
+  }
+
+  /** Keep the open tasks' dates after the wedding date moved (forget the move). Returns whether one was pending. */
+  keepTaskDates(context: TenantContext, principal: Principal, wedding_id: string): boolean {
+    this.assertReach(context, principal, wedding_id)
+    this.#planner(principal)
+    return this.#moves.delete(context, wedding_id)
+  }
+
+  #move(context: TenantContext, wedding_id: string): ChecklistDateMove | undefined {
+    const move = this.#moves.read(context, wedding_id)
+    return move?.wedding_id === wedding_id && isDate(move.from_date) && isDate(move.to_date) ? move : undefined
   }
 
   #put(context: TenantContext, task: WeddingTask): WeddingTask {
@@ -235,11 +272,4 @@ function fields(input: TaskInput): Pick<WeddingTask, 'title' | 'due_date' | 'ass
     due_date: input.due_date,
     assignee: input.assignee,
   }
-}
-
-/** Whether `value` is a real date, YYYY-MM-DD. */
-export function isDate(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
-  const parsed = new Date(`${value}T00:00:00.000Z`)
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
 }

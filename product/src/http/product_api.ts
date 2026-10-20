@@ -1013,20 +1013,28 @@ function dispatchChecklist(
 ): ApiResponse {
   checklist.assertReach(context, principal, weddingId)
   const [, id, sub] = rest
+  // The planner's capability before any body is parsed (a couple's malformed planner-only call is its 403).
+  const planner = (): void => {
+    if (principal.role !== 'planner') throw forbidden()
+  }
   if (id === undefined) {
     if (req.method === 'GET') return { status: 200, body: checklist.view(context, principal, weddingId) }
-    if (req.method === 'POST') return { status: 201, body: { task: checklist.addTask(context, principal, weddingId, taskInput(req)) } }
-    throw methodNotAllowed()
+    if (req.method !== 'POST') throw methodNotAllowed()
+    planner()
+    return { status: 201, body: { task: checklist.addTask(context, principal, weddingId, taskInput(req)) } }
   }
   if (id === 'apply-template' && sub === undefined) {
     if (req.method !== 'POST') throw methodNotAllowed()
     return { status: 200, body: { created: checklist.applyTemplate(context, principal, weddingId) } }
   }
+  // The wedding date moved (recorded by the server): move the open tasks by it, or keep their dates.
   if (id === 'shift' && sub === undefined) {
     if (req.method !== 'POST') throw methodNotAllowed()
-    const days = parseObjectBody(req.rawBody).days
-    if (typeof days !== 'number') throw new ProductError('PRODUCT.BAD_REQUEST', 'days must be a whole number.', {})
-    return { status: 200, body: { moved: checklist.shiftOpenTasks(context, principal, weddingId, days) } }
+    return { status: 200, body: { moved: checklist.shiftOpenTasks(context, principal, weddingId) } }
+  }
+  if (id === 'date-move' && sub === undefined) {
+    if (req.method !== 'DELETE') throw methodNotAllowed()
+    return { status: 200, body: { kept: checklist.keepTaskDates(context, principal, weddingId) } }
   }
   if (sub === 'status') {
     if (req.method !== 'PUT') throw methodNotAllowed()
@@ -1035,7 +1043,10 @@ function dispatchChecklist(
     return { status: 200, body: { task: checklist.setStatus(context, principal, weddingId, id, status) } }
   }
   if (sub !== undefined) throw routeNotFound()
-  if (req.method === 'PUT') return { status: 200, body: { task: checklist.updateTask(context, principal, weddingId, id, taskInput(req)) } }
+  if (req.method === 'PUT') {
+    planner()
+    return { status: 200, body: { task: checklist.updateTask(context, principal, weddingId, id, taskInput(req)) } }
+  }
   if (req.method === 'DELETE') return { status: 200, body: { removed: checklist.removeTask(context, principal, weddingId, id) } }
   throw methodNotAllowed()
 }
@@ -1301,6 +1312,10 @@ function handleUpdate(
   // update re-validates against the wedding contract, so the `status` cast above is closed at runtime
   // (a non-enum value -> CONTRACT.VALIDATION_FAILED -> 400). Keep validation downstream of the cast.
   const saved = deps.weddings.update(context, updated)
+  // Issue #31: a moved date is remembered, so the planner is offered to move the open checklist tasks too.
+  if (deps.checklist !== undefined && saved.event_date !== existing.event_date) {
+    deps.checklist.noteDateMoved(context, weddingId, existing.event_date, saved.event_date)
+  }
   return { status: 200, body: { wedding: saved } }
 }
 

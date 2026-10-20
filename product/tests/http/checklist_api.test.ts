@@ -39,7 +39,14 @@ describe('/t/:slug/weddings/:id/tasks', () => {
     expect(view.today).toBe('2028-01-10')
     expect(view.done.map((t) => t.task_id)).toEqual([task])
     expect(w.call('PUT', `/t/demo/weddings/${w.ours}/tasks/${task}`, w.planner, { title: 'Cake', due_date: '2028-02-02', assignee: 'couple' }).status).toBe(200)
-    expect(w.call('POST', `/t/demo/weddings/${w.ours}/tasks/shift`, w.planner, { days: 7 }).status).toBe(200)
+    // Moving the wedding date records the move; the planner then moves the open tasks by it.
+    expect(w.call('POST', `/t/demo/weddings/${w.ours}/tasks/shift`, w.planner).status).toBe(400)
+    const date = (w.call('GET', `/t/demo/weddings/${w.ours}`, w.planner).body as { wedding: { event_date: string } }).wedding.event_date
+    const later = new Date(Date.parse(`${date}T00:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10)
+    expect(w.call('PUT', `/t/demo/weddings/${w.ours}`, w.couple, { event_date: later }).status).toBe(200)
+    expect((w.call('GET', `/t/demo/weddings/${w.ours}/tasks`, w.couple).body as { date_move?: { days: number } }).date_move?.days).toBe(7)
+    expect(w.call('POST', `/t/demo/weddings/${w.ours}/tasks/shift`, w.couple).status).toBe(403)
+    expect(w.call('POST', `/t/demo/weddings/${w.ours}/tasks/shift`, w.planner).status).toBe(200)
     expect(w.call('DELETE', `/t/demo/weddings/${w.ours}/tasks/${task}`, w.planner).body).toEqual({ removed: true })
   })
 
@@ -60,7 +67,9 @@ describe('/t/:slug/weddings/:id/tasks', () => {
     expect(add({ title: 'X', due_date: 'soon', assignee: 'planner' })).toBe(400)
     expect(add({ title: 'X', due_date: '2028-02-01', assignee: 'guest' })).toBe(400)
     expect(add({ due_date: '2028-02-01', assignee: 'planner' })).toBe(400)
-    expect(w.call('POST', `/t/demo/weddings/${w.ours}/tasks/shift`, w.planner, { days: '7' }).status).toBe(400)
+    expect(w.call('PUT', `/t/demo/weddings/${w.ours}`, w.planner, { event_date: '2028-13-01' }).status).toBe(400)
+    expect(w.call('POST', `/t/demo/weddings/${w.ours}/tasks/apply-template`, w.planner).status).toBe(200)
+    expect(w.call('POST', `/t/demo/weddings/${w.ours}/tasks`, w.couple, { junk: true }).status).toBe(403) // capability before body
     expect(w.call('PUT', `/t/demo/weddings/${w.ours}/tasks/task_x/status`, w.planner, { status: 'maybe' }).status).toBe(400)
     expect(w.call('GET', `/t/demo/weddings/${w.ours}/tasks/apply-template`, w.planner).status).toBe(405)
     expect(w.call('PATCH', `/t/demo/weddings/${w.ours}/tasks`, w.planner).status).toBe(405)

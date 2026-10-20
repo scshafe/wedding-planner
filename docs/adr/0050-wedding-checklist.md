@@ -38,17 +38,26 @@ overdue. The JSON view returns the same three lists and `today`.
 
 ### When the date moves
 
-The web edit of a wedding compares the date before and after. If it moved, the wedding page offers to move the open
-tasks by the same number of days (`moved=<days>` in the redirect). Accepting posts a shift: the planner moves every
-task that is not done by a whole number of days, within ten years either way. Done tasks keep their dates.
+When a wedding's date changes (from any route: the planner's or the couple's edit), the API records the move in its
+own record (`checklist_date_move`: where the open tasks were scheduled from, and the date now). A second move keeps
+the first date, and a move back forgets it.
+- **The offer:** the wedding page offers to move the open tasks by that many days, with both dates, built from server
+  data only.
+- **The planner's answer:** move them (`POST …/tasks/shift`, which moves every task not done and forgets the move)
+  or keep their dates (`DELETE …/tasks/date-move`). Done tasks keep their dates.
+- **Why server data:** the first version took the number of days from the URL. The security review showed a couple
+  could send the planner a crafted link whose one-click offer moved every open task ten years.
+- **Real dates only:** a wedding's date must be a real calendar date (`wedding/calendar_date.ts`, checked on create
+  and update). The pattern alone let `2028-13-01` through, and the template then failed with a 500. The date
+  arithmetic also refuses an unreal date, or a shift off the calendar, with a 400.
 
 ### Routes and pages
 
 - JSON: `GET|POST …/weddings/:id/tasks`, `PUT|DELETE …/tasks/:tid`, `PUT …/tasks/:tid/status`,
-  `POST …/tasks/apply-template` and `POST …/tasks/shift {days}`. The wedding boundary is checked before any body is
-  parsed.
+  `POST …/tasks/apply-template`, `POST …/tasks/shift` and `DELETE …/tasks/date-move`. The wedding boundary is checked
+  before any body is parsed, and the planner capability before a planner-only body.
 - Web: the checklist page `?wedding=<id>&tab=checklist`, a summary line on the wedding page (open and overdue
-  counts), and the shift offer there. Every form posts to `/t/<slug>/checklist/<action>` and checks the per-session
+  counts), and the date-move offer there. Every form posts to `/t/<slug>/checklist/<action>` and checks the per-session
   CSRF token first.
 - At most 300 tasks per wedding.
 

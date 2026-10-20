@@ -958,22 +958,30 @@ export function renderDetail(
   invalid = false,
   inviteCouple?: { readonly notice?: 'sent' | 'exists' | 'invalid' },
   events?: WeddingEventsView,
-  checklist?: { readonly overdue: number; readonly open: number; readonly moved?: number },
+  checklist?: {
+    readonly overdue: number
+    readonly open: number
+    readonly dateMove?: { readonly from_date: string; readonly to_date: string; readonly days: number }
+  },
 ): string {
   // Issue #31: the checklist at a glance, and — right after the date moved — the offer to move the open tasks too.
   const checklistLine =
     checklist === undefined
       ? html``
       : html`<p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=checklist">Checklist →</a> <span class="note">${`${checklist.open} open, ${checklist.overdue} overdue`}</span></p>`
+  const move = checklist?.dateMove
   const shiftOffer =
-    checklist?.moved === undefined || checklist.moved === 0 || checklist.open === 0
+    move === undefined
       ? html``
       : html`<div class="card"><h3>The date moved</h3>
-    <p>${`The wedding moved ${Math.abs(checklist.moved)} day(s) ${checklist.moved > 0 ? 'later' : 'earlier'}. Move the ${checklist.open} open checklist task(s) by the same?`}</p>
-    <form method="post" action="/t/${slug}/checklist/shift">${csrfField(csrfToken)}
+    <p>${`The wedding moved from ${move.from_date} to ${move.to_date} (${Math.abs(move.days)} day(s) ${move.days > 0 ? 'later' : 'earlier'}). Move the ${checklist?.open ?? 0} open checklist task(s) by the same?`}</p>
+    <form class="inline" method="post" action="/t/${slug}/checklist/shift">${csrfField(csrfToken)}
       <input type="hidden" name="wedding_id" value="${wedding.wedding_id}">
-      <input type="hidden" name="days" value="${String(checklist.moved)}">
       <button type="submit">Move the open tasks</button>
+    </form>
+    <form class="inline" method="post" action="/t/${slug}/checklist/keep-dates">${csrfField(csrfToken)}
+      <input type="hidden" name="wedding_id" value="${wedding.wedding_id}">
+      <button type="submit">Keep their dates</button>
     </form></div>`
   // Issue #29: each event's live RSVP counts, when the events are wired.
   const eventsCard =
@@ -1752,7 +1760,7 @@ export function renderHouseholdRsvp(
   )
 }
 
-export type ChecklistNotice = 'saved' | 'removed' | 'invalid' | 'forbidden' | 'conflict' | 'applied' | 'shifted'
+export type ChecklistNotice = 'saved' | 'removed' | 'invalid' | 'forbidden' | 'conflict' | 'applied' | 'shifted' | 'kept'
 
 const CHECKLIST_NOTICES: Readonly<Record<ChecklistNotice, string>> = Object.freeze({
   saved: 'Saved.',
@@ -1762,6 +1770,7 @@ const CHECKLIST_NOTICES: Readonly<Record<ChecklistNotice, string>> = Object.free
   conflict: 'This checklist is full.',
   applied: 'The checklist template was added.',
   shifted: 'The open tasks were moved.',
+  kept: 'The open tasks keep their dates.',
 })
 
 const ASSIGNEE_LABELS = Object.freeze({ planner: 'Planner', couple: 'Couple' })

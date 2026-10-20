@@ -19,7 +19,7 @@ import {
 
 const THEME: Tenant['theme'] = { brand_name: 'B', primary_color_hex: '#111111', accent_color_hex: '#222222', logo_ref: 'l' }
 
-function world(limits?: { tasks: number; shift_days: number }) {
+function world(limits?: { tasks: number }) {
   const clock = new ManualClock('2028-01-10T12:00:00.000Z')
   const store = new InMemoryRecordStore()
   const tenants = new TenantStore(clock, new SequentialIdGenerator('t'), store)
@@ -32,7 +32,7 @@ function world(limits?: { tasks: number; shift_days: number }) {
   const planner = sessions.login(ctx, { role: 'planner' }).principal
   const couple = sessions.login(ctx, { role: 'couple', wedding_id: ours }).principal
   const checklist = new ChecklistService(tenants, weddings, new WeddingAuthorizer(), clock, new SequentialIdGenerator('k'), store, limits)
-  return { clock, ctx, ours, theirs, planner, couple, checklist }
+  return { clock, ctx, weddings, ours, theirs, planner, couple, checklist }
 }
 
 function codeOf(fn: () => unknown): string {
@@ -73,6 +73,10 @@ describe('ChecklistService', () => {
     expect(view.overdue.map((t) => t.title)).toEqual(['Long ago', 'Yesterday'])
     expect(view.upcoming.map((t) => t.title)).toEqual(['Today', 'In a week'])
     expect(view.done.map((t) => [t.title, t.completed_at])).toEqual([['Done one', '2028-01-10T12:00:00.000Z']])
+    // Marking it done again keeps when it was done.
+    w.clock.advance(60_000)
+    expect(w.checklist.setStatus(w.ctx, w.planner, w.ours, done.task_id, 'done').completed_at).toBe('2028-01-10T12:00:00.000Z')
+    w.clock.advance(-60_000)
     w.clock.advance(86_400_000)
     expect(w.checklist.view(w.ctx, w.planner, w.ours).overdue.map((t) => t.title)).toEqual(['Long ago', 'Yesterday', 'Today'])
   })
@@ -89,7 +93,8 @@ describe('ChecklistService', () => {
     expect(codeOf(() => w.checklist.updateTask(w.ctx, w.couple, w.ours, mine.task_id, { title: 'X', due_date: '2028-03-01', assignee: 'couple' }))).toBe('PRODUCT.FORBIDDEN')
     expect(codeOf(() => w.checklist.removeTask(w.ctx, w.couple, w.ours, mine.task_id))).toBe('PRODUCT.FORBIDDEN')
     expect(codeOf(() => w.checklist.applyTemplate(w.ctx, w.couple, w.ours))).toBe('PRODUCT.FORBIDDEN')
-    expect(codeOf(() => w.checklist.shiftOpenTasks(w.ctx, w.couple, w.ours, 7))).toBe('PRODUCT.FORBIDDEN')
+    expect(codeOf(() => w.checklist.shiftOpenTasks(w.ctx, w.couple, w.ours))).toBe('PRODUCT.FORBIDDEN')
+    expect(codeOf(() => w.checklist.keepTaskDates(w.ctx, w.couple, w.ours))).toBe('PRODUCT.FORBIDDEN')
   })
 
   it('another wedding is the masked NOT_FOUND for the couple; a sibling wedding\'s task is not found here', () => {
@@ -103,19 +108,39 @@ describe('ChecklistService', () => {
     expect(w.checklist.tasksOf(w.ctx, w.theirs).map((t) => t.status)).toEqual(['todo'])
   })
 
-  it('shifts only the open tasks, by whole days within the bound; validates dates, titles and the size', () => {
-    const w = world({ tasks: 3, shift_days: 3650 })
+  it('shifts only the open tasks by the date move the server recorded, then forgets it; validates dates, titles and size', () => {
+    const w = world({ tasks: 3 })
     const open = w.checklist.addTask(w.ctx, w.planner, w.ours, { title: 'Open', due_date: '2028-02-01', assignee: 'planner' })
     const done = w.checklist.addTask(w.ctx, w.planner, w.ours, { title: 'Done', due_date: '2028-01-01', assignee: 'planner' })
     w.checklist.setStatus(w.ctx, w.planner, w.ours, done.task_id, 'done')
-    expect(w.checklist.shiftOpenTasks(w.ctx, w.planner, w.ours, 14)).toBe(1)
+    expect(codeOf(() => w.checklist.shiftOpenTasks(w.ctx, w.planner, w.ours))).toBe('PRODUCT.BAD_REQUEST') // nothing moved
+    w.checklist.noteDateMoved(w.ctx, w.ours, '2028-06-10', '2028-06-17')
+    w.checklist.noteDateMoved(w.ctx, w.ours, '2028-06-17', '2028-06-24') // a second move keeps the first date
+    expect(w.checklist.view(w.ctx, w.couple, w.ours).date_move).toEqual({ from_date: '2028-06-10', to_date: '2028-06-24', days: 14 })
+    expect(w.checklist.shiftOpenTasks(w.ctx, w.planner, w.ours)).toBe(1)
     const byId = new Map(w.checklist.tasksOf(w.ctx, w.ours).map((t) => [t.task_id, t.due_date]))
     expect([byId.get(open.task_id), byId.get(done.task_id)]).toEqual(['2028-02-15', '2028-01-01'])
-    for (const days of [1.5, 3651, Number.NaN]) expect(codeOf(() => w.checklist.shiftOpenTasks(w.ctx, w.planner, w.ours, days))).toBe('PRODUCT.BAD_REQUEST')
+    expect(w.checklist.view(w.ctx, w.planner, w.ours).date_move).toBeUndefined()
+    // Keeping the dates forgets a move; a move back to the original date forgets it on its own.
+    w.checklist.noteDateMoved(w.ctx, w.ours, '2028-06-24', '2028-07-01')
+    expect(w.checklist.keepTaskDates(w.ctx, w.planner, w.ours)).toBe(true)
+    w.checklist.noteDateMoved(w.ctx, w.ours, '2028-07-01', '2028-07-08')
+    w.checklist.noteDateMoved(w.ctx, w.ours, '2028-07-08', '2028-07-01')
+    expect(w.checklist.view(w.ctx, w.planner, w.ours).date_move).toBeUndefined()
     expect(codeOf(() => w.checklist.addTask(w.ctx, w.planner, w.ours, { title: 'X', due_date: '2028-02-30', assignee: 'planner' }))).toBe('PRODUCT.BAD_REQUEST')
     expect(codeOf(() => w.checklist.addTask(w.ctx, w.planner, w.ours, { title: 'A\nB', due_date: '2028-02-01', assignee: 'planner' }))).toBe('PRODUCT.BAD_REQUEST')
     expect(w.checklist.addTask(w.ctx, w.planner, w.ours, { title: ' T ', notes: 'line one\nline two', due_date: '2028-02-01', assignee: 'planner' })).toMatchObject({ title: 'T', notes: 'line one\nline two' })
     expect(codeOf(() => w.checklist.addTask(w.ctx, w.planner, w.ours, { title: 'Fourth', due_date: '2028-02-01', assignee: 'planner' }))).toBe('PRODUCT.LIMIT_REACHED')
     expect(codeOf(() => w.checklist.applyTemplate(w.ctx, w.planner, w.ours))).toBe('PRODUCT.LIMIT_REACHED')
+  })
+
+  it('a wedding date that is not a real date is refused at the source, so the template never meets one', () => {
+    const w = world()
+    const wedding = w.weddings.get(w.ctx, w.ours)
+    expect(wedding).toBeDefined()
+    for (const event_date of ['2028-13-01', '2028-00-10', '2028-02-30']) {
+      expect(codeOf(() => w.weddings.update(w.ctx, { ...(wedding as NonNullable<typeof wedding>), event_date }))).toBe('PRODUCT.BAD_REQUEST')
+      expect(codeOf(() => w.weddings.create(w.ctx, { couple_display_name: 'X', event_date }))).toBe('PRODUCT.BAD_REQUEST')
+    }
   })
 })

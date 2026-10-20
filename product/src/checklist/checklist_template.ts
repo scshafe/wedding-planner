@@ -1,3 +1,6 @@
+import { ProductError } from '../product_error'
+import { assertDate } from '../wedding/calendar_date'
+
 /**
  * @canonical checklist_template -- the built-in wedding checklist (issue #31, ADR 0050): what a planner does for
  * every wedding, scheduled backwards from the date. Applying it to a wedding creates one task per item, due the
@@ -43,18 +46,28 @@ export const CHECKLIST_TEMPLATE: readonly ChecklistTemplateItem[] = Object.freez
  * month (31 March - 1 month = 28/29 February). Pure date arithmetic in UTC: no time zone shifts a date.
  */
 export function dateBefore(date: string, before: ChecklistOffset): string {
-  const [y, m, d] = date.split('-').map(Number) as [number, number, number]
+  assertDate(date, 'date')
   if ('days' in before) return shiftDate(date, -before.days)
+  const [y, m, d] = date.split('-').map(Number) as [number, number, number]
   const months = y * 12 + (m - 1) - before.months
   const year = Math.floor(months / 12)
   const month = months - year * 12
-  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
-  return new Date(Date.UTC(year, month, Math.min(d, lastDay))).toISOString().slice(0, 10)
+  // setUTCFullYear, not Date.UTC: Date.UTC reads years 0-99 as 1900-1999.
+  const day = new Date(0)
+  day.setUTCFullYear(year, month + 1, 0)
+  const lastDay = day.getUTCDate()
+  day.setUTCFullYear(year, month, Math.min(d, lastDay))
+  return day.toISOString().slice(0, 10)
 }
 
-/** `date` (YYYY-MM-DD) plus `days` (negative moves it earlier). */
+/** `date` (YYYY-MM-DD) plus `days` (negative moves it earlier). Refuses a date that is not real, or a result off the calendar. */
 export function shiftDate(date: string, days: number): string {
-  return new Date(Date.parse(`${date}T00:00:00.000Z`) + days * 86_400_000).toISOString().slice(0, 10)
+  assertDate(date, 'date')
+  const moved = new Date(Date.parse(`${date}T00:00:00.000Z`) + days * 86_400_000)
+  if (Number.isNaN(moved.getTime()) || moved.getUTCFullYear() < 1 || moved.getUTCFullYear() > 9999) {
+    throw new ProductError('PRODUCT.BAD_REQUEST', 'That moves a date off the calendar.', {})
+  }
+  return moved.toISOString().slice(0, 10)
 }
 
 /** Whole days from `from` to `to` (both YYYY-MM-DD). */

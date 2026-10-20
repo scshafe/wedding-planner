@@ -22,6 +22,15 @@ describe('checklist template', () => {
     expect(dateBefore('2028-01-15', { months: 3 })).toBe('2027-10-15') // across a year
     expect(dateBefore('2028-03-01', { days: 7 })).toBe('2028-02-23')
     expect(dateBefore('2028-01-05', { days: 14 })).toBe('2027-12-22')
+    expect(dateBefore('0050-06-01', { months: 1 })).toBe('0050-05-01') // years 0-99 are not 1900-1999
+  })
+
+  it('refuses a date that is not real, and a shift off the calendar (PRODUCT.BAD_REQUEST, never a crash)', () => {
+    for (const bad of ['2028-13-01', '2028-02-30', 'soon']) {
+      expect(() => dateBefore(bad, { months: 1 })).toThrow(expect.objectContaining({ code: 'PRODUCT.BAD_REQUEST' }))
+      expect(() => shiftDate(bad, 1)).toThrow(expect.objectContaining({ code: 'PRODUCT.BAD_REQUEST' }))
+    }
+    expect(() => shiftDate('9999-12-31', 1)).toThrow(expect.objectContaining({ code: 'PRODUCT.BAD_REQUEST' }))
   })
 
   it('shifts a date by days either way, and counts the days between two dates', () => {

@@ -3,7 +3,6 @@ import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Wed
 import type { TeamView } from '../accounts/membership_service'
 import type { GuestEventRsvp, HouseholdAnswer, HouseholdRsvpView, WeddingEventsView } from '../wedding_events/wedding_event_service'
 import type { ChecklistView } from '../checklist/checklist_service'
-import { daysBetween } from '../checklist/checklist_template'
 import { toGuestCsv } from '../guests/guest_csv'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
@@ -426,14 +425,14 @@ export class ProductWebUi {
       // Issue #29: the events card with live counts (same boundary as the wedding read; absent if not wired).
       const eventsRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${encodeURIComponent(weddingId)}/events`, token))
       const events = eventsRes.status === 200 ? (eventsRes.body as WeddingEventsView) : undefined
-      // Issue #31: the checklist summary, and the shift offer right after the date moved (`moved=<days>`).
+      // Issue #31: the checklist summary, and — when the server recorded that the date moved — the offer to move
+      // the open tasks too (built from server data only, never from the URL).
       const checklistRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${encodeURIComponent(weddingId)}/tasks`, token))
       const tasks = checklistRes.status === 200 ? (checklistRes.body as ChecklistView) : undefined
-      const moved = Number(queryParam(req.path, 'moved') ?? '0')
       const checklist =
         tasks === undefined
           ? undefined
-          : { overdue: tasks.overdue.length, open: tasks.overdue.length + tasks.upcoming.length, ...(Number.isInteger(moved) && moved !== 0 ? { moved } : {}) }
+          : { overdue: tasks.overdue.length, open: tasks.overdue.length + tasks.upcoming.length, ...(tasks.date_move === undefined ? {} : { dateMove: tasks.date_move }) }
       return htmlResult(
         invalid ? 400 : 200,
         renderDetail(theme, slug, wedding, csrf, invalid, canInvite ? (notice === undefined ? {} : { notice }) : undefined, events, checklist),
@@ -623,18 +622,12 @@ export class ProductWebUi {
     const form = parseForm(req.rawBody)
     if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
     const weddingId = form.get('wedding_id') ?? ''
-    // Issue #31: the date before the edit, so a moved date can offer to move the open checklist tasks too.
-    const before = readWedding(this.#api.handle(bearerGet(`/t/${slug}/weddings/${encodeURIComponent(weddingId)}`, token)).body)
     // clearable: an empty optional input is sent as '' (the PUT clear-to-absent sentinel), so a planner can
     // blank a logistics field from the browser (Phase 25). Create omits empties (the default).
     const apiRes = this.#api.handle(
       bearerJson('PUT', `/t/${slug}/weddings/${encodeURIComponent(weddingId)}`, token, weddingBodyFromForm(form, { clearable: true })),
     )
-    if (apiRes.status === 200) {
-      const after = readWedding(apiRes.body)
-      const moved = before !== undefined && after !== undefined ? daysBetween(before.event_date, after.event_date) : 0
-      return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}${moved === 0 ? '' : `&moved=${moved}`}`)
-    }
+    if (apiRes.status === 200) return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}`)
     return this.#detail(req, slug, weddingId, true)
   }
 
@@ -873,7 +866,7 @@ export class ProductWebUi {
     if (theme === undefined || wedding === undefined) return GENERIC_404
     if (csrf === undefined) return ERROR_500
     const raw = queryParam(req.path, 'notice')
-    const notice = (['saved', 'removed', 'invalid', 'forbidden', 'conflict', 'applied', 'shifted'] as const).find((n) => n === raw)
+    const notice = (['saved', 'removed', 'invalid', 'forbidden', 'conflict', 'applied', 'shifted', 'kept'] as const).find((n) => n === raw)
     return htmlResult(200, renderChecklist(theme, slug, wedding, tasksRes.body as ChecklistView, csrf, notice))
   }
 
@@ -904,8 +897,10 @@ export class ProductWebUi {
               : action === 'apply-template'
                 ? call('POST', `${base}/apply-template`)
                 : action === 'shift'
-                  ? call('POST', `${base}/shift`, { days: Number(value('days')) })
-                  : undefined
+                  ? call('POST', `${base}/shift`)
+                  : action === 'keep-dates'
+                    ? call('DELETE', `${base}/date-move`)
+                    : undefined
     if (res === undefined) return GENERIC_404
     if (res.status === 404 || res.status === 401) return this.#renderNonData(slug, res.status)
     const ok = res.status === 200 || res.status === 201
@@ -916,7 +911,9 @@ export class ProductWebUi {
           ? 'applied'
           : action === 'shift'
             ? 'shifted'
-            : 'saved'
+            : action === 'keep-dates'
+              ? 'kept'
+              : 'saved'
       : res.status === 403
         ? 'forbidden'
         : res.status === 409

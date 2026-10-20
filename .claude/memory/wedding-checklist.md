@@ -14,7 +14,10 @@ Since issue #31 (2026-10-19): `product/src/checklist/{checklist_service,checklis
   rule (and `tasksOf` per wedding, never a tenant-wide list).
 - The planner does everything; the couple only `setStatus` on assignee=couple tasks. Other couple calls are
   PRODUCT.FORBIDDEN (honest 403 on its own wedding), shown as a notice on the page.
-- A date move: the web wedding update computes `daysBetween(before, after)` → `&moved=N` → the wedding page offers
-  the shift (open tasks only).
+- A date move is SERVER state (`checklist_date_move`, noted by the API's wedding update): the offer and the shift use
+  it, never a URL parameter (a crafted `moved=` link once let a couple trigger a 10-year shift). Shift = by the
+  recorded move, then forget it; keep = forget it.
+- Wedding dates are real calendar dates (`wedding/calendar_date.ts` isDate/assertDate in the wedding repository);
+  never trust the YYYY-MM-DD pattern alone.
 
 Related: [[events-and-rsvps]], [[guest-list]].

@@ -323,12 +323,13 @@ export {
   type WeddingEventsView,
 } from './wedding_events/wedding_event_service'
 export { GuestDirectory } from './guests/guest_directory'
+// A real local calendar date (YYYY-MM-DD): wedding dates and due dates (issue #31).
+export { assertDate, isDate } from './wedding/calendar_date'
 // A wedding's checklist and the built-in template (issue #31, ADR 0050).
 export {
   CHECKLIST_LIMITS,
   ChecklistService,
   type ChecklistView,
-  isDate,
   type TaskAssignee,
   type TaskInput,
   type TaskStatus,

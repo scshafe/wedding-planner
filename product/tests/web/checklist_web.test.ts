@@ -65,17 +65,20 @@ describe('the checklist page', () => {
     const later = new Date(Date.parse(`${wedding.event_date}T00:00:00Z`) + 14 * 86_400_000).toISOString().slice(0, 10)
     const fields = { _csrf: csrf, wedding_id: w.ours, couple_display_name: wedding.couple_display_name, event_date: later, status: wedding.status }
     const saved = w.ui.handle(form('/t/demo/weddings/update', fields, w.planner))
-    expect(saved.headers.location).toBe(`/t/demo?wedding=${w.ours}&moved=14`)
+    expect(saved.headers.location).toBe(`/t/demo?wedding=${w.ours}`)
     const offer = w.ui.handle(get(saved.headers.location as string, w.planner))
-    expect(offer.body).toContain('The wedding moved 14 day(s) later.')
+    expect(offer.body).toContain(`The wedding moved from ${wedding.event_date} to ${later} (14 day(s) later).`)
+    // The offer comes from server data only: a crafted URL cannot make one.
+    expect(w.ui.handle(get(`/t/demo?wedding=${w.ours}&moved=-3650`, w.planner)).body).not.toContain('3650')
     type Task = { template_key?: string; due_date: string }
     const venueDue = (): string | undefined => {
       const view = w.api.handle({ method: 'GET', path: `/t/demo/weddings/${w.ours}/tasks`, headers: { authorization: `Bearer ${bearer}` } }).body as { overdue: Task[]; upcoming: Task[] }
       return [...view.overdue, ...view.upcoming].find((t) => t.template_key === 'book_venue')?.due_date
     }
     const before = venueDue() as string
-    expect(w.ui.handle(form('/t/demo/checklist/shift', { _csrf: csrf, wedding_id: w.ours, days: '14' }, w.planner)).headers.location).toContain('notice=shifted')
+    expect(w.ui.handle(form('/t/demo/checklist/shift', { _csrf: csrf, wedding_id: w.ours }, w.planner)).headers.location).toContain('notice=shifted')
     expect(venueDue()).toBe(new Date(Date.parse(`${before}T00:00:00Z`) + 14 * 86_400_000).toISOString().slice(0, 10))
+    expect(w.ui.handle(get(`/t/demo?wedding=${w.ours}`, w.planner)).body).not.toContain('The date moved')
   })
 
   it('a couple\'s other wedding is the generic not-found', () => {

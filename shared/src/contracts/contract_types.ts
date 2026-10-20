@@ -75,3 +75,4 @@ export type { RsvpLink } from './generated/rsvp_link'
 export type { WeddingRsvpSettings } from './generated/wedding_rsvp_settings'
 // One task on a wedding's checklist (issue #31). ADR 0050.
 export type { WeddingTask } from './generated/wedding_task'
+export type { ChecklistDateMove } from './generated/checklist_date_move'
