@@ -64,6 +64,18 @@ describe('/t/:slug/weddings/:id/{guest-list,households,guests}', () => {
     expect(w.call('GET', `/t/demo/weddings/${w.ours}/guest-list`)).toEqual(UNAUTHORIZED)
   })
 
+  it('the wedding boundary runs before the body is parsed: a junk body to a foreign or missing wedding is the 404', () => {
+    const w = setup()
+    for (const wedding of [w.theirs, 'wedding_missing']) {
+      expect(w.call('POST', `/t/demo/weddings/${wedding}/households`, w.couple, { name: 7 })).toEqual(NOT_FOUND)
+      expect(w.call('POST', `/t/demo/weddings/${wedding}/guests`, w.couple, { side: 'left' })).toEqual(NOT_FOUND)
+      expect(w.call('PUT', `/t/demo/weddings/${wedding}/guests/wguest_x`, w.couple, [])).toEqual(NOT_FOUND)
+      expect(w.call('PATCH', `/t/demo/weddings/${wedding}/guest-list`, w.couple)).toEqual(NOT_FOUND)
+    }
+    // On its own wedding the same junk body is the 400 it always was.
+    expect(w.call('POST', `/t/demo/weddings/${w.ours}/households`, w.couple, { name: 7 }).status).toBe(400)
+  })
+
   it('edits and removals go through the same boundary; a sibling wedding\'s ids are not found', () => {
     const w = setup()
     const theirsHousehold = (w.call('POST', `/t/demo/weddings/${w.theirs}/households`, w.planner, { name: 'Theirs' }).body as { household: { household_id: string } }).household.household_id

@@ -1192,7 +1192,7 @@ const GUEST_LIST_NOTICES: Readonly<Record<GuestListNotice, string>> = Object.fre
   saved: 'Saved.',
   removed: 'Removed.',
   invalid: 'That could not be saved. Check the fields (names are required; an email must look like one).',
-  conflict: 'That is not possible right now (a guest already has a plus-one, or the list is full).',
+  conflict: 'That is not possible right now (that guest has a plus-one listed, or the list is full).',
 })
 
 const SIDE_LABELS: Readonly<Record<WeddingGuest['side'], string>> = Object.freeze({
@@ -1244,9 +1244,18 @@ export function renderGuestList(
   const banner = notice === undefined ? html`` : html`<p class="note">${GUEST_LIST_NOTICES[notice]}</p>`
   const hidden = (fields: Record<string, string>): SafeHtml[] =>
     Object.entries(fields).map(([name, value]) => html`<input type="hidden" name="${name}" value="${value}">`)
+  // Indexed once: a page at the bounds has 2000 guests, so no per-guest scan of the list.
+  const guestById = new Map(list.guests.map((g) => [g.guest_id, g]))
+  const hosts = new Set(list.guests.flatMap((g) => (g.plus_one_of === undefined ? [] : [g.plus_one_of])))
+  const membersOf = new Map<string, WeddingGuest[]>()
+  for (const g of list.guests) {
+    const members = membersOf.get(g.household_id)
+    if (members === undefined) membersOf.set(g.household_id, [g])
+    else members.push(g)
+  }
   const guestLine = (g: WeddingGuest): SafeHtml => {
-    const host = g.plus_one_of === undefined ? undefined : list.guests.find((x) => x.guest_id === g.plus_one_of)
-    const hasPlusOne = list.guests.some((x) => x.plus_one_of === g.guest_id)
+    const host = g.plus_one_of === undefined ? undefined : guestById.get(g.plus_one_of)
+    const hasPlusOne = hosts.has(g.guest_id)
     const details = [
       SIDE_LABELS[g.side],
       ...(host === undefined ? [] : [`plus-one of ${host.first_name}`]),
@@ -1271,7 +1280,7 @@ export function renderGuestList(
       }</li>`
   }
   const households = list.households.map((h: Household) => {
-    const members = list.guests.filter((g) => g.household_id === h.household_id)
+    const members = membersOf.get(h.household_id) ?? []
     return html`<div class="card">
     <h3>${h.name}</h3>
     ${h.address === undefined ? html`` : html`<p class="note">${h.address}</p>`}
@@ -1328,7 +1337,7 @@ export function renderGuestEdit(
   guest: WeddingGuest,
   households: readonly Household[],
   csrfToken: string,
-  invalid = false,
+  problem?: 'invalid' | 'conflict',
 ): string {
   const w = wedding.wedding_id
   const householdField =
@@ -1348,7 +1357,7 @@ export function renderGuestEdit(
     html`<p><a href="/t/${slug}?wedding=${w}&amp;tab=guests">← Guest list</a></p>
   <div class="card">
     <h2>Edit guest</h2>
-    ${invalid ? html`<p class="note" style="color:#b00">${GUEST_LIST_NOTICES.invalid}</p>` : html``}
+    ${problem === undefined ? html`` : html`<p class="note" style="color:#b00">${GUEST_LIST_NOTICES[problem]}</p>`}
     <form method="post" action="/t/${slug}/guest-list/guest-update">
       ${csrfField(csrfToken)}
       <input type="hidden" name="wedding_id" value="${w}">

@@ -686,7 +686,7 @@ export class ProductWebUi {
    * Two reads through the pipeline (the wedding, then its list): any non-200 takes the usual masking, so a couple
    * probing another wedding sees the same not-found as for a wedding that does not exist.
    */
-  #guestListPage(req: ApiRequest, slug: string, weddingId: string, status = 200, invalidGuest = false): HttpResult {
+  #guestListPage(req: ApiRequest, slug: string, weddingId: string, status = 200, editProblem?: 'invalid' | 'conflict'): HttpResult {
     const token = readSessionCookie(req.headers.cookie)
     const id = encodeURIComponent(weddingId)
     const weddingRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}`, token))
@@ -703,7 +703,7 @@ export class ProductWebUi {
     if (guestId !== undefined) {
       const guest = list.guests.find((g) => g.guest_id === guestId)
       if (guest === undefined) return this.#renderNonData(slug, 404)
-      return htmlResult(invalidGuest ? 400 : status, renderGuestEdit(theme, slug, wedding, guest, list.households, csrf, invalidGuest))
+      return htmlResult(status, renderGuestEdit(theme, slug, wedding, guest, list.households, csrf, editProblem))
     }
     const raw = queryParam(req.path, 'notice')
     const notice = (['saved', 'removed', 'invalid', 'conflict'] as const).find((n) => n === raw)
@@ -757,7 +757,9 @@ export class ProductWebUi {
     if (res.status === 404 || res.status === 401 || res.status === 403) return this.#renderNonData(slug, res.status)
     if (action === 'guest-update' && res.status !== 200) {
       const edit = { ...req, method: 'GET', path: `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=guests&guest=${guest}` }
-      return this.#guestListPage(edit, slug, weddingId, 400, true)
+      return res.status === 409
+        ? this.#guestListPage(edit, slug, weddingId, 409, 'conflict')
+        : this.#guestListPage(edit, slug, weddingId, 400, 'invalid')
     }
     const notice: GuestListNotice =
       res.status === 200 || res.status === 201 ? (action.endsWith('remove') ? 'removed' : 'saved') : res.status === 409 ? 'conflict' : 'invalid'

@@ -85,6 +85,23 @@ describe('the guest list page', () => {
     const invalid = w.ui.handle(form('/t/demo/guest-list/guest-update', { _csrf: csrf, wedding_id: w.ours, guest_id: guestId, household_id: householdId, first_name: '', side: 'both' }, w.planner))
     expect(invalid.status).toBe(400)
     expect(invalid.body).toContain('Edit guest')
+    expect(invalid.body).toContain('Check the fields')
+  })
+
+  it('taking the allowance from a guest whose plus-one is listed re-renders the edit page with the conflict notice', () => {
+    const w = setup()
+    const csrf = csrfOf(w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=guests`, w.planner)))
+    w.ui.handle(form('/t/demo/guest-list/household-add', { _csrf: csrf, wedding_id: w.ours, name: 'One' }, w.planner))
+    const householdId = /name="household_id" value="(household_[^"]+)"/.exec(w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=guests`, w.planner)).body)?.[1] as string
+    w.ui.handle(form('/t/demo/guest-list/guest-add', { _csrf: csrf, wedding_id: w.ours, household_id: householdId, first_name: 'Ana', side: 'both', plus_one_allowed: 'true' }, w.planner))
+    const guestId = /guest=(wguest_[^"&]+)/.exec(w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=guests`, w.planner)).body)?.[1] as string
+    w.ui.handle(form('/t/demo/guest-list/guest-add', { _csrf: csrf, wedding_id: w.ours, plus_one_of: guestId, first_name: 'Plus', side: 'both' }, w.planner))
+    const refused = w.ui.handle(
+      form('/t/demo/guest-list/guest-update', { _csrf: csrf, wedding_id: w.ours, guest_id: guestId, household_id: householdId, first_name: 'Ana', side: 'both' }, w.planner),
+    )
+    expect(refused.status).toBe(409)
+    expect(refused.body).toContain('Edit guest')
+    expect(refused.body).toContain('That is not possible right now')
   })
 
   it('a couple sees its own wedding\'s list; another wedding is the generic not-found', () => {

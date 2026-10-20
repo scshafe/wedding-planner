@@ -55,6 +55,8 @@ describe('the request log line — route patterns only', () => {
     expect(routePattern('/t/demo/reset?token=reset_supersecret')).toEqual({ route: '/t/:slug/reset', tenant: 'demo' })
     expect(routePattern('/admin/tenants/tenant_9/owner')).toEqual({ route: '/admin/tenants/:id/owner' })
     expect(routePattern('/healthz')).toEqual({ route: '/healthz' })
+    expect(routePattern('/t/demo/guest-list/guest-add')).toEqual({ route: '/t/:slug/guest-list/guest-add', tenant: 'demo' })
+    expect(routePattern('/t/demo/weddings/wedding_1/households/household_2')).toEqual({ route: '/t/:slug/weddings/:id/households/:id', tenant: 'demo' })
     expect(routePattern('/')).toEqual({ route: '/' })
     // A path segment that is not a valid slug yields no tenant (and is never echoed).
     expect(routePattern('/t/Not A Slug!/login')).toEqual({ route: '/t/:slug/login' })

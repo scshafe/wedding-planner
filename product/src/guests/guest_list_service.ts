@@ -4,7 +4,7 @@ import type { Principal } from '../auth/principal'
 import type { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import { isEmailAddress } from '../email/email_port'
 import { COLLECTIONS } from '../persistence/collections'
-import type { RecordStore } from '../persistence/record_store'
+import { groupedKey, type RecordStore } from '../persistence/record_store'
 import { ProductError } from '../product_error'
 import type { TenantContext } from '../tenant/tenant_context'
 import { TenantScopedRepository } from '../tenant/tenant_scoped_repository'
@@ -17,13 +17,16 @@ import type { WeddingRepository } from '../wedding/wedding_repository'
  * Who may touch it is the WEDDING's boundary, reused unchanged: a planner reaches every wedding of the tenant, a
  * couple only its own (`WeddingAuthorizer.authorizeRead/Update`). A couple addressing another wedding — and anyone
  * addressing a wedding that does not exist — gets the same PRODUCT.NOT_FOUND (the masked 404): no existence oracle.
- * Both collections sit behind `TenantScopedRepository` (tenant isolation inherited) and every record carries its
- * wedding_id, compared on every read and write so an id from a sibling wedding is "not found" too.
+ * Both collections sit behind `TenantScopedRepository` (tenant isolation inherited). Records are keyed
+ * `groupedKey(wedding_id, id)` and a wedding's list is read with `listGroup` (ADR 0039 addendum), so a request costs
+ * one wedding, never the whole tenant; an id from a sibling wedding addresses no record ("not found"), and the
+ * stored wedding_id is compared on every read as well.
  *
  * The plus-one model: a plus-one is a guest record whose `plus_one_of` names the guest who brings them — same
  * wedding, same household, at most one per guest, and only for a guest with `plus_one_allowed` (a plus-one never
  * has its own). So a plus-one counts, and later gets an RSVP, like anyone else. Removing a guest removes their
- * plus-one; removing a household removes its guests.
+ * plus-one; removing a household removes its guests and their plus-ones; moving a host to another household moves
+ * their plus-one with them.
  *
  * Contact details (email, phone, address) are personal data: they live only in these records, reach the wedding's
  * planner and couple only, and — like everything else — never a log line or an error entry (ADR 0044). Every record
@@ -86,8 +89,16 @@ export class GuestListService {
     store?: RecordStore,
     private readonly limits: { readonly households: number; readonly guests: number } = GUEST_LIST_LIMITS,
   ) {
-    this.#households = new TenantScopedRepository<Household>(liveness, (h) => h.household_id, COLLECTIONS.household, store)
-    this.#guests = new TenantScopedRepository<WeddingGuest>(liveness, (g) => g.guest_id, COLLECTIONS.weddingGuest, store)
+    this.#households = new TenantScopedRepository<Household>(liveness, (h) => groupedKey(h.wedding_id, h.household_id), COLLECTIONS.household, store)
+    this.#guests = new TenantScopedRepository<WeddingGuest>(liveness, (g) => groupedKey(g.wedding_id, g.guest_id), COLLECTIONS.weddingGuest, store)
+  }
+
+  /**
+   * The wedding's boundary, alone: PRODUCT.NOT_FOUND for a wedding this principal may not reach or that does not
+   * exist. The HTTP edge calls it before parsing a body; every method below checks it again.
+   */
+  assertReach(context: TenantContext, principal: Principal, wedding_id: string): void {
+    this.#reach(context, principal, wedding_id)
   }
 
   /** The wedding's households, guests and counts. */
@@ -148,12 +159,18 @@ export class GuestListService {
   /** Remove a household and every guest in it. Returns whether it existed. */
   removeHousehold(context: TenantContext, principal: Principal, wedding_id: string, household_id: string): boolean {
     this.#reach(context, principal, wedding_id)
-    const household = this.#households.read(context, household_id)
+    const household = this.#households.read(context, groupedKey(wedding_id, household_id))
     if (household === undefined || household.wedding_id !== wedding_id) return false
-    for (const guest of this.#guestsOf(context, wedding_id)) {
-      if (guest.household_id === household_id) this.#guests.delete(context, guest.guest_id)
+    const guests = this.#guestsOf(context, wedding_id)
+    const leaving = new Set(guests.filter((g) => g.household_id === household_id).map((g) => g.guest_id))
+    for (const guest of guests) {
+      // The household's guests, and the plus-one of any of them (who is in the same household unless a stale
+      // record says otherwise: never leave a plus-one whose host is gone).
+      if (leaving.has(guest.guest_id) || (guest.plus_one_of !== undefined && leaving.has(guest.plus_one_of))) {
+        this.#guests.delete(context, groupedKey(wedding_id, guest.guest_id))
+      }
     }
-    return this.#households.delete(context, household_id)
+    return this.#households.delete(context, groupedKey(wedding_id, household_id))
   }
 
   addGuest(context: TenantContext, principal: Principal, wedding_id: string, input: GuestInput): WeddingGuest {
@@ -199,8 +216,13 @@ export class GuestListService {
     const household_id = isPlusOne ? existing.household_id : (input.household_id ?? existing.household_id)
     if (!isPlusOne) this.#household(context, wedding_id, household_id, 'PRODUCT.BAD_REQUEST')
     const fields = this.#fields(input, isPlusOne)
-    if (!fields.plus_one_allowed && this.#guestsOf(context, wedding_id).some((g) => g.plus_one_of === guest_id)) {
+    const plusOne = isPlusOne ? undefined : this.#guestsOf(context, wedding_id).find((g) => g.plus_one_of === guest_id)
+    if (!fields.plus_one_allowed && plusOne !== undefined) {
       throw new ProductError('PRODUCT.PLUS_ONE_EXISTS', 'Remove the plus-one before taking the allowance away.', {})
+    }
+    // A host who moves takes their plus-one along (same transaction): a plus-one is always in their host's household.
+    if (plusOne !== undefined && plusOne.household_id !== household_id) {
+      this.#guests.put(context, { ...plusOne, household_id, updated_at: this.clock.now() })
     }
     const updated: WeddingGuest = {
       guest_id: existing.guest_id,
@@ -219,12 +241,12 @@ export class GuestListService {
   /** Remove a guest and their plus-one. Returns whether the guest existed. */
   removeGuest(context: TenantContext, principal: Principal, wedding_id: string, guest_id: string): boolean {
     this.#reach(context, principal, wedding_id)
-    const guest = this.#guests.read(context, guest_id)
+    const guest = this.#guests.read(context, groupedKey(wedding_id, guest_id))
     if (guest === undefined || guest.wedding_id !== wedding_id) return false
     for (const other of this.#guestsOf(context, wedding_id)) {
-      if (other.plus_one_of === guest_id) this.#guests.delete(context, other.guest_id)
+      if (other.plus_one_of === guest_id) this.#guests.delete(context, groupedKey(wedding_id, other.guest_id))
     }
-    return this.#guests.delete(context, guest_id)
+    return this.#guests.delete(context, groupedKey(wedding_id, guest_id))
   }
 
   /** The editable fields of a guest, normalized. A plus-one never has their own allowance. */
@@ -254,15 +276,15 @@ export class GuestListService {
   }
 
   #householdsOf(context: TenantContext, wedding_id: string): Household[] {
-    return this.#households.list(context).filter((h) => h.wedding_id === wedding_id)
+    return [...this.#households.listGroup(context, wedding_id)].filter((h) => h.wedding_id === wedding_id)
   }
 
   #guestsOf(context: TenantContext, wedding_id: string): WeddingGuest[] {
-    return this.#guests.list(context).filter((g) => g.wedding_id === wedding_id)
+    return [...this.#guests.listGroup(context, wedding_id)].filter((g) => g.wedding_id === wedding_id)
   }
 
   #household(context: TenantContext, wedding_id: string, household_id: string, code = 'PRODUCT.NOT_FOUND'): Household {
-    const household = household_id.length === 0 ? undefined : this.#households.read(context, household_id)
+    const household = household_id.length === 0 ? undefined : this.#households.read(context, groupedKey(wedding_id, household_id))
     if (household === undefined || household.wedding_id !== wedding_id) {
       throw new ProductError(code, 'No such household on this wedding.', {})
     }
@@ -270,7 +292,7 @@ export class GuestListService {
   }
 
   #guest(context: TenantContext, wedding_id: string, guest_id: string): WeddingGuest {
-    const guest = this.#guests.read(context, guest_id)
+    const guest = guest_id.length === 0 ? undefined : this.#guests.read(context, groupedKey(wedding_id, guest_id))
     if (guest === undefined || guest.wedding_id !== wedding_id) {
       throw new ProductError('PRODUCT.NOT_FOUND', 'No such guest on this wedding.', {})
     }

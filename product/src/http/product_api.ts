@@ -832,6 +832,9 @@ function dispatchGuestList(
   rest: readonly string[],
   guestList: GuestListService,
 ): ApiResponse {
+  // The wedding's boundary BEFORE any body is parsed (ADR 0013): a couple's other wedding and a missing one are the
+  // same masked 404, whatever the body holds.
+  guestList.assertReach(context, principal, weddingId)
   const [resource, id] = rest
   if (resource === 'guest-list' && id === undefined) {
     if (req.method !== 'GET') throw methodNotAllowed()

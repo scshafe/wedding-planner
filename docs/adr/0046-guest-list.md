@@ -25,10 +25,15 @@ them.
 - The messaging `guest` contract and its `guest_binding` collection are unchanged. Linking a guest's phone to a
   messaging binding is a later step.
 - Both collections are tenant-scoped, with every record carrying its `wedding_id`. Contract count: 23.
+- Records are keyed `groupedKey(wedding_id, id)` (`<wedding_id>/<id>`), and a wedding's list is read with
+  `listGroup` (the ADR 0039 addendum). A request then costs one wedding, never the tenant's whole history (a tenant's weddings are
+  unbounded). The other per-wedding stores of M2 follow the same shape.
 
 ### The wedding's boundary, reused
 
-`GuestListService` checks `WeddingAuthorizer.authorizeRead` and that the wedding exists, before any read or write:
+`GuestListService` checks `WeddingAuthorizer.authorizeRead` and that the wedding exists, before any read or write.
+The HTTP edge calls `assertReach` before it parses a body (ADR 0013), so a body's validity never depends on whether
+the wedding is reachable:
 - A planner reaches every wedding of the tenant.
 - A couple reaches only its own wedding.
 - A couple's other wedding, a wedding that does not exist, and an id belonging to a sibling wedding all get the same
@@ -44,7 +49,9 @@ A plus-one is a guest record whose `plus_one_of` names the guest who brings them
 - a plus-one never has their own allowance.
 
 So a plus-one counts and later gets an RSVP like anyone else. Removing a guest removes their plus-one; removing a
-household removes its guests. Taking an allowance away while the plus-one exists is refused (409).
+household removes its guests and their plus-ones. A host moved to another household takes their plus-one along, in
+the same transaction (the security review found the plus-one left behind, then orphaned when the new household
+was removed). Taking an allowance away while the plus-one exists is refused (409).
 
 ### Personal data
 
