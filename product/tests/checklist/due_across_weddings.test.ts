@@ -67,6 +67,26 @@ describe('ChecklistService.dueAcrossWeddings', () => {
     ])
   })
 
+  it('lists at most 10 tasks per wedding with a "more" count, carries no notes, and counts every one', () => {
+    const w = world()
+    const a = w.wedding('Busy & Co')
+    for (let i = 0; i < 13; i++) w.checklist.addTask(w.ctx, w.planner, a, { title: `t${i}`, notes: 'private note', due_date: '2028-01-0' + String((i % 9) + 1), assignee: 'planner' })
+    const due = w.checklist.dueAcrossWeddings(w.ctx, w.planner)
+    const group = due.weddings[0]
+    expect([...(group?.overdue ?? []), ...(group?.due_soon ?? [])]).toHaveLength(10)
+    expect(group?.more).toBe(3)
+    expect(due.overdue + due.due_soon).toBe(13)
+    expect(JSON.stringify(due)).not.toContain('private note')
+    expect(Object.keys(group?.overdue[0] ?? {}).sort()).toEqual(['assignee', 'due_date', 'task_id', 'title'])
+  })
+
+  it('refuses a principal the session store did not mint, even one claiming to be a planner', () => {
+    const w = world()
+    w.task(w.wedding('Ana & Bo'), 'secret', '2028-01-10')
+    const forged = { role: 'planner', tenant_id: w.ctx.tenant_id } as unknown as typeof w.planner
+    expect(() => w.checklist.dueAcrossWeddings(w.ctx, forged)).toThrow(expect.objectContaining({ code: 'PRODUCT.FORGED_PRINCIPAL' }))
+  })
+
   it('is the planner\'s: a couple is refused (and never sees another wedding\'s tasks)', () => {
     const w = world()
     const a = w.wedding('Ana & Bo')

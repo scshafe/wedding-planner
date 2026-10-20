@@ -14,7 +14,7 @@ import type {
 import type { TeamView } from '../accounts/membership_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
 import type { GuestEventRsvp, HouseholdRsvpView, WeddingEventCounts, WeddingEventsView } from '../wedding_events/wedding_event_service'
-import type { ChecklistView, DueAcrossWeddings } from '../checklist/checklist_service'
+import type { ChecklistView, DueAcrossWeddings, DueTask } from '../checklist/checklist_service'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -1851,7 +1851,7 @@ export function renderChecklist(
  * wedding with the most urgent first. Each group links to that wedding's checklist.
  */
 export function renderDueTasks(theme: Tenant['theme'], slug: string, due: DueAcrossWeddings): string {
-  const taskLine = (t: WeddingTask, overdue: boolean) =>
+  const taskLine = (t: DueTask, overdue: boolean) =>
     html`<li>${t.title} <span class="note"${overdue ? html` style="color:#b00"` : html``}>${`${overdue ? 'overdue since' : 'due'} ${t.due_date} · ${ASSIGNEE_LABELS[t.assignee]}`}</span></li>`
   return signedInShell(
     theme,
@@ -1867,6 +1867,7 @@ export function renderDueTasks(theme: Tenant['theme'], slug: string, due: DueAcr
           (w) => html`<div class="card">
     <h3><a href="/t/${slug}?wedding=${w.wedding_id}&amp;tab=checklist">${w.couple_display_name}</a> <span class="note">${`wedding ${w.event_date}`}</span></h3>
     <ul>${w.overdue.map((t) => taskLine(t, true))}${w.due_soon.map((t) => taskLine(t, false))}</ul>
+    ${w.more === 0 ? html`` : html`<p class="note"><a href="/t/${slug}?wedding=${w.wedding_id}&amp;tab=checklist">${`and ${w.more} more on the checklist →`}</a></p>`}
   </div>`,
         )
   }`,

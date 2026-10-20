@@ -41,15 +41,20 @@ export interface TaskInput {
   readonly assignee: TaskAssignee
 }
 
+/** A task as the morning view lists it: what, when, whose — nothing else (no notes). */
+export type DueTask = Pick<WeddingTask, 'task_id' | 'title' | 'due_date' | 'assignee'>
+
 /** One wedding's part of the planner's morning view (issue #32). */
 export interface DueWedding {
   readonly wedding_id: string
   readonly couple_display_name: string
   readonly event_date: string
-  /** Not done and due before today, oldest first. */
-  readonly overdue: readonly WeddingTask[]
-  /** Not done and due from today to today + 7 days (inclusive), soonest first. */
-  readonly due_soon: readonly WeddingTask[]
+  /** Not done and due before today, oldest first (at most {@link DUE_LISTED_PER_WEDDING}). */
+  readonly overdue: readonly DueTask[]
+  /** Not done and due from today to today + 7 days (inclusive), soonest first (at most the same). */
+  readonly due_soon: readonly DueTask[]
+  /** How many more are due than listed here (they are all on the wedding's checklist). */
+  readonly more: number
 }
 
 /** The planner's morning view across weddings (issue #32): what is overdue and what is due within a week. */
@@ -65,6 +70,9 @@ export interface DueAcrossWeddings {
 
 /** How far ahead "due this week" looks, in days (inclusive). */
 export const DUE_SOON_DAYS = 7
+
+/** How many tasks the morning view lists per wedding (the counts include every one). */
+export const DUE_LISTED_PER_WEDDING = 10
 
 /** A wedding's checklist as the page shows it: overdue first (oldest first), then upcoming (soonest first), then done. */
 export interface ChecklistView {
@@ -131,22 +139,27 @@ export class ChecklistService {
    * (`tasksOf`), never a tenant-wide list of tasks.
    */
   dueAcrossWeddings(context: TenantContext, principal: Principal): DueAcrossWeddings {
-    this.#planner(principal)
+    // The canonical "sees every wedding" rule, which also refuses a principal the session store did not mint.
+    if (this.authorizer.listScope(principal).kind !== 'all') this.#planner(principal)
     const today = this.today()
     const horizon = shiftDate(today, DUE_SOON_DAYS)
     const weddings = this.weddings
       .list(context)
       .filter((w) => w.status === 'planning' || w.status === 'active')
-      .flatMap((wedding): DueWedding[] => {
+      .flatMap((wedding): (DueWedding & { readonly counts: { readonly overdue: number; readonly due_soon: number } })[] => {
         const due = this.tasksOf(context, wedding.wedding_id).filter((t) => t.status === 'todo' && t.due_date <= horizon)
         if (due.length === 0) return []
+        const listed = due.slice(0, DUE_LISTED_PER_WEDDING).map((t) => ({ task_id: t.task_id, title: t.title, due_date: t.due_date, assignee: t.assignee }))
+        const overdue = due.filter((t) => t.due_date < today).length
         return [
           {
             wedding_id: wedding.wedding_id,
             couple_display_name: wedding.couple_display_name,
             event_date: wedding.event_date,
-            overdue: due.filter((t) => t.due_date < today),
-            due_soon: due.filter((t) => t.due_date >= today),
+            overdue: listed.filter((t) => t.due_date < today),
+            due_soon: listed.filter((t) => t.due_date >= today),
+            more: due.length - listed.length,
+            counts: { overdue, due_soon: due.length - overdue },
           },
         ]
       })
@@ -157,9 +170,9 @@ export class ChecklistService {
     return {
       today,
       horizon,
-      overdue: weddings.reduce((n, w) => n + w.overdue.length, 0),
-      due_soon: weddings.reduce((n, w) => n + w.due_soon.length, 0),
-      weddings,
+      overdue: weddings.reduce((n, w) => n + w.counts.overdue, 0),
+      due_soon: weddings.reduce((n, w) => n + w.counts.due_soon, 0),
+      weddings: weddings.map(({ counts: _counts, ...wedding }) => wedding),
     }
   }
 

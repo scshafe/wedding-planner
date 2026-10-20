@@ -69,7 +69,11 @@ and the page `/t/<slug>?view=due`.
   plus 7 days, inclusive), across the workspace's `planning` and `active` weddings, grouped by wedding, the most
   urgent wedding first. Completed and cancelled weddings are left out.
 - **How it reads:** each wedding through `tasksOf`, one at a time, never a tenant-wide list of tasks.
-- **Who sees it:** the planner only. A couple gets 403 for any method, so it never sees another wedding's tasks.
+- **What it returns:** each task as only its id, title, due date and assignee (no notes), at most 10 per wedding
+  with a count of the rest ("and N more on the checklist"); the totals count every one. The security review measured
+  a 66 MB answer at 500 weddings × 300 tasks with full records; the answer is now bounded by the weddings' count.
+- **Who sees it:** the planner only, by the authorizer's own "sees every wedding" rule (which also refuses a principal
+  the session store did not mint). A couple gets 403 for any method, so it never sees another wedding's tasks.
 - **Home overview:** shows the two counts to a planner, as an affordance like the billing card, and links to the page.
 
 ## Consequences
