@@ -424,6 +424,7 @@ export class ProductApi {
   /** The team (issue #11), or undefined when not wired. */
   readonly #membership: MembershipService | undefined
   readonly #householdRsvp: HouseholdRsvpDeps | undefined
+  readonly #checklist: ChecklistService | undefined
   /** In-app feedback (issue #12), or undefined when not wired. */
   readonly #feedback: FeedbackService | undefined
   /** The server-error log (issue #13), or undefined when not wired. */
@@ -448,6 +449,7 @@ export class ProductApi {
       ...(deps.checklist === undefined ? {} : { checklist: deps.checklist }),
     }
     this.#householdRsvp = deps.householdRsvp
+    this.#checklist = deps.checklist
     this.#guests = deps.guests
     this.#adminDeps = {
       onboarding: deps.onboarding,
@@ -596,6 +598,15 @@ export class ProductApi {
           ...(page === undefined ? {} : { page }),
         })
         return { status: 201, body: { feedback_id: submission.feedback_id } }
+      }
+
+      // /t/:slug/due-tasks — PROTECTED (issue #32): the planner's overdue / due-this-week view across weddings. A
+      // couple is 403 for any method (the capability check precedes the method check).
+      if (this.#checklist !== undefined && segments.length === 3 && segments[2] === 'due-tasks') {
+        const principal = this.#authenticate(req, context)
+        if (principal.role !== 'planner') throw forbidden()
+        if (req.method !== 'GET') throw methodNotAllowed()
+        return { status: 200, body: this.#checklist.dueAcrossWeddings(context, principal) }
       }
 
       // /t/:slug/weddings[...] — PROTECTED: stages 3–4 run BEFORE any method/shape distinction.

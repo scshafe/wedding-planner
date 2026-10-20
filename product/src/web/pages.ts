@@ -14,7 +14,7 @@ import type {
 import type { TeamView } from '../accounts/membership_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
 import type { GuestEventRsvp, HouseholdRsvpView, WeddingEventCounts, WeddingEventsView } from '../wedding_events/wedding_event_service'
-import type { ChecklistView } from '../checklist/checklist_service'
+import type { ChecklistView, DueAcrossWeddings, DueTask } from '../checklist/checklist_service'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -485,6 +485,8 @@ export interface AccountOverview {
   readonly billing?: { readonly balanceCents: number; readonly planTier: string }
   /** Issue #11: present for a planner (the team read answered) — members and pending invitations. */
   readonly team?: { readonly members: number; readonly pending: number }
+  /** Issue #32: present for a planner — open checklist tasks overdue, and due within a week, across weddings. */
+  readonly due?: { readonly overdue: number; readonly dueSoon: number }
 }
 
 /**
@@ -534,6 +536,14 @@ export function renderHome(
     <p>${`${overview.guestsCount} registered guest(s)`}</p>
   </div>
   ${billingCard}
+  ${
+    overview.due === undefined
+      ? html``
+      : html`<div class="card">
+    <h3><a href="/t/${slug}?view=due">Tasks due →</a></h3>
+    <p>${overview.due.overdue > 0 ? html`<strong>${`${overview.due.overdue} overdue`}</strong>` : html`${'0 overdue'}`}${` · ${overview.due.dueSoon} due this week`}</p>
+  </div>`
+  }
   ${
     overview.team === undefined
       ? html``
@@ -1833,6 +1843,35 @@ export function renderChecklist(
     <form method="post" action="/t/${slug}/checklist/task-add">${csrfField(csrfToken)}<input type="hidden" name="wedding_id" value="${w}">${taskFields('new')}<p><button type="submit">Add task</button></p></form>
   </div>`,
     'wedding',
+  )
+}
+
+/**
+ * The planner's morning view (issue #32): every open task overdue or due this week, across weddings, grouped by
+ * wedding with the most urgent first. Each group links to that wedding's checklist.
+ */
+export function renderDueTasks(theme: Tenant['theme'], slug: string, due: DueAcrossWeddings): string {
+  const taskLine = (t: DueTask, overdue: boolean) =>
+    html`<li>${t.title} <span class="note"${overdue ? html` style="color:#b00"` : html``}>${`${overdue ? 'overdue since' : 'due'} ${t.due_date} · ${ASSIGNEE_LABELS[t.assignee]}`}</span></li>`
+  return signedInShell(
+    theme,
+    slug,
+    'Tasks due',
+    html`<p><a href="/t/${slug}">← Overview</a></p>
+  <h2>Tasks due</h2>
+  <p class="note">${`Today is ${due.today}. ${due.overdue} overdue and ${due.due_soon} due by ${due.horizon}, across your weddings.`}</p>
+  ${
+    due.weddings.length === 0
+      ? html`<div class="card"><p>Nothing is overdue or due this week.</p></div>`
+      : due.weddings.map(
+          (w) => html`<div class="card">
+    <h3><a href="/t/${slug}?wedding=${w.wedding_id}&amp;tab=checklist">${w.couple_display_name}</a> <span class="note">${`wedding ${w.event_date}`}</span></h3>
+    <ul>${w.overdue.map((t) => taskLine(t, true))}${w.due_soon.map((t) => taskLine(t, false))}</ul>
+    ${w.more === 0 ? html`` : html`<p class="note"><a href="/t/${slug}?wedding=${w.wedding_id}&amp;tab=checklist">${`and ${w.more} more on the checklist →`}</a></p>`}
+  </div>`,
+        )
+  }`,
+    'home',
   )
 }
 

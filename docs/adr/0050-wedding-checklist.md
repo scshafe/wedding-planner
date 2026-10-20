@@ -3,7 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-10-19
 - **Decider:** the building agent (an agent-owned engineering decision per [[agents-own-buildout-decisions]]),
-  for issue #31 (M2 "Planning core")
+  for issues #31 and #32 (M2 "Planning core")
 - **Scope:** planners run every wedding from a checklist that is roughly the same each time, scheduled backwards
   from the date. The cross-wedding "overdue and due this week" view (#32) builds on it.
 
@@ -61,8 +61,21 @@ the first date, and a move back forgets it.
   CSRF token first.
 - At most 300 tasks per wedding.
 
+### Across weddings (issue #32)
+
+A planner's morning question has its own view: `ChecklistService.dueAcrossWeddings`, at `GET /t/<slug>/due-tasks`
+and the page `/t/<slug>?view=due`.
+- **What it lists:** every task not done that is overdue (due before today) or due this week (from today to today
+  plus 7 days, inclusive), across the workspace's `planning` and `active` weddings, grouped by wedding, the most
+  urgent wedding first. Completed and cancelled weddings are left out.
+- **How it reads:** each wedding through `tasksOf`, one at a time, never a tenant-wide list of tasks.
+- **What it returns:** each task as only its id, title, due date and assignee (no notes), at most 10 per wedding
+  with a count of the rest ("and N more on the checklist"); the totals count every one. The security review measured
+  a 66 MB answer at 500 weddings × 300 tasks with full records; the answer is now bounded by the weddings' count.
+- **Who sees it:** the planner only, by the authorizer's own "sees every wedding" rule (which also refuses a principal
+  the session store did not mint). A couple gets 403 for any method, so it never sees another wedding's tasks.
+- **Home overview:** shows the two counts to a planner, as an affordance like the billing card, and links to the page.
+
 ## Consequences
 
-- #32's planner-only view across weddings reads each active wedding's tasks through `ChecklistService.tasksOf`,
-  one wedding at a time, never a tenant-wide list.
 - Not done: custom templates; email reminders (the outbox could carry them later); recurring tasks.
