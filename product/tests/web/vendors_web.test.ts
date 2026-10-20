@@ -1,7 +1,7 @@
 import { ManualClock, SequentialIdGenerator } from '@wedding-planner/shared'
 import { describe, expect, it } from 'vitest'
 
-import { type ApiRequest, type ApiResponse, composeProductSurface, type HttpResult } from '@wedding-planner/product'
+import { type ApiRequest, type ApiResponse, composeProductSurface, type HttpResult, VENDOR_LIMITS } from '@wedding-planner/product'
 
 /** Issue #33 through the surface: the JSON routes (planner manages, couple reads shared), the page and its forms. */
 
@@ -67,6 +67,22 @@ describe('vendors', () => {
     expect(w.api('DELETE', `/t/demo/weddings/${w.ours}/vendors/${vendor.vendor_id}`, w.bearer).body).toEqual({ removed: true })
   })
 
+  it('at the limits, the planner page grows with vendors plus rows, not vendors times form fields (issue #54)', () => {
+    const w = setup()
+    const installments = Array.from({ length: VENDOR_LIMITS.installments }, (_, n) => ({ label: `Payment ${n}`, amount_cents: 100_000 + n, due_date: '2028-03-01' }))
+    for (let v = 0; v < VENDOR_LIMITS.vendors; v++) {
+      w.api('POST', `/t/demo/weddings/${w.ours}/vendors`, w.bearer, { category: 'other', category_other: 'x', business_name: `Vendor ${'&'.repeat(60)} ${v}`, contract_status: 'none', installments })
+    }
+    const planner = w.login({ role: 'planner' })
+    const page = w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=vendors`, planner))
+    expect(page.status).toBe(200)
+    expect((page.body.match(/<form /g) ?? []).length).toBeLessThan(5)
+    expect(page.body.length).toBeLessThan(350_000)
+    const vendorId = /&amp;vendor=([A-Za-z0-9_]+)/.exec(page.body)?.[1] as string
+    const view = w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=vendors&vendor=${vendorId}`, planner))
+    expect(view.body.length).toBeLessThan(60_000)
+  })
+
   it('the page: the planner adds a vendor with a schedule in dollars, marks a payment, and sees what is due next', () => {
     const w = setup()
     const planner = w.login({ role: 'planner' })
@@ -82,9 +98,16 @@ describe('vendors', () => {
     expect(body).toContain('Deposit (deposit): $1250.50, due 2028-01-05 — not paid')
     expect(body).toContain('2028-01-05 (overdue)')
     expect(body).toContain('Total $3250.50 · paid $0.00 · still due $3250.50')
-    const vendorId = /name="vendor_id" value="([^"]+)"/.exec(body)?.[1] as string
-    const installmentId = /name="installment_id" value="([^"]+)"/.exec(body)?.[1] as string
-    w.ui.handle(form('/t/demo/vendors/installment-paid', { _csrf: csrf, wedding_id: w.ours, vendor_id: vendorId, installment_id: installmentId, paid: 'true' }, planner))
+    // The list carries no per-vendor forms (issue #54): each vendor is edited on its own view.
+    expect(body).not.toContain('installment-paid')
+    expect(body).not.toContain('vendor-update')
+    const vendorId = /&amp;vendor=([A-Za-z0-9_]+)/.exec(body)?.[1] as string
+    const view = w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=vendors&vendor=${vendorId}`, planner)).body
+    expect(view).toContain('vendor-update')
+    expect(view).not.toContain('Add a vendor')
+    const installmentId = /name="installment_id" value="([^"]+)"/.exec(view)?.[1] as string
+    const marked = w.ui.handle(form('/t/demo/vendors/installment-paid', { _csrf: csrf, wedding_id: w.ours, vendor_id: vendorId, installment_id: installmentId, paid: 'true' }, planner))
+    expect(marked.headers.location).toBe(`/t/demo?wedding=${w.ours}&tab=vendors&vendor=${vendorId}&notice=saved`)
     expect(w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=vendors`, planner)).body).toContain('paid $1250.50')
     const invalid = w.ui.handle(form('/t/demo/vendors/vendor-add', { _csrf: csrf, wedding_id: w.ours, category: 'cake', business_name: 'Cake', contract_status: 'none', i0_id: '', i0_label: 'All', i0_amount: '12.345', i0_due: '2028-03-01' }, planner))
     expect(invalid.headers.location).toContain('notice=invalid')
