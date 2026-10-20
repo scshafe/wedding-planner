@@ -25,6 +25,10 @@ guest_id: string
  * Whether the guest is invited to this event (overrides the event's invitation default). A guest not invited has no answer (status pending).
  */
 invited: boolean
+/**
+ * Who set `invited` themselves (issue #41): the planner or the couple. Absent when the invitation is inherited (the host's for a plus-one, else the event's default), even after the household answered. Expand step: accepted before any code writes it, so an older build tolerates it after a rollback.
+ */
+invitation_by?: ("planner" | "couple")
 status: ("pending" | "attending" | "declined")
 /**
  * One of the event's meal options; only while attending.
