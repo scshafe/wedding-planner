@@ -90,6 +90,14 @@ export class SeatingService implements GuestListHooks {
   /** The plan for one event (`event_id`, or the default: the reception, else the last event). */
   view(context: TenantContext, principal: Principal, wedding_id: string, event_id?: string): SeatingView {
     this.assertReach(context, principal, wedding_id)
+    return this.planOf(context, wedding_id, event_id)
+  }
+
+  /**
+   * The seating plan with no boundary check: for a caller that has already established reach (the weekly risk summary's
+   * job, issue #62). The same view the planner sees.
+   */
+  planOf(context: TenantContext, wedding_id: string, event_id?: string): SeatingView {
     const events = this.events.eventsOf(context, wedding_id)
     const event = pickEvent(events, event_id)
     const statuses = event === undefined ? undefined : this.events.statusesFor(context, wedding_id, event.event_id)

@@ -242,6 +242,11 @@ export class WeddingEventService implements GuestListHooks {
     }
   }
 
+  /** Whether the wedding's RSVPs are closed, with no boundary check: for a caller that has already established reach. */
+  rsvpsClosed(context: TenantContext, wedding_id: string): boolean {
+    return this.#closed(context, wedding_id)
+  }
+
   /** Whether a wedding's RSVPs are closed (no record: open). */
   #closed(context: TenantContext, wedding_id: string): boolean {
     const settings = this.#settings.read(context, wedding_id)

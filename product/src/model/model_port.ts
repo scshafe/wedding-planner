@@ -30,7 +30,7 @@ import type { ContractKey } from '@wedding-planner/shared'
  */
 
 /** The contracts a model's output may be validated against: model outputs only, never a persisted record's. */
-export const MODEL_OUTPUT_CONTRACTS = ['copilot_draft_output', 'guest_answer_output'] as const satisfies readonly ContractKey[]
+export const MODEL_OUTPUT_CONTRACTS = ['copilot_draft_output', 'guest_answer_output', 'risk_summary_output'] as const satisfies readonly ContractKey[]
 export type ModelOutputContract = (typeof MODEL_OUTPUT_CONTRACTS)[number]
 
 /** One task the product asks a model for: defined once, in code. `T` is what its validated output is. */

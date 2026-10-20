@@ -18,6 +18,7 @@ import type { RunOfShowInput, RunOfShowService } from '../run_of_show/run_of_sho
 import type { ModelService } from '../model/model_service'
 import { DOCUMENT_KINDS, type DocumentKind, type DocumentService, type DocumentUpdateInput, type DocumentUploadInput } from '../documents/document_service'
 import { type CopilotAcceptance, COPILOT_LIMITS, type CopilotService } from '../copilot/copilot_service'
+import type { RiskSummaryService } from '../risk/risk_summary_service'
 import type { JobQueue } from '../jobs/job_queue'
 import type { SeatingService, TableInput } from '../seating/seating_service'
 import { SITE_LIMITS, type SiteInput, type SiteService } from '../site/site_service'
@@ -204,6 +205,8 @@ export interface WeddingHandlerDeps {
   readonly documents?: DocumentService
   /** Issue #61: the planner copilot. Absent ⇒ the sub-routes are not mounted. */
   readonly copilot?: CopilotService
+  /** Issue #62: the weekly risk summary. Absent ⇒ the sub-route is not mounted. */
+  readonly risk?: RiskSummaryService
 }
 
 /** Issue #47: what the public website read needs — the sites. */
@@ -377,6 +380,8 @@ export interface ProductApiDeps {
   readonly documents?: DocumentService
   /** Issue #61: the planner copilot, under /t/:slug/weddings/:id/copilot. */
   readonly copilot?: CopilotService
+  /** Issue #62: the weekly risk summary, under /t/:slug/weddings/:id/risk-summary and /t/:slug/risk-summaries. */
+  readonly risk?: RiskSummaryService
   /** Issue #61: the model job queue, drained after each request (deferred work). */
   readonly jobs?: Pick<JobQueue, 'drain'>
   /**
@@ -468,6 +473,7 @@ export class ProductApi {
   readonly #householdRsvp: HouseholdRsvpDeps | undefined
   readonly #jobs: Pick<JobQueue, 'drain'> | undefined
   readonly #checklist: ChecklistService | undefined
+  readonly #risk: RiskSummaryService | undefined
   readonly #publicSite: PublicSiteDeps | undefined
   /** In-app feedback (issue #12), or undefined when not wired. */
   readonly #feedback: FeedbackService | undefined
@@ -498,11 +504,13 @@ export class ProductApi {
       ...(deps.site === undefined ? {} : { site: deps.site.sites }),
       ...(deps.documents === undefined ? {} : { documents: deps.documents }),
       ...(deps.copilot === undefined ? {} : { copilot: deps.copilot }),
+      ...(deps.risk === undefined ? {} : { risk: deps.risk }),
     }
     this.#jobs = deps.jobs
     this.#publicSite = deps.site
     this.#householdRsvp = deps.householdRsvp
     this.#checklist = deps.checklist
+    this.#risk = deps.risk
     this.#guests = deps.guests
     this.#adminDeps = {
       onboarding: deps.onboarding,
@@ -663,6 +671,15 @@ export class ProductApi {
           ...(page === undefined ? {} : { page }),
         })
         return { status: 201, body: { feedback_id: submission.feedback_id } }
+      }
+
+      // /t/:slug/risk-summaries — PROTECTED (issue #62): this week's risk summaries across the upcoming weddings. The
+      // planner only (the capability check precedes the method check); reading asks for the stale ones.
+      if (this.#risk !== undefined && segments.length === 3 && segments[2] === 'risk-summaries') {
+        const principal = this.#authenticate(req, context)
+        if (principal.role !== 'planner') throw forbidden()
+        if (req.method !== 'GET') throw methodNotAllowed()
+        return { status: 200, body: this.#risk.overview(context, principal) }
       }
 
       // /t/:slug/due-tasks — PROTECTED (issue #32): the planner's overdue / due-this-week view across weddings. A
@@ -955,6 +972,11 @@ function dispatchWeddings(
   // /t/:slug/weddings/:weddingId/documents[/:id] (issue #48).
   if (deps.documents !== undefined && weddingId !== undefined && segments[4] === 'documents' && segments.length <= 6) {
     return dispatchDocuments(context, principal, req, weddingId, segments[5], deps.documents)
+  }
+  // /t/:slug/weddings/:weddingId/risk-summary (issue #62): the wedding's boundary, then the planner's capability.
+  if (deps.risk !== undefined && weddingId !== undefined && segments[4] === 'risk-summary' && segments.length === 5) {
+    if (req.method !== 'GET') throw methodNotAllowed()
+    return { status: 200, body: deps.risk.view(context, principal, weddingId) }
   }
   // /t/:slug/weddings/:weddingId/copilot[/accept] (issue #61).
   if (deps.copilot !== undefined && weddingId !== undefined && segments[4] === 'copilot' && segments.length <= 6) {

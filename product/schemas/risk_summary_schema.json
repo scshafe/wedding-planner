@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/risk_summary.json",
+  "title": "RiskSummary",
+  "description": "A wedding's risk summary for one ISO week (issue #62, ADR 0060): the level and the lines worded from that week's signals. One per wedding, keyed by wedding_id, replaced each week. The planner's only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tenant_id", "wedding_id", "week", "level", "lines", "generated_at"],
+  "properties": {
+    "tenant_id": { "type": "string", "minLength": 1, "description": "The owning tenant. Compared to the context's tenant only; never selects the partition." },
+    "wedding_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "week": { "type": "string", "pattern": "^[0-9]{4}-W[0-9]{2}$" },
+    "level": { "enum": ["on_track", "watch", "at_risk"] },
+    "lines": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 1000 } },
+    "generated_at": { "type": "string", "minLength": 1 }
+  }
+}

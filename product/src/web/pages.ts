@@ -25,6 +25,7 @@ import type { PublicSiteView, SiteEditView } from '../site/site_service'
 import type { ModelUsageView } from '../model/model_service'
 import { DOCUMENT_KINDS, type DocumentKind, type DocumentLine, type DocumentsView } from '../documents/document_service'
 import type { CopilotView } from '../copilot/copilot_service'
+import type { RiskOverview, RiskView } from '../risk/risk_summary_service'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -488,6 +489,37 @@ export function countOpenEscalations(
  * optional `billing` is present ONLY for a planner (a couple's `GET /billing` is a 403 → the card is omitted, an
  * affordance, not a masked value).
  */
+const RISK_LEVELS = Object.freeze({ on_track: 'On track', watch: 'Worth a look', at_risk: 'At risk' })
+
+/**
+ * Issue #62: this week across the upcoming weddings — the ones worth a look, most at risk first, with their first line;
+ * how many are on track, and how many are still being summarized.
+ */
+function riskOverviewCard(slug: string, risk: RiskOverview): SafeHtml {
+  const rank = { at_risk: 0, watch: 1, on_track: 2 } as const
+  const flagged = risk.weddings
+    .filter((w) => w.summary !== undefined && w.summary.level !== 'on_track')
+    .sort((a, b) => rank[a.summary?.level ?? 'on_track'] - rank[b.summary?.level ?? 'on_track'])
+  const onTrack = risk.weddings.filter((w) => w.summary?.level === 'on_track').length
+  const preparing = risk.weddings.filter((w) => w.summary === undefined).length
+  return html`<div class="card"><h3>This week across your weddings</h3>${
+    flagged.length === 0
+      ? html`<p class="note">Nothing is slipping in the summarized weddings.</p>`
+      : html`<ul>${flagged.map(
+          (w) => html`<li><a href="/t/${slug}?wedding=${w.wedding_id}">${w.couple_display_name}</a> <span class="note">${`${RISK_LEVELS[w.summary?.level ?? 'watch']} · ${w.summary?.lines[0] ?? ''}`}</span></li>`,
+        )}</ul>`
+  }<p class="note">${`${onTrack} on track${preparing > 0 ? ` · ${preparing} being summarized (refresh in a moment)` : ''}.`}</p></div>`
+}
+
+/** Issue #62: a wedding's summary for this week (the planner's only). */
+function riskCard(risk: RiskView): SafeHtml {
+  if (risk.summary === undefined) return html`<div class="card"><h3>This week</h3><p class="note">This week's summary is being prepared. Refresh in a moment.</p></div>`
+  const s = risk.summary
+  return html`<div class="card"><h3>${`This week: ${RISK_LEVELS[s.level]}`}</h3>${
+    s.lines.length === 0 ? html`<p class="note">Nothing is slipping.</p>` : html`<ul>${s.lines.map((l) => html`<li>${l}</li>`)}</ul>`
+  }<p class="note">${`Week ${s.week}. From the checklist, payments, RSVPs, seating and contracts.`}</p></div>`
+}
+
 export interface AccountOverview {
   readonly weddingsCount: number
   readonly openQuestionsCount: number
@@ -497,6 +529,8 @@ export interface AccountOverview {
   readonly team?: { readonly members: number; readonly pending: number }
   /** Issue #32: present for a planner — open checklist tasks overdue, and due within a week, across weddings. */
   readonly due?: { readonly overdue: number; readonly dueSoon: number }
+  /** Issue #62: present for a planner — this week's risk summaries across the upcoming weddings. */
+  readonly risk?: RiskOverview
 }
 
 /**
@@ -554,6 +588,7 @@ export function renderHome(
     <p>${overview.due.overdue > 0 ? html`<strong>${`${overview.due.overdue} overdue`}</strong>` : html`${'0 overdue'}`}${` · ${overview.due.dueSoon} due this week`}</p>
   </div>`
   }
+  ${overview.risk === undefined ? html`` : riskOverviewCard(slug, overview.risk)}
   ${
     overview.team === undefined
       ? html``
@@ -983,6 +1018,7 @@ export function renderDetail(
     readonly open: number
     readonly dateMove?: { readonly from_date: string; readonly to_date: string; readonly days: number }
   },
+  risk?: RiskView,
 ): string {
   // Issue #31: the checklist at a glance, and — right after the date moved — the offer to move the open tasks too.
   const checklistLine =
@@ -1054,10 +1090,11 @@ export function renderDetail(
     <p>Status: <span class="status">${wedding.status}</span></p>
     <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=guests">Guest list →</a></p>
     ${checklistLine}
-    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=vendors">Vendors →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=budget">Budget →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=run-of-show">Run of show →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=seating">Seating →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=site">Website →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=documents">Documents →</a>${inviteCouple === undefined ? html`` : html` · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=copilot">Assistant →</a>`}</p>
+    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=vendors">Vendors →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=budget">Budget →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=run-of-show">Run of show →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=seating">Seating →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=site">Website →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=documents">Documents →</a>${inviteCouple === undefined && risk === undefined ? html`` : html` · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=copilot">Assistant →</a>`}</p>
     <p class="note">Wedding id: <code>${wedding.wedding_id}</code> · created ${wedding.created_at}</p>
     <p class="note">Active strategy: <a href="/t/${slug}/strategy">the platform’s data-optimized planning defaults</a> (applied to every wedding in this workspace).</p>
   </div>
+  ${risk === undefined ? html`` : riskCard(risk)}
   <div class="card"><h3>Edit wedding</h3>${editWarning}
     <form method="post" action="/t/${slug}/weddings/update">
       ${csrfField(csrfToken)}
