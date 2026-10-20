@@ -16,6 +16,7 @@ import type { MembershipService } from '../accounts/membership_service'
 import type { RateLimiter } from '../accounts/rate_limiter'
 import type { BudgetCategoryInput, BudgetService } from '../budget/budget_service'
 import type { RunOfShowInput, RunOfShowService } from '../run_of_show/run_of_show_service'
+import type { SeatingService, TableInput } from '../seating/seating_service'
 import type { ChecklistService, TaskInput } from '../checklist/checklist_service'
 import {
   type InstallmentInput,
@@ -188,6 +189,8 @@ export interface WeddingHandlerDeps {
   readonly budget?: BudgetService
   /** Issue #45: the wedding's run of show. Absent ⇒ the sub-routes are not mounted. */
   readonly runOfShow?: RunOfShowService
+  /** Issue #46: the wedding's seating plan. Absent ⇒ the sub-routes are not mounted. */
+  readonly seating?: SeatingService
 }
 
 /** Issue #30: what the public household RSVP route needs — the link resolver, the answers, the dietary note, a limiter. */
@@ -359,6 +362,8 @@ export interface ProductApiDeps {
   readonly budget?: BudgetService
   /** Issue #45: each wedding's run of show, under /t/:slug/weddings/:id/run-of-show. */
   readonly runOfShow?: RunOfShowService
+  /** Issue #46: each wedding's seating plan, under /t/:slug/weddings/:id/seating. */
+  readonly seating?: SeatingService
   /**
    * Issue #13: where a request that ends in a 500 is recorded (code + location, never data), and what the operator
    * reads at /admin/errors. Absent ⇒ nothing is recorded (fixtures).
@@ -472,6 +477,7 @@ export class ProductApi {
       ...(deps.vendors === undefined ? {} : { vendors: deps.vendors }),
       ...(deps.budget === undefined ? {} : { budget: deps.budget }),
       ...(deps.runOfShow === undefined ? {} : { runOfShow: deps.runOfShow }),
+      ...(deps.seating === undefined ? {} : { seating: deps.seating }),
     }
     this.#householdRsvp = deps.householdRsvp
     this.#checklist = deps.checklist
@@ -858,6 +864,7 @@ function errorToResponse(error: WeddingPlannerError): ApiResponse {
     case 'PRODUCT.PLUS_ONE_EXISTS':
     case 'PRODUCT.LIMIT_REACHED':
     case 'PRODUCT.RSVPS_CLOSED':
+    case 'PRODUCT.SEATING_FULL':
       return RESP_CONFLICT
     // FORGED_CONTEXT / FORGED_PRINCIPAL / CROSS_TENANT_WRITE / anything else: an internal invariant
     // violation a real request can never construct — a 500 bug, never a normal client path, never leaked.
@@ -894,6 +901,10 @@ function dispatchWeddings(
     throw methodNotAllowed()
   }
   const weddingId = segments[3]
+  // /t/:slug/weddings/:weddingId/seating[/tables[/:id] | /seats/:guestId | /households/:id] (issue #46).
+  if (deps.seating !== undefined && weddingId !== undefined && segments[4] === 'seating' && segments.length <= 7) {
+    return dispatchSeating(context, principal, req, weddingId, segments.slice(5), deps.seating)
+  }
   // /t/:slug/weddings/:weddingId/run-of-show[/:id] (issue #45).
   if (deps.runOfShow !== undefined && weddingId !== undefined && segments[4] === 'run-of-show' && segments.length <= 6) {
     return dispatchRunOfShow(context, principal, req, weddingId, segments[5], deps.runOfShow)
@@ -1097,6 +1108,62 @@ function dispatchChecklist(
   }
   if (req.method === 'DELETE') return { status: 200, body: { removed: checklist.removeTask(context, principal, weddingId, id) } }
   throw methodNotAllowed()
+}
+
+/**
+ * The seating routes of one wedding (issue #46). The wedding's boundary first; the planner and the couple both manage
+ * seating. `GET …/seating?event=<id>` is the plan for one event.
+ */
+function dispatchSeating(
+  context: TenantContext,
+  principal: Principal,
+  req: ApiRequest,
+  weddingId: string,
+  rest: readonly string[],
+  seating: SeatingService,
+): ApiResponse {
+  seating.assertReach(context, principal, weddingId)
+  const [resource, id] = rest
+  if (resource === undefined) {
+    if (req.method !== 'GET') throw methodNotAllowed()
+    const event = queryValue(req.path, 'event')
+    return { status: 200, body: seating.view(context, principal, weddingId, event) }
+  }
+  if (resource === 'tables' && id === undefined) {
+    if (req.method !== 'POST') throw methodNotAllowed()
+    return { status: 201, body: { table: seating.addTable(context, principal, weddingId, tableInput(req)) } }
+  }
+  if (resource === 'tables' && id !== undefined) {
+    if (req.method === 'PUT') return { status: 200, body: { table: seating.updateTable(context, principal, weddingId, id, tableInput(req)) } }
+    if (req.method === 'DELETE') return { status: 200, body: { removed: seating.removeTable(context, principal, weddingId, id) } }
+    throw methodNotAllowed()
+  }
+  if ((resource === 'seats' || resource === 'households') && id !== undefined) {
+    if (req.method !== 'PUT') throw methodNotAllowed()
+    const table = parseObjectBody(req.rawBody).table_id
+    if (table !== null && typeof table !== 'string') throw new ProductError('PRODUCT.BAD_REQUEST', 'table_id must be a table id, or null to unseat.', {})
+    if (resource === 'seats') {
+      seating.seatGuest(context, principal, weddingId, id, table ?? undefined)
+      return { status: 200, body: { seated: table !== null } }
+    }
+    if (table === null) throw new ProductError('PRODUCT.BAD_REQUEST', 'A household is seated at a table.', {})
+    return { status: 200, body: { seated: seating.seatHousehold(context, principal, weddingId, id, table) } }
+  }
+  throw routeNotFound()
+}
+
+/** A table body: `{name, capacity}`. */
+function tableInput(req: ApiRequest): TableInput {
+  const body = parseObjectBody(req.rawBody)
+  const capacity = body.capacity
+  if (typeof capacity !== 'number') throw new ProductError('PRODUCT.BAD_REQUEST', 'capacity must be a whole number.', {})
+  return { name: requireString(body, 'name'), capacity }
+}
+
+/** One query-string value of a path, or undefined. */
+function queryValue(path: string, name: string): string | undefined {
+  const at = path.indexOf('?')
+  return at === -1 ? undefined : (new URLSearchParams(path.slice(at + 1)).get(name) ?? undefined)
 }
 
 /**

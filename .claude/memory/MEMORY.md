@@ -66,4 +66,5 @@
 - [Vendors per wedding](vendors-per-wedding.md) — #33 / ADR 0051: installments in integer cents with stable ids; couple sees shared only, no notes; assertPlainText
 - [Budget per wedding](budget-per-wedding.md) — #34 / ADR 0052: linked lines computed from the vendor schedule; couple sees shared lines only, never an unshared vendor
 - [Run of show](run-of-show.md) — #45 / ADR 0053: timeline lines with vendor arrivals; couple sees unshared vendors by category
+- [Seating plan](seating-plan.md) — #46 / ADR 0054: one seat per guest, hard capacity, plan per event; guest-list hook fans out to seating
 - [Guest list CSV](guest-list-csv.md) — #28 / ADR 0047: export neutralizes formulas; import plans every row, applies all-or-nothing, matches by household + name

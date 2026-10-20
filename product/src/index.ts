@@ -342,6 +342,8 @@ export {
   type TaskStatus,
 } from './checklist/checklist_service'
 export { CHECKLIST_TEMPLATE, type ChecklistOffset, type ChecklistTemplateItem, dateBefore, daysBetween, shiftDate } from './checklist/checklist_template'
+// A wedding's seating plan: tables, seats, capacity (issue #46, ADR 0054).
+export { type SeatedGuest, SEATING_LIMITS, SeatingService, type SeatingView, type TableInput } from './seating/seating_service'
 // A wedding's run of show: the day-of timeline and vendor call times (issue #45, ADR 0053).
 export {
   RUN_OF_SHOW_LIMITS,

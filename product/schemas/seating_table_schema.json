@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/seating_table.json",
+  "title": "SeatingTable",
+  "description": "One table of a wedding's seating plan (issue #46): a name and how many guests it seats. Stored under groupedKey(wedding_id, table_id).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "table_id",
+    "tenant_id",
+    "wedding_id",
+    "name",
+    "capacity",
+    "created_at"
+  ],
+  "properties": {
+    "table_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Identity within the owning tenant's partition, from the injected id generator."
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The owning tenant. Compared to the context's tenant only; never selects the partition."
+    },
+    "wedding_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60
+    },
+    "capacity": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50,
+      "description": "How many guests it seats."
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO 8601 UTC creation time, from the injected clock."
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO 8601 UTC time of the last change, when changed."
+    }
+  }
+}

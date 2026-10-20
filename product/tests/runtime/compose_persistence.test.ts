@@ -137,6 +137,11 @@ describe('durable storage — data written before a restart is read back after i
     expect(api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/budget`, { token, body: { name: 'Flowers', estimated_cents: 200000 } })).status).toBe(201)
     // A run-of-show item (issue #45).
     expect(api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/run-of-show`, { token, body: { starts_at: '2028-09-02T15:00', title: 'Doors open', owner: 'planner' } })).status).toBe(201)
+    // A table and a seat (issue #46).
+    const tableRes = api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/seating/tables`, { token, body: { name: 'Table 1', capacity: 8 } }))
+    expect(tableRes.status).toBe(201)
+    const tableId = (tableRes.body as { table: { table_id: string } }).table.table_id
+    expect(api1.handle(req('PUT', `/t/demo/weddings/${newWeddingId}/seating/seats/${guestId}`, { token, body: { table_id: tableId } })).status).toBe(200)
     const provisioned = api1.handle(
       req('POST', '/admin/tenants', {
         token: OP,
