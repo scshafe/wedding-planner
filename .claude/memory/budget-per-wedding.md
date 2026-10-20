@@ -9,8 +9,10 @@ Since issue #34 (2026-10-19): `product/src/budget/budget_service.ts`.
 
 - A linked line's amounts are COMPUTED from `VendorService.vendorsOf` on every read (never copied); manual amounts
   stay on the record so a removed vendor falls back (`vendor_missing`).
-- Couple view: shared lines only; totals over those lines only; `vendor_id` stripped and `vendor_name` only when the
-  vendor itself is shared; next payments labelled with the LINE's name; no vendor list.
+- Couple view: shared lines only; totals over those lines only; each line rebuilt from an ALLOW-LIST
+  (`asTheCoupleSeesIt`: resolved amounts, no vendor id, no fallback amounts, vendor_missing false); `vendor_name` and
+  installment labels only when the vendor itself is shared (else "Deposit"/"Payment"); no vendor list.
+- One line per vendor (refused otherwise): a vendor followed twice would double every total.
 - Planner check before body parse on management routes (honest 403 on own wedding).
 
 Related: [[vendors-per-wedding]], [[wedding-checklist]].

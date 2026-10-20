@@ -87,6 +87,32 @@ describe('BudgetService', () => {
     expect(w.budget.view(w.ctx, w.couple, w.ours).lines[0]?.vendor_name).toBe('Secret Hall')
   })
 
+  it("the couple never reads an unshared vendor's labels, fallback amounts or removal, nor can tell a line follows one", () => {
+    const w = world()
+    const secret = w.vendors.addVendor(w.ctx, w.planner, w.ours, {
+      category: 'cake',
+      business_name: 'Secret Bakery',
+      contract_status: 'signed',
+      installments: [{ label: 'Secret Bakery balance (ref 4711)', amount_cents: 50_000, due_date: '2028-04-01' }],
+    })
+    w.budget.addCategory(w.ctx, w.planner, w.ours, { name: 'Cake', estimated_cents: 40_000, vendor_id: secret.vendor_id, actual_cents: 777_777, paid_cents: 333_333, shared_with_couple: true })
+    const view = w.budget.view(w.ctx, w.couple, w.ours)
+    const text = JSON.stringify(view)
+    for (const hidden of ['Secret Bakery', '4711', '777777', '333333', secret.vendor_id]) expect(text).not.toContain(hidden)
+    expect(view.next_payments.map((p) => [p.category_name, p.label])).toEqual([['Cake', 'Payment']])
+    expect(view.lines[0]?.category).toMatchObject({ actual_cents: 50_000, paid_cents: 0 })
+    w.vendors.removeVendor(w.ctx, w.planner, w.ours, secret.vendor_id)
+    expect(w.budget.view(w.ctx, w.couple, w.ours).lines[0]?.vendor_missing).toBe(false)
+    expect(w.budget.view(w.ctx, w.planner, w.ours).lines[0]?.vendor_missing).toBe(true)
+  })
+
+  it("one line per vendor: a second line following the same vendor is refused (it would count twice)", () => {
+    const w = world()
+    const venue = w.budget.addCategory(w.ctx, w.planner, w.ours, { name: 'Venue', estimated_cents: 1, vendor_id: w.venue.vendor_id })
+    expect(codeOf(() => w.budget.addCategory(w.ctx, w.planner, w.ours, { name: 'Venue again', estimated_cents: 1, vendor_id: w.venue.vendor_id }))).toBe('PRODUCT.BAD_REQUEST')
+    expect(w.budget.updateCategory(w.ctx, w.planner, w.ours, venue.category_id, { name: 'Venue', estimated_cents: 2, vendor_id: w.venue.vendor_id }).estimated_cents).toBe(2)
+  })
+
   it("a line whose vendor is removed falls back to its manual amounts, and says so", () => {
     const w = world()
     w.budget.addCategory(w.ctx, w.planner, w.ours, { name: 'Venue', estimated_cents: 450_000, vendor_id: w.venue.vendor_id, actual_cents: 420_000, paid_cents: 100_000 })

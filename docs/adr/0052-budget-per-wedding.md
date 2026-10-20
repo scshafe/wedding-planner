@@ -21,7 +21,9 @@
   what is still due is the difference. Its next payments are the vendor's unpaid installments. Nothing is copied, so
   editing the vendor's schedule moves the budget at once.
 - **Manual line:** it uses its own actual and paid amounts. Still due is actual minus paid, never below zero.
-- **Vendor removed:** the line falls back to its manual amounts and says its vendor was removed. The manual amounts
+- **One line per vendor:** a vendor already followed by another line of the wedding is refused, so its schedule never
+  counts twice in the totals.
+- **Vendor removed:** the line falls back to its manual amounts and says its vendor was removed (to the planner). The manual amounts
   are kept while a line is linked for exactly this case.
 - **Totals:** estimated, actual, paid and still due over the lines in view, plus the ten soonest unpaid installments
   (overdue ones flagged against the injected clock's date). The page also says when actual is over the estimate.
@@ -33,8 +35,10 @@ The boundary is the wedding's (`assertWeddingReach`).
   checked before the body is parsed.
 - The couple sees only the lines the planner shares, and totals over those lines only.
 - A shared line that follows a vendor the couple may not see shows its amounts and next payments under the line's own
-  name. The vendor's name and id never reach the couple. Once the planner shares the vendor as well, the couple sees
-  which vendor the line follows.
+  name, with neutral installment labels ("Deposit" or "Payment": the vendor's own labels are the planner's free text
+  and may name it). The couple's line is built from an allow-list, so nothing in it tells the couple that the line
+  follows an unshared vendor: no vendor id, no fallback amounts, no "vendor removed". Once the planner shares the
+  vendor as well, the couple sees which vendor the line follows and its labels.
 - The list of vendors a line may link to is in the planner's view only.
 
 ### Routes and pages

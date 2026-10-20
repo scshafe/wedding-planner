@@ -124,15 +124,24 @@ export class BudgetService {
     const next_payments = lines
       .flatMap((l) => {
         const vendor = l.category.vendor_id === undefined ? undefined : vendors.get(l.category.vendor_id)
+        // An installment's label is the planner's free text on the vendor: the couple reads it only for a vendor it
+        // may see; otherwise a neutral label from the structured fields.
+        const labelled = planner || vendor?.shared_with_couple === true
         return (vendor?.installments ?? [])
           .filter((i) => !i.paid)
-          .map((i) => ({ category_name: l.category.name, label: i.label, amount_cents: i.amount_cents, due_date: i.due_date, overdue: i.due_date < today }))
+          .map((i) => ({
+            category_name: l.category.name,
+            label: labelled ? i.label : i.deposit ? 'Deposit' : 'Payment',
+            amount_cents: i.amount_cents,
+            due_date: i.due_date,
+            overdue: i.due_date < today,
+          }))
       })
       .sort((a, b) => (a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : 0))
       .slice(0, NEXT_PAYMENTS_LISTED)
     return {
       today,
-      lines: planner ? lines : lines.map((l) => ({ ...l, category: withoutVendor(l.category) })),
+      lines: planner ? lines : lines.map(asTheCoupleSeesIt),
       totals,
       next_payments,
       can_manage: planner,
@@ -163,7 +172,7 @@ export class BudgetService {
       category_id: existing.category_id,
       tenant_id: existing.tenant_id,
       wedding_id: existing.wedding_id,
-      ...this.#fields(context, wedding_id, input),
+      ...this.#fields(context, wedding_id, input, existing.category_id),
       created_at: existing.created_at,
       updated_at: this.clock.now(),
     })
@@ -177,7 +186,12 @@ export class BudgetService {
     return this.#categories.delete(context, groupedKey(wedding_id, category_id))
   }
 
-  #fields(context: TenantContext, wedding_id: string, input: BudgetCategoryInput): Omit<BudgetCategory, 'category_id' | 'tenant_id' | 'wedding_id' | 'created_at' | 'updated_at'> {
+  #fields(
+    context: TenantContext,
+    wedding_id: string,
+    input: BudgetCategoryInput,
+    editing?: string,
+  ): Omit<BudgetCategory, 'category_id' | 'tenant_id' | 'wedding_id' | 'created_at' | 'updated_at'> {
     assertPlainText([input.name])
     for (const amount of [input.estimated_cents, input.actual_cents ?? 0, input.paid_cents ?? 0]) {
       if (!Number.isSafeInteger(amount) || amount < 0 || amount > MAX_AMOUNT_CENTS) {
@@ -187,6 +201,10 @@ export class BudgetService {
     const vendor_id = input.vendor_id !== undefined && input.vendor_id.length > 0 ? input.vendor_id : undefined
     if (vendor_id !== undefined && !this.vendors.vendorsOf(context, wedding_id).some((v) => v.vendor_id === vendor_id)) {
       throw new ProductError('PRODUCT.BAD_REQUEST', 'That vendor is not on this wedding.', {})
+    }
+    // One line per vendor: a vendor followed by two lines would count its schedule twice in every total.
+    if (vendor_id !== undefined && this.#categoriesOf(context, wedding_id).some((c) => c.vendor_id === vendor_id && c.category_id !== editing)) {
+      throw new ProductError('PRODUCT.BAD_REQUEST', 'Another budget line already follows that vendor.', {})
     }
     return {
       name: input.name.trim(),
@@ -242,9 +260,29 @@ function lineOf(category: BudgetCategory, vendor: WeddingVendor | undefined, pla
   }
 }
 
-/** A line as the couple sees it: which vendor it follows stays with the planner. */
-function withoutVendor(category: BudgetCategory): BudgetCategory {
-  const shared: BudgetCategory = { ...category }
-  delete shared.vendor_id
-  return shared
+/**
+ * A line as the couple sees it, from an allow-list: its name, estimate and resolved amounts, and the vendor's name
+ * only when that vendor is shared. Whether it follows an unshared vendor — the vendor id, the planner's fallback
+ * amounts that would differ from the resolved ones, a vendor that was removed — stays with the planner.
+ */
+function asTheCoupleSeesIt(line: BudgetLine): BudgetLine {
+  const c = line.category
+  return {
+    category: {
+      category_id: c.category_id,
+      tenant_id: c.tenant_id,
+      wedding_id: c.wedding_id,
+      name: c.name,
+      estimated_cents: c.estimated_cents,
+      actual_cents: line.actual_cents,
+      paid_cents: line.paid_cents,
+      shared_with_couple: c.shared_with_couple,
+      created_at: c.created_at,
+    },
+    actual_cents: line.actual_cents,
+    paid_cents: line.paid_cents,
+    due_cents: line.due_cents,
+    ...(line.vendor_name === undefined ? {} : { vendor_name: line.vendor_name }),
+    vendor_missing: false,
+  }
 }
