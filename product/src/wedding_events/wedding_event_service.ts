@@ -237,7 +237,8 @@ export class WeddingEventService implements GuestListHooks {
       const stored = answers.rsvp(event, guest)
       const meal = answer.status === 'attending' ? answer.meal_option_id : undefined
       if (stored !== undefined && stored.status === answer.status && stored.meal_option_id === meal) continue
-      this.#write(context, event, guest.guest_id, true, answer.status, answer.meal_option_id, 'household')
+      // The household answers; who set the invitation (if anyone) stays as it was.
+      this.#write(context, event, guest.guest_id, true, answer.status, answer.meal_option_id, 'household', invitationSetBy(stored))
     }
   }
 
@@ -289,8 +290,8 @@ export class WeddingEventService implements GuestListHooks {
     const kept = new Set(updated.meal_options.map((o) => o.option_id))
     for (const rsvp of this.#rsvps.listGroup(context, wedding_id)) {
       if (rsvp.event_id === event_id && rsvp.meal_option_id !== undefined && !kept.has(rsvp.meal_option_id)) {
-        // The editor changed this answer (its meal is gone): record it as theirs.
-        this.#write(context, updated, rsvp.guest_id, rsvp.invited, rsvp.status, undefined, principal.role)
+        // Its meal is gone; the answer, who gave it, and who set the invitation stay as they were.
+        this.#write(context, updated, rsvp.guest_id, rsvp.invited, rsvp.status, undefined, rsvp.answered_by, invitationSetBy(rsvp))
       }
     }
     return this.#events.put(context, updated)
@@ -314,7 +315,8 @@ export class WeddingEventService implements GuestListHooks {
     const host = guest.plus_one_of === undefined ? undefined : this.guests.guest(context, wedding_id, guest.plus_one_of)
     return this.#eventsOf(context, wedding_id).map((event) => {
       const rsvp = this.#rsvp(context, wedding_id, event.event_id, guest_id)
-      const invited = rsvp?.invited ?? invitedByDefault(event, host === undefined ? undefined : this.#rsvp(context, wedding_id, event.event_id, host.guest_id))
+      const hostRsvp = host === undefined ? undefined : this.#rsvp(context, wedding_id, event.event_id, host.guest_id)
+      const invited = effectiveInvitation(event, rsvp, guest.plus_one_of !== undefined, hostRsvp)
       if (rsvp === undefined) return { event, invited, status: 'pending' }
       return {
         event,
@@ -335,16 +337,8 @@ export class WeddingEventService implements GuestListHooks {
     this.assertReach(context, principal, wedding_id)
     const event = this.#event(context, wedding_id, event_id)
     this.#guest(context, wedding_id, guest_id)
-    const written = this.#write(context, event, guest_id, input.invited, input.status, input.meal_option_id, principal.role)
-    // A plus-one follows their host's invitation. A plus-one answered by the household holds `invited` only because
-    // the household answered while invited through the host, so it follows a host's new invitation too; a plus-one
-    // whose invitation the planner or the couple set themselves keeps it.
-    const plusOne = this.guests.guestsOf(context, wedding_id).find((g) => g.plus_one_of === guest_id)
-    const theirs = plusOne === undefined ? undefined : this.#rsvp(context, wedding_id, event_id, plusOne.guest_id)
-    if (theirs !== undefined && theirs.answered_by === 'household' && theirs.invited !== input.invited) {
-      this.#write(context, event, theirs.guest_id, input.invited, input.invited ? theirs.status : 'pending', theirs.meal_option_id, 'household')
-    }
-    return written
+    // The planner or the couple sets the invitation here, so it is theirs (`invitation_by`) until they change it.
+    return this.#write(context, event, guest_id, input.invited, input.status, input.meal_option_id, principal.role, principal.role)
   }
 
   /** The guest list's hook: these guests were removed, so forget their answers (same request, same transaction). */
@@ -363,6 +357,7 @@ export class WeddingEventService implements GuestListHooks {
     status: RsvpStatus,
     meal_option_id: string | undefined,
     answered_by: RsvpAnsweredBy,
+    invitation_by: InvitationSetBy | undefined,
   ): WeddingRsvp {
     const attending = invited && status === 'attending'
     if (attending && meal_option_id !== undefined && !event.meal_options.some((o) => o.option_id === meal_option_id)) {
@@ -374,6 +369,7 @@ export class WeddingEventService implements GuestListHooks {
       event_id: event.event_id,
       guest_id,
       invited,
+      ...(invitation_by === undefined ? {} : { invitation_by }),
       status: invited ? status : 'pending',
       ...(attending && meal_option_id !== undefined ? { meal_option_id } : {}),
       answered_by,
@@ -455,9 +451,27 @@ function rsvpId(event_id: string, guest_id: string): string {
   return `${event_id}:${guest_id}`
 }
 
-/** Whether a guest with no record of their own is invited: their host's answer for a plus-one, else the event's default. */
-function invitedByDefault(event: WeddingEvent, hostRsvp: WeddingRsvp | undefined): boolean {
-  return hostRsvp?.invited ?? event.invitation === 'everyone'
+type InvitationSetBy = NonNullable<WeddingRsvp['invitation_by']>
+
+/**
+ * Who set this record's invitation themselves, if anyone: its `invitation_by`; or, for a record written before that
+ * field (issue #41), the planner or the couple who answered it — a household's answer never sets an invitation.
+ */
+function invitationSetBy(rsvp: WeddingRsvp | undefined): InvitationSetBy | undefined {
+  if (rsvp === undefined) return undefined
+  if (rsvp.invitation_by !== undefined) return rsvp.invitation_by
+  return rsvp.answered_by === 'household' ? undefined : rsvp.answered_by
+}
+
+/**
+ * Whether a guest is invited to an event: their own invitation when the planner or the couple set it; else, for a
+ * plus-one, their host's (when set); else the event's default. A record the household answered holds no invitation
+ * of its own, so a plus-one keeps following their host, and an event's new default reaches every guest it should.
+ */
+function effectiveInvitation(event: WeddingEvent, own: WeddingRsvp | undefined, isPlusOne: boolean, hostRsvp: WeddingRsvp | undefined): boolean {
+  if (own !== undefined && invitationSetBy(own) !== undefined) return own.invited
+  if (isPlusOne && hostRsvp !== undefined && invitationSetBy(hostRsvp) !== undefined) return hostRsvp.invited
+  return event.invitation === 'everyone'
 }
 
 /** Whether `value` is a real local date and time, `YYYY-MM-DDTHH:MM`. */
@@ -484,9 +498,8 @@ class Answers {
 
   invited(event: WeddingEvent, guest: WeddingGuest): boolean {
     const own = this.rsvps.get(rsvpId(event.event_id, guest.guest_id))
-    if (own !== undefined) return own.invited
     const host = guest.plus_one_of === undefined ? undefined : this.#byId.get(guest.plus_one_of)
-    return invitedByDefault(event, host === undefined ? undefined : this.rsvps.get(rsvpId(event.event_id, host.guest_id)))
+    return effectiveInvitation(event, own, guest.plus_one_of !== undefined, host === undefined ? undefined : this.rsvps.get(rsvpId(event.event_id, host.guest_id)))
   }
 
   countsFor(event: WeddingEvent): WeddingEventCounts {

@@ -16,7 +16,9 @@
   invitation, where the event is), optional location, `invitation` (`everyone`, or `selected` for an invite-only
   event such as a rehearsal dinner), and `meal_options` (`{option_id, label}`, at most 8).
 - `wedding_rsvp`: one guest's answer for one event: `invited`, `status` (`pending`, `attending`, `declined`),
-  optional `meal_option_id`, `answered_by` (`planner`, `couple`, `household`) and `updated_at`.
+  optional `meal_option_id`, `answered_by` (`planner`, `couple`, `household`) and `updated_at`. Since issue #41 it
+  also has `invitation_by` (`planner`, `couple`): who set the invitation themselves, kept apart from who answered.
+  `invited` counts only when someone set it; otherwise the invitation is inherited (see ADR 0049).
 - Contract count: 25.
 
 ### Rollback safety
@@ -54,8 +56,7 @@ answer is dropped. A guest who is not invited has no answer (pending, no meal).
 - An edit renames an option in place when it carries the option's id (the web form sends every option as a row with
   its id), and an entry with no id matches an existing option by label. So guests' choices survive renaming and
   reordering. An unknown id is refused.
-- A dropped option clears the choices that named it, recorded as the editor's change (`answered_by` becomes the
-  editor's role).
+- A dropped option clears the choices that named it. The answer keeps who gave it and who set the invitation.
 - The raw list an edit sends is capped at 32 entries before any per-item work. The security review showed that
   deduplicating an unbounded list held the process for minutes.
 

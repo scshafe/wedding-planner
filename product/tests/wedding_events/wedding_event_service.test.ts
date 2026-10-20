@@ -143,7 +143,7 @@ describe('WeddingEventService', () => {
     ])
   })
 
-  it('a meal renamed by its id keeps its choices; a meal left out clears them, as the editor\'s change', () => {
+  it('a meal renamed by its id keeps its choices; a meal left out clears them, keeping who answered', () => {
     const w = world()
     const dinner = w.events.addEvent(w.ctx, w.planner, w.ours, { name: 'Dinner', starts_at: '2028-06-10T18:00', meal_options: meals('Chiken', 'Veg') })
     const [chicken, veg] = dinner.meal_options.map((o) => o.option_id) as [string, string]
@@ -160,7 +160,7 @@ describe('WeddingEventService', () => {
     ])
     const answer = (guest: string) => w.events.guestRsvps(w.ctx, w.planner, w.ours, guest)[0]
     expect(answer(w.ana.guest_id)).toMatchObject({ status: 'attending', meal_option_id: chicken, answered_by: 'couple' })
-    expect(answer(w.luis.guest_id)).toMatchObject({ status: 'attending', answered_by: 'planner' })
+    expect(answer(w.luis.guest_id)).toMatchObject({ status: 'attending', answered_by: 'couple' })
     expect(answer(w.luis.guest_id)?.meal_option_id).toBeUndefined()
     // A label alone still matches an existing option; an id that is not on the event is refused.
     expect(w.events.updateEvent(w.ctx, w.planner, w.ours, dinner.event_id, { name: 'Dinner', starts_at: '2028-06-10T19:00', meal_options: meals('CHICKEN') }).meal_options[0]?.option_id).toBe(chicken)
