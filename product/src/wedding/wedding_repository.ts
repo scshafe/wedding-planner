@@ -5,6 +5,7 @@ import type { RecordStore } from '../persistence/record_store'
 import type { TenantContext } from '../tenant/tenant_context'
 import { TenantScopedRepository } from '../tenant/tenant_scoped_repository'
 import type { TenantLivenessCheck } from '../tenant/tenant_store'
+import { assertDate } from './calendar_date'
 
 /**
  * @canonical wedding_repository -- tenant-scoped access to the wedding aggregate.
@@ -75,6 +76,7 @@ export class WeddingRepository {
       ...(input.dress_code === undefined ? {} : { dress_code: input.dress_code }),
     }
     getSchemaRegistry().assertValid<Wedding>('wedding', wedding)
+    assertDate(wedding.event_date, 'event_date')
     return this.repository.put(context, wedding)
   }
 
@@ -94,6 +96,7 @@ export class WeddingRepository {
    */
   update(context: TenantContext, wedding: Wedding): Wedding {
     getSchemaRegistry().assertValid<Wedding>('wedding', wedding)
+    assertDate(wedding.event_date, 'event_date')
     return this.repository.put(context, wedding)
   }
 }

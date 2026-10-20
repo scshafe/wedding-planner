@@ -2,6 +2,7 @@ import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Wed
 
 import type { TeamView } from '../accounts/membership_service'
 import type { GuestEventRsvp, HouseholdAnswer, HouseholdRsvpView, WeddingEventsView } from '../wedding_events/wedding_event_service'
+import type { ChecklistView } from '../checklist/checklist_service'
 import { toGuestCsv } from '../guests/guest_csv'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
@@ -38,6 +39,8 @@ import {
   renderGuestImport,
   renderGuestList,
   renderHouseholdRsvp,
+  renderChecklist,
+  type ChecklistNotice,
   type HouseholdRsvpNotice,
   renderRsvpLinkMade,
   type GuestListNotice,
@@ -244,6 +247,11 @@ export class ProductWebUi {
       if (segments.length === 4 && segments[2] === 'rsvp' && this.#accounts !== undefined) {
         return slug === undefined ? GENERIC_404 : this.#householdRsvp(req, slug, segments[3] ?? '')
       }
+      // /t/:slug/checklist/<action> (issue #31) — the checklist FORM posts (CSRF-protected).
+      if (segments.length === 4 && segments[2] === 'checklist' && req.method === 'POST') {
+        if (slug === undefined) return GENERIC_404
+        return this.#checklistAction(req, slug, segments[3] ?? '')
+      }
       // /t/:slug/events/<action> (issue #29) — the events and RSVP FORM posts (CSRF-protected).
       if (segments.length === 4 && segments[2] === 'events' && req.method === 'POST') {
         if (slug === undefined) return GENERIC_404
@@ -322,6 +330,8 @@ export class ProductWebUi {
     const weddingId = queryParam(req.path, 'wedding')
     // ?wedding=ID&tab=guests (issue #27): the wedding's guest list (or one guest's edit page with &guest=ID).
     if (weddingId !== undefined && queryParam(req.path, 'tab') === 'guests') return this.#guestListPage(req, slug, weddingId)
+    // ?wedding=ID&tab=checklist (issue #31): the wedding's checklist.
+    if (weddingId !== undefined && queryParam(req.path, 'tab') === 'checklist') return this.#checklistPage(req, slug, weddingId)
     // ?wedding=ID&tab=events (issue #29): the wedding's events and their RSVP counts.
     if (weddingId !== undefined && queryParam(req.path, 'tab') === 'events') return this.#eventsPage(req, slug, weddingId)
     if (weddingId !== undefined) return this.#detail(req, slug, weddingId)
@@ -415,9 +425,17 @@ export class ProductWebUi {
       // Issue #29: the events card with live counts (same boundary as the wedding read; absent if not wired).
       const eventsRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${encodeURIComponent(weddingId)}/events`, token))
       const events = eventsRes.status === 200 ? (eventsRes.body as WeddingEventsView) : undefined
+      // Issue #31: the checklist summary, and — when the server recorded that the date moved — the offer to move
+      // the open tasks too (built from server data only, never from the URL).
+      const checklistRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${encodeURIComponent(weddingId)}/tasks`, token))
+      const tasks = checklistRes.status === 200 ? (checklistRes.body as ChecklistView) : undefined
+      const checklist =
+        tasks === undefined
+          ? undefined
+          : { overdue: tasks.overdue.length, open: tasks.overdue.length + tasks.upcoming.length, ...(tasks.date_move === undefined ? {} : { dateMove: tasks.date_move }) }
       return htmlResult(
         invalid ? 400 : 200,
-        renderDetail(theme, slug, wedding, csrf, invalid, canInvite ? (notice === undefined ? {} : { notice }) : undefined, events),
+        renderDetail(theme, slug, wedding, csrf, invalid, canInvite ? (notice === undefined ? {} : { notice }) : undefined, events, checklist),
       )
     }
     return this.#renderNonData(slug, apiRes.status)
@@ -829,6 +847,79 @@ export class ProductWebUi {
     const notice =
       res.status === 200 || res.status === 201 ? (action === 'event-remove' ? 'removed' : 'saved') : res.status === 409 ? 'conflict' : 'invalid'
     return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=events&notice=${notice}`)
+  }
+
+  /**
+   * GET /t/:slug?wedding=ID&tab=checklist (issue #31) — the wedding's checklist. Two reads through the pipeline (the
+   * wedding, then its tasks); any non-200 takes the usual masking.
+   */
+  #checklistPage(req: ApiRequest, slug: string, weddingId: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const id = encodeURIComponent(weddingId)
+    const weddingRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}`, token))
+    if (weddingRes.status !== 200) return this.#renderNonData(slug, weddingRes.status)
+    const tasksRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}/tasks`, token))
+    if (tasksRes.status !== 200) return this.#renderNonData(slug, tasksRes.status)
+    const theme = this.#themes.resolveActiveTheme(slug)
+    const csrf = this.#csrf.issueCsrf(token)
+    const wedding = readWedding(weddingRes.body)
+    if (theme === undefined || wedding === undefined) return GENERIC_404
+    if (csrf === undefined) return ERROR_500
+    const raw = queryParam(req.path, 'notice')
+    const notice = (['saved', 'removed', 'invalid', 'forbidden', 'conflict', 'applied', 'shifted', 'kept'] as const).find((n) => n === raw)
+    return htmlResult(200, renderChecklist(theme, slug, wedding, tasksRes.body as ChecklistView, csrf, notice))
+  }
+
+  /**
+   * POST /t/:slug/checklist/<action> (issue #31) — CSRF first, then the matching JSON route of the form's wedding;
+   * back to the checklist with a notice. A couple's planner-only action shows the "forbidden" notice (its own wedding:
+   * the 403 is honest). A shift goes back to the checklist too.
+   */
+  #checklistAction(req: ApiRequest, slug: string, action: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    const weddingId = form.get('wedding_id') ?? ''
+    const base = `/t/${slug}/weddings/${encodeURIComponent(weddingId)}/tasks`
+    const value = (name: string): string => (form.get(name) ?? '').trim()
+    const task = encodeURIComponent(value('task_id'))
+    const call = (method: string, path: string, body?: unknown) => this.#api.handle(bearerJson(method, path, token, body ?? {}))
+    const taskBody = () => ({ title: value('title'), due_date: value('due_date'), assignee: value('assignee'), ...(value('notes').length === 0 ? {} : { notes: value('notes') }) })
+    const res =
+      action === 'task-add'
+        ? call('POST', base, taskBody())
+        : action === 'task-update'
+          ? call('PUT', `${base}/${task}`, taskBody())
+          : action === 'task-remove'
+            ? call('DELETE', `${base}/${task}`)
+            : action === 'task-status'
+              ? call('PUT', `${base}/${task}/status`, { status: value('status') })
+              : action === 'apply-template'
+                ? call('POST', `${base}/apply-template`)
+                : action === 'shift'
+                  ? call('POST', `${base}/shift`)
+                  : action === 'keep-dates'
+                    ? call('DELETE', `${base}/date-move`)
+                    : undefined
+    if (res === undefined) return GENERIC_404
+    if (res.status === 404 || res.status === 401) return this.#renderNonData(slug, res.status)
+    const ok = res.status === 200 || res.status === 201
+    const notice: ChecklistNotice = ok
+      ? action === 'task-remove'
+        ? 'removed'
+        : action === 'apply-template'
+          ? 'applied'
+          : action === 'shift'
+            ? 'shifted'
+            : action === 'keep-dates'
+              ? 'kept'
+              : 'saved'
+      : res.status === 403
+        ? 'forbidden'
+        : res.status === 409
+          ? 'conflict'
+          : 'invalid'
+    return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=checklist&notice=${notice}`)
   }
 
   /** The page that shows a just-made RSVP link once (issue #30); any refusal takes the usual masking. */

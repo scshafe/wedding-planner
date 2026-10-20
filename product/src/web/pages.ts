@@ -8,11 +8,13 @@ import type {
   Wedding,
   WeddingEvent,
   WeddingGuest,
+  WeddingTask,
 } from '@wedding-planner/shared'
 
 import type { TeamView } from '../accounts/membership_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
 import type { GuestEventRsvp, HouseholdRsvpView, WeddingEventCounts, WeddingEventsView } from '../wedding_events/wedding_event_service'
+import type { ChecklistView } from '../checklist/checklist_service'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -956,7 +958,31 @@ export function renderDetail(
   invalid = false,
   inviteCouple?: { readonly notice?: 'sent' | 'exists' | 'invalid' },
   events?: WeddingEventsView,
+  checklist?: {
+    readonly overdue: number
+    readonly open: number
+    readonly dateMove?: { readonly from_date: string; readonly to_date: string; readonly days: number }
+  },
 ): string {
+  // Issue #31: the checklist at a glance, and — right after the date moved — the offer to move the open tasks too.
+  const checklistLine =
+    checklist === undefined
+      ? html``
+      : html`<p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=checklist">Checklist →</a> <span class="note">${`${checklist.open} open, ${checklist.overdue} overdue`}</span></p>`
+  const move = checklist?.dateMove
+  const shiftOffer =
+    move === undefined
+      ? html``
+      : html`<div class="card"><h3>The date moved</h3>
+    <p>${`The wedding moved from ${move.from_date} to ${move.to_date} (${Math.abs(move.days)} day(s) ${move.days > 0 ? 'later' : 'earlier'}). Move the ${checklist?.open ?? 0} open checklist task(s) by the same?`}</p>
+    <form class="inline" method="post" action="/t/${slug}/checklist/shift">${csrfField(csrfToken)}
+      <input type="hidden" name="wedding_id" value="${wedding.wedding_id}">
+      <button type="submit">Move the open tasks</button>
+    </form>
+    <form class="inline" method="post" action="/t/${slug}/checklist/keep-dates">${csrfField(csrfToken)}
+      <input type="hidden" name="wedding_id" value="${wedding.wedding_id}">
+      <button type="submit">Keep their dates</button>
+    </form></div>`
   // Issue #29: each event's live RSVP counts, when the events are wired.
   const eventsCard =
     events === undefined
@@ -1007,6 +1033,7 @@ export function renderDetail(
     ${logistics}
     <p>Status: <span class="status">${wedding.status}</span></p>
     <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=guests">Guest list →</a></p>
+    ${checklistLine}
     <p class="note">Wedding id: <code>${wedding.wedding_id}</code> · created ${wedding.created_at}</p>
     <p class="note">Active strategy: <a href="/t/${slug}/strategy">the platform’s data-optimized planning defaults</a> (applied to every wedding in this workspace).</p>
   </div>
@@ -1019,6 +1046,7 @@ export function renderDetail(
       <p><button type="submit">Save changes</button></p>
     </form>
   </div>
+  ${shiftOffer}
   ${eventsCard}
   ${inviteCard}`,
     'wedding',
@@ -1729,6 +1757,82 @@ export function renderHouseholdRsvp(
     ${view.closed ? html`` : html`<p><button type="submit">Save our answers</button></p>`}
   </form>`
   }`,
+  )
+}
+
+export type ChecklistNotice = 'saved' | 'removed' | 'invalid' | 'forbidden' | 'conflict' | 'applied' | 'shifted' | 'kept'
+
+const CHECKLIST_NOTICES: Readonly<Record<ChecklistNotice, string>> = Object.freeze({
+  saved: 'Saved.',
+  removed: 'Removed.',
+  invalid: 'That could not be saved. Check the title and the date.',
+  forbidden: 'Only the planner can do that; the couple ticks off the tasks assigned to them.',
+  conflict: 'This checklist is full.',
+  applied: 'The checklist template was added.',
+  shifted: 'The open tasks were moved.',
+  kept: 'The open tasks keep their dates.',
+})
+
+const ASSIGNEE_LABELS = Object.freeze({ planner: 'Planner', couple: 'Couple' })
+
+/**
+ * A wedding's checklist (issue #31): overdue tasks first, then upcoming, then done. The forms are affordances for
+ * both roles; a couple's planner-only submit comes back with the "forbidden" notice (the JSON layer's 403).
+ */
+export function renderChecklist(
+  theme: Tenant['theme'],
+  slug: string,
+  wedding: Wedding,
+  view: ChecklistView,
+  csrfToken: string,
+  notice?: ChecklistNotice,
+): string {
+  const w = wedding.wedding_id
+  const banner = notice === undefined ? html`` : html`<p class="note">${CHECKLIST_NOTICES[notice]}</p>`
+  const hidden = (task: WeddingTask) => html`${csrfField(csrfToken)}<input type="hidden" name="wedding_id" value="${w}"><input type="hidden" name="task_id" value="${task.task_id}">`
+  const taskFields = (prefix: string, task?: WeddingTask) => html`<label for="${prefix}_title">Task</label>
+      <input id="${prefix}_title" name="title" maxlength="160" required value="${task?.title ?? ''}">
+      <label for="${prefix}_due">Due</label>
+      <input id="${prefix}_due" name="due_date" type="date" required value="${task?.due_date ?? ''}">
+      <label for="${prefix}_assignee">Whose job</label>
+      <select id="${prefix}_assignee" name="assignee">${(['planner', 'couple'] as const).map((a) =>
+        a === (task?.assignee ?? 'planner') ? html`<option value="${a}" selected>${ASSIGNEE_LABELS[a]}</option>` : html`<option value="${a}">${ASSIGNEE_LABELS[a]}</option>`,
+      )}</select>
+      <label for="${prefix}_notes">Notes <span class="note">(optional)</span></label>
+      <textarea id="${prefix}_notes" name="notes" maxlength="2000" rows="2">${task?.notes ?? ''}</textarea>`
+  const line = (task: WeddingTask, overdue: boolean) => html`<li>
+      <strong>${task.title}</strong> <span class="note"${overdue ? html` style="color:#b00"` : html``}>${`${overdue ? 'overdue since' : task.status === 'done' ? 'was due' : 'due'} ${task.due_date} · ${ASSIGNEE_LABELS[task.assignee]}`}</span>
+      ${task.notes === undefined ? html`` : html`<br><span class="note">${task.notes}</span>`}
+      <form class="inline" method="post" action="/t/${slug}/checklist/task-status">${hidden(task)}
+        <input type="hidden" name="status" value="${task.status === 'done' ? 'todo' : 'done'}">
+        <button type="submit">${task.status === 'done' ? 'Not done yet' : 'Done'}</button></form>
+      <details><summary>Edit or remove</summary>
+        <form method="post" action="/t/${slug}/checklist/task-update">${hidden(task)}${taskFields(`t_${task.task_id}`, task)}<p><button type="submit">Save task</button></p></form>
+        <form method="post" action="/t/${slug}/checklist/task-remove">${hidden(task)}<button type="submit">Remove the task</button></form>
+      </details></li>`
+  const section = (title: string, tasks: readonly WeddingTask[], overdue: boolean) =>
+    tasks.length === 0 ? html`` : html`<div class="card"><h3>${title}</h3><ul>${tasks.map((t) => line(t, overdue))}</ul></div>`
+  return signedInShell(
+    theme,
+    slug,
+    'Checklist',
+    html`<p><a href="/t/${slug}?wedding=${w}">← ${wedding.couple_display_name}</a></p>
+  <h2>Checklist</h2>
+  ${banner}
+  <p class="note">${`Today is ${view.today}. ${view.overdue.length} overdue, ${view.upcoming.length} upcoming, ${view.done.length} done.`}</p>
+  ${
+    view.template_missing === 0
+      ? html``
+      : html`<div class="card"><p>${`The built-in checklist has ${view.template_missing} task(s) not on this wedding yet, scheduled back from the wedding date.`}</p>
+    <form method="post" action="/t/${slug}/checklist/apply-template">${csrfField(csrfToken)}<input type="hidden" name="wedding_id" value="${w}"><button type="submit">Add the checklist template</button></form></div>`
+  }
+  ${section('Overdue', view.overdue, true)}
+  ${section('Upcoming', view.upcoming, false)}
+  ${section('Done', view.done, false)}
+  <div class="card"><h3>Add a task</h3>
+    <form method="post" action="/t/${slug}/checklist/task-add">${csrfField(csrfToken)}<input type="hidden" name="wedding_id" value="${w}">${taskFields('new')}<p><button type="submit">Add task</button></p></form>
+  </div>`,
+    'wedding',
   )
 }
 

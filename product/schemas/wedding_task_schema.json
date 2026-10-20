@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/wedding_task.json",
+  "title": "WeddingTask",
+  "description": "One task on a wedding's checklist (issue #31): what to do, by when, and whose job it is. Created by hand or from the built-in checklist template (then `template_key` names the template item, so applying the template twice adds nothing twice). Stored under groupedKey(wedding_id, task_id) and read one wedding at a time.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id", "tenant_id", "wedding_id", "title", "due_date", "assignee", "status", "created_at"],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Identity within the owning tenant's partition, from the injected id generator." },
+    "tenant_id": { "type": "string", "minLength": 1, "description": "The owning tenant. Compared to the context's tenant only; never selects the partition." },
+    "wedding_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "notes": { "type": "string", "minLength": 1, "maxLength": 2000, "description": "Free text, when there is any." },
+    "due_date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "The local date it is due (YYYY-MM-DD)." },
+    "assignee": { "type": "string", "enum": ["planner", "couple"], "description": "Whose job it is. The couple can complete the tasks assigned to them." },
+    "status": { "type": "string", "enum": ["todo", "done"] },
+    "template_key": { "type": "string", "pattern": "^[a-z0-9_]{1,64}$", "description": "The checklist template item this task came from, when it came from one." },
+    "completed_at": { "type": "string", "minLength": 1, "description": "ISO 8601 UTC time it was marked done, while done." },
+    "created_at": { "type": "string", "minLength": 1, "description": "ISO 8601 UTC creation time, from the injected clock." },
+    "updated_at": { "type": "string", "minLength": 1, "description": "ISO 8601 UTC time of the last change, when changed." }
+  }
+}

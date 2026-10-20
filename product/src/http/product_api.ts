@@ -14,6 +14,7 @@ import { publicAccountView } from '../accounts/account_store'
 import type { InvitedRole } from '../accounts/invitation_store'
 import type { MembershipService } from '../accounts/membership_service'
 import type { RateLimiter } from '../accounts/rate_limiter'
+import type { ChecklistService, TaskInput } from '../checklist/checklist_service'
 import type { RsvpLinkService } from '../rsvp/rsvp_link_service'
 import {
   HOUSEHOLD_ANSWER_LIMITS,
@@ -169,6 +170,8 @@ export interface WeddingHandlerDeps {
   readonly events?: WeddingEventService
   /** Issue #30: households' RSVP links (made by the planner or the couple). Absent ⇒ not mounted. */
   readonly rsvpLinks?: RsvpLinkService
+  /** Issue #31: the wedding's checklist. Absent ⇒ the sub-routes are not mounted. */
+  readonly checklist?: ChecklistService
 }
 
 /** Issue #30: what the public household RSVP route needs — the link resolver, the answers, the dietary note, a limiter. */
@@ -332,6 +335,8 @@ export interface ProductApiDeps {
   readonly events?: WeddingEventService
   /** Issue #30: RSVP links under …/households/:id/rsvp-link and …/rsvp-links; the public /t/:slug/household-rsvp/:token. */
   readonly householdRsvp?: HouseholdRsvpDeps
+  /** Issue #31: each wedding's checklist, under /t/:slug/weddings/:id/tasks. */
+  readonly checklist?: ChecklistService
   /**
    * Issue #13: where a request that ends in a 500 is recorded (code + location, never data), and what the operator
    * reads at /admin/errors. Absent ⇒ nothing is recorded (fixtures).
@@ -440,6 +445,7 @@ export class ProductApi {
       ...(deps.guestList === undefined ? {} : { guestList: deps.guestList }),
       ...(deps.events === undefined ? {} : { events: deps.events }),
       ...(deps.householdRsvp === undefined ? {} : { rsvpLinks: deps.householdRsvp.links }),
+      ...(deps.checklist === undefined ? {} : { checklist: deps.checklist }),
     }
     this.#householdRsvp = deps.householdRsvp
     this.#guests = deps.guests
@@ -852,6 +858,10 @@ function dispatchWeddings(
     throw methodNotAllowed()
   }
   const weddingId = segments[3]
+  // /t/:slug/weddings/:weddingId/tasks[/:id[/status] | /apply-template | /shift] (issue #31).
+  if (deps.checklist !== undefined && weddingId !== undefined && segments[4] === 'tasks' && segments.length <= 7) {
+    return dispatchChecklist(context, principal, req, weddingId, segments.slice(4), deps.checklist)
+  }
   // /t/:slug/weddings/:weddingId/{rsvp-links | rsvp-settings | households/:id/rsvp-link} (issue #30).
   if (
     deps.rsvpLinks !== undefined &&
@@ -987,6 +997,67 @@ function dispatchRsvpLinks(
   }
   if (req.method !== 'POST') throw methodNotAllowed()
   return { status: 201, body: links.issue(context, principal, weddingId, householdId ?? '') }
+}
+
+/**
+ * The checklist routes of one wedding (issue #31). The wedding's boundary runs before any body is parsed; the service
+ * applies the planner / couple capability (a couple completes only its own tasks: 403 otherwise).
+ */
+function dispatchChecklist(
+  context: TenantContext,
+  principal: Principal,
+  req: ApiRequest,
+  weddingId: string,
+  rest: readonly string[],
+  checklist: ChecklistService,
+): ApiResponse {
+  checklist.assertReach(context, principal, weddingId)
+  const [, id, sub] = rest
+  // The planner's capability before any body is parsed (a couple's malformed planner-only call is its 403).
+  const planner = (): void => {
+    if (principal.role !== 'planner') throw forbidden()
+  }
+  if (id === undefined) {
+    if (req.method === 'GET') return { status: 200, body: checklist.view(context, principal, weddingId) }
+    if (req.method !== 'POST') throw methodNotAllowed()
+    planner()
+    return { status: 201, body: { task: checklist.addTask(context, principal, weddingId, taskInput(req)) } }
+  }
+  if (id === 'apply-template' && sub === undefined) {
+    if (req.method !== 'POST') throw methodNotAllowed()
+    return { status: 200, body: { created: checklist.applyTemplate(context, principal, weddingId) } }
+  }
+  // The wedding date moved (recorded by the server): move the open tasks by it, or keep their dates.
+  if (id === 'shift' && sub === undefined) {
+    if (req.method !== 'POST') throw methodNotAllowed()
+    return { status: 200, body: { moved: checklist.shiftOpenTasks(context, principal, weddingId) } }
+  }
+  if (id === 'date-move' && sub === undefined) {
+    if (req.method !== 'DELETE') throw methodNotAllowed()
+    return { status: 200, body: { kept: checklist.keepTaskDates(context, principal, weddingId) } }
+  }
+  if (sub === 'status') {
+    if (req.method !== 'PUT') throw methodNotAllowed()
+    const status = parseObjectBody(req.rawBody).status
+    if (status !== 'todo' && status !== 'done') throw new ProductError('PRODUCT.BAD_REQUEST', 'status must be todo or done.', {})
+    return { status: 200, body: { task: checklist.setStatus(context, principal, weddingId, id, status) } }
+  }
+  if (sub !== undefined) throw routeNotFound()
+  if (req.method === 'PUT') {
+    planner()
+    return { status: 200, body: { task: checklist.updateTask(context, principal, weddingId, id, taskInput(req)) } }
+  }
+  if (req.method === 'DELETE') return { status: 200, body: { removed: checklist.removeTask(context, principal, weddingId, id) } }
+  throw methodNotAllowed()
+}
+
+/** A task body: `{title, due_date, assignee, notes?}`. */
+function taskInput(req: ApiRequest): TaskInput {
+  const body = parseObjectBody(req.rawBody)
+  const assignee = body.assignee
+  if (assignee !== 'planner' && assignee !== 'couple') throw new ProductError('PRODUCT.BAD_REQUEST', 'assignee must be planner or couple.', {})
+  const notes = optionalString(body, 'notes')
+  return { title: requireString(body, 'title'), due_date: requireString(body, 'due_date'), assignee, ...(notes === undefined ? {} : { notes }) }
 }
 
 /** At most this many household submissions per link and window: answering is a handful of posts, never thousands. */
@@ -1241,6 +1312,10 @@ function handleUpdate(
   // update re-validates against the wedding contract, so the `status` cast above is closed at runtime
   // (a non-enum value -> CONTRACT.VALIDATION_FAILED -> 400). Keep validation downstream of the cast.
   const saved = deps.weddings.update(context, updated)
+  // Issue #31: a moved date is remembered, so the planner is offered to move the open checklist tasks too.
+  if (deps.checklist !== undefined && saved.event_date !== existing.event_date) {
+    deps.checklist.noteDateMoved(context, weddingId, existing.event_date, saved.event_date)
+  }
   return { status: 200, body: { wedding: saved } }
 }
 
