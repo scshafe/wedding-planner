@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/wedding_rsvp_settings.json",
+  "title": "WeddingRsvpSettings",
+  "description": "A wedding's RSVP settings (issue #30): whether households may still answer on their RSVP page. A record of its own (keyed by wedding_id), so an older build's edit of the wedding can never drop it. No record means open.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tenant_id", "wedding_id", "closed", "updated_at"],
+  "properties": {
+    "tenant_id": { "type": "string", "minLength": 1, "description": "The owning tenant. Compared to the context's tenant only; never selects the partition." },
+    "wedding_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "closed": { "type": "boolean", "description": "True once the planner closes RSVPs: the page then shows the answers without letting anyone change them." },
+    "updated_at": { "type": "string", "minLength": 1, "description": "ISO 8601 UTC time of the last change, from the injected clock." }
+  }
+}

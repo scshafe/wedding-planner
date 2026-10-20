@@ -70,3 +70,6 @@ export type { WeddingGuest } from './generated/wedding_guest'
 // A wedding's events and the guests' answers per event (issue #29). No RSVP record = invited, pending. ADR 0048.
 export type { WeddingEvent } from './generated/wedding_event'
 export type { WeddingRsvp } from './generated/wedding_rsvp'
+// A household's RSVP link (stored as its token's hash) and a wedding's RSVP settings (issue #30). ADR 0049.
+export type { RsvpLink } from './generated/rsvp_link'
+export type { WeddingRsvpSettings } from './generated/wedding_rsvp_settings'

@@ -10,6 +10,8 @@ import type {
   WeddingEvent,
   WeddingGuest,
   WeddingRsvp,
+  WeddingRsvpSettings,
+  RsvpLink,
 } from '@wedding-planner/shared'
 
 import type { AccountEmailIndex, UserAccount } from '../accounts/account_store'
@@ -91,4 +93,10 @@ export const COLLECTIONS = Object.freeze({
   weddingEvent: collection<WeddingEvent>('wedding_event', 'tenant', 'wedding_event'),
   /** Key groupedKey(wedding_id, `${event_id}:${guest_id}`): one guest's answer for one event (issue #29). */
   weddingRsvp: collection<WeddingRsvp>('wedding_rsvp', 'tenant', 'wedding_rsvp'),
+  /** Key token_hash: a household's RSVP link, to resolve it (issue #30). */
+  rsvpLink: collection<RsvpLink>('rsvp_link', 'tenant', 'rsvp_link'),
+  /** Key groupedKey(wedding_id, household_id): the household's current RSVP link (issue #30). */
+  rsvpLinkByHousehold: collection<RsvpLink>('rsvp_link_household', 'tenant', 'rsvp_link'),
+  /** Key wedding_id: whether a wedding's RSVPs are closed (issue #30). */
+  weddingRsvpSettings: collection<WeddingRsvpSettings>('wedding_rsvp_settings', 'tenant', 'wedding_rsvp_settings'),
 })

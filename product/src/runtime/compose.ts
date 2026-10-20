@@ -17,10 +17,11 @@ import { BillingLedger } from '../billing/billing_ledger'
 import { WeddingEventService } from '../wedding_events/wedding_event_service'
 import { FeedbackService } from '../feedback/feedback_service'
 import { GuestDirectory } from '../guests/guest_directory'
-import { GUEST_LIST_LIMITS, GuestListService } from '../guests/guest_list_service'
+import { fanOutGuestListHooks, GUEST_LIST_LIMITS, GuestListService } from '../guests/guest_list_service'
 import { ErrorLog } from '../operability/error_log'
 import { SimulatedEmailAdapter } from '../email/simulated_email_adapter'
 import { ProductApi } from '../http/product_api'
+import { RsvpLinkService } from '../rsvp/rsvp_link_service'
 import { EscalationLog } from '../messaging/escalation_log'
 import { EscalationReplyLog } from '../messaging/escalation_reply_log'
 import { EscalationResolutionLog } from '../messaging/escalation_resolution_log'
@@ -271,7 +272,9 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
   // directory; the guest list tells the events when guests are removed (its hook), in the same request.
   const guestDirectory = new GuestDirectory(tenants, store)
   const events = new WeddingEventService(tenants, weddings, authorizer, guestDirectory, clock, ids, store)
-  const guestList = new GuestListService(tenants, weddings, authorizer, clock, ids, store, GUEST_LIST_LIMITS, events)
+  // Households' RSVP links (issue #30): the public RSVP page's authority; a link goes with its household.
+  const rsvpLinks = new RsvpLinkService(tenants, weddings, authorizer, guestDirectory, clock, ids, store, config.publicUrl)
+  const guestList = new GuestListService(tenants, weddings, authorizer, clock, ids, store, GUEST_LIST_LIMITS, fanOutGuestListHooks(events, rsvpLinks))
 
   const api = new ProductApi({
     resolver,
@@ -288,6 +291,7 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     // Each wedding's guest list (issue #27) and its events + RSVPs (issue #29), behind the wedding's boundary.
     guestList,
     events,
+    householdRsvp: { links: rsvpLinks, events, guestList, limiter },
     // In-app feedback (issue #12): stored in the shared store, read by the operator at /admin/feedback.
     feedback: new FeedbackService(clock, ids, limiter, store),
     // Operability (issue #13): 500s are recorded (code + location, never data); /healthz names the build.

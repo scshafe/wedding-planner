@@ -12,7 +12,7 @@ import type {
 
 import type { TeamView } from '../accounts/membership_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
-import type { WeddingEventCounts, WeddingEventsView, GuestEventRsvp } from '../wedding_events/wedding_event_service'
+import type { GuestEventRsvp, HouseholdRsvpView, WeddingEventCounts, WeddingEventsView } from '../wedding_events/wedding_event_service'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -1252,6 +1252,7 @@ export function renderGuestList(
   list: GuestListView,
   csrfToken: string,
   notice?: GuestListNotice,
+  rsvpLinks?: ReadonlyMap<string, string>,
 ): string {
   const w = wedding.wedding_id
   const banner = notice === undefined ? html`` : html`<p class="note">${GUEST_LIST_NOTICES[notice]}</p>`
@@ -1298,6 +1299,7 @@ export function renderGuestList(
     <h3>${h.name}</h3>
     ${h.address === undefined ? html`` : html`<p class="note">${h.address}</p>`}
     <ul>${members.map(guestLine)}</ul>
+    ${rsvpLinks === undefined ? html`` : rsvpLinkForm(slug, w, h.household_id, csrfToken, rsvpLinks.get(h.household_id))}
     <details><summary>Add a guest to this household</summary>
       <form method="post" action="/t/${slug}/guest-list/guest-add">${csrfField(csrfToken)}${hidden({ wedding_id: w, household_id: h.household_id })}
         ${guestFields(`add_${h.household_id}`)}
@@ -1390,6 +1392,39 @@ export function renderGuestImport(
     </form>
   </div>
   ${preview}`,
+    'wedding',
+  )
+}
+
+/** A household's RSVP link control (issue #30): make the link, or make a new one (which turns the old one off). */
+function rsvpLinkForm(slug: string, weddingId: string, householdId: string, csrfToken: string, madeAt: string | undefined): SafeHtml {
+  return html`<form class="inline" method="post" action="/t/${slug}/guest-list/rsvp-link">${csrfField(csrfToken)}
+      <input type="hidden" name="wedding_id" value="${weddingId}">
+      <input type="hidden" name="household_id" value="${householdId}">
+      ${
+        madeAt === undefined
+          ? html`<span class="note">No RSVP link yet.</span> <button type="submit">Make the RSVP link</button>`
+          : html`<span class="note">${`RSVP link made ${madeAt.slice(0, 10)}.`}</span> <button type="submit">Make a new link (the old one stops working)</button>`
+      }
+    </form>`
+}
+
+/**
+ * The RSVP link just made (issue #30), shown this once: only its hash is kept, so it cannot be shown again. A new
+ * link can always be made, and it turns this one off.
+ */
+export function renderRsvpLinkMade(theme: Tenant['theme'], slug: string, wedding: Wedding, householdName: string, url: string): string {
+  return signedInShell(
+    theme,
+    slug,
+    'RSVP link',
+    html`<p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=guests">← Guest list</a></p>
+  <div class="card">
+    <h2>${`RSVP link for ${householdName}`}</h2>
+    <p>Copy this link now and send it to the household. It lets them answer for their own guests until RSVPs close.</p>
+    <p><input readonly value="${url}" style="width:100%" aria-label="RSVP link"></p>
+    <p class="note">For their privacy the link is stored only as a fingerprint, so it cannot be shown again. If it is lost, make a new one: the old link then stops working.</p>
+  </div>`,
     'wedding',
   )
 }
@@ -1532,6 +1567,16 @@ export function renderEvents(
   notice?: EventsNotice,
 ): string {
   const w = wedding.wedding_id
+  // Issue #30: whether households can still answer on their RSVP page. Closing is the planner's: the form is an
+  // affordance, and a couple's submit takes the honest themed 403 (the console's capability pattern).
+  const rsvpCard = html`<div class="card">
+    <p>${view.rsvps_closed ? 'RSVPs are closed: households can see their answers but not change them.' : 'RSVPs are open: households can answer on their RSVP page.'}</p>
+    <form method="post" action="/t/${slug}/events/rsvp-close">${csrfField(csrfToken)}
+      <input type="hidden" name="wedding_id" value="${w}">
+      <input type="hidden" name="closed" value="${view.rsvps_closed ? 'false' : 'true'}">
+      <button type="submit">${view.rsvps_closed ? 'Reopen RSVPs' : 'Close RSVPs'}</button> <span class="note">(the planner's call)</span>
+    </form>
+  </div>`
   const banner = notice === undefined ? html`` : html`<p class="note">${EVENTS_NOTICES[notice]}</p>`
   const cards = view.events.map(
     ({ event: e, counts }) => html`<div class="card">
@@ -1557,6 +1602,7 @@ export function renderEvents(
     html`<p><a href="/t/${slug}?wedding=${w}">← ${wedding.couple_display_name}</a></p>
   <h2>Events &amp; RSVPs</h2>
   ${banner}
+  ${rsvpCard}
   <p class="note">An event invites every guest, or only the guests you mark invited; a plus-one follows their host. Record invitations and answers on each guest's page from the <a href="/t/${slug}?wedding=${w}&amp;tab=guests">guest list</a>.</p>
   ${cards}
   <div class="card">
@@ -1615,3 +1661,72 @@ export const ERROR_500: HttpResult = Object.freeze(
 </html>`),
   ),
 )
+
+export type HouseholdRsvpNotice = 'saved' | 'closed' | 'invalid' | 'expired' | 'rate_limited'
+
+const HOUSEHOLD_RSVP_NOTICES: Readonly<Record<HouseholdRsvpNotice, string>> = Object.freeze({
+  saved: 'Thank you: your answers are saved. You can come back to this page to change them.',
+  closed: 'RSVPs are closed, so answers can no longer be changed here.',
+  invalid: 'Those answers could not be saved. Check them and try again.',
+  expired: 'This page was open too long. Please answer again.',
+  rate_limited: 'Too many tries from this link. Please wait a few minutes and try again.',
+})
+
+/**
+ * The household RSVP page (issue #30), public at `/t/<slug>/rsvp/<token>`: the household's own guests and the events
+ * they are invited to (names, times, places, meals). Nothing else about the wedding or its other guests. The form
+ * pairs each answer with hidden ids by position; the server re-checks every one against the household and the
+ * invitations. Pre-session anti-forgery, like the sign-in page.
+ */
+export function renderHouseholdRsvp(
+  theme: Tenant['theme'],
+  slug: string,
+  token: string,
+  view: HouseholdRsvpView,
+  preCsrf: string,
+  notice?: HouseholdRsvpNotice,
+): string {
+  const nameOf = new Map(view.guests.map((g) => [g.guest_id, `${g.first_name} ${g.last_name}`.trim()]))
+  const banner = notice === undefined ? html`` : html`<p class="note"${notice === 'saved' ? html`` : html` style="color:#b00"`}>${HOUSEHOLD_RSVP_NOTICES[notice]}</p>`
+  let i = 0
+  const eventCards = view.events.map((e) => {
+    const rows = e.answers.map((a) => {
+      const n = i++
+      const radio = (value: 'attending' | 'declined', label: string) =>
+        html`<label><input type="radio" name="s${n}" value="${value}"${a.status === value ? html` checked` : html``}${view.closed ? html` disabled` : html``}> ${label}</label>`
+      const meal =
+        e.meal_options.length === 0
+          ? html``
+          : html`<label>Meal <select name="m${n}"${view.closed ? html` disabled` : html``}><option value="">Choose…</option>${e.meal_options.map((o) =>
+              o.option_id === a.meal_option_id
+                ? html`<option value="${o.option_id}" selected>${o.label}</option>`
+                : html`<option value="${o.option_id}">${o.label}</option>`,
+            )}</select></label>`
+      return html`<div><input type="hidden" name="g${n}" value="${a.guest_id}"><input type="hidden" name="e${n}" value="${e.event_id}">
+        <p><strong>${nameOf.get(a.guest_id) ?? ''}</strong> ${radio('attending', 'Attending')} ${radio('declined', 'Declining')} ${meal}</p></div>`
+    })
+    return html`<div class="card"><h3>${e.name}</h3><p class="note">${[e.starts_at.replace('T', ' '), ...(e.location === undefined ? [] : [e.location])].join(' · ')}</p>${rows}</div>`
+  })
+  const dietary = view.guests.map(
+    (g, j) => html`<input type="hidden" name="dg${j}" value="${g.guest_id}"><label>${`Dietary needs for ${nameOf.get(g.guest_id) ?? ''} (optional)`}
+      <input name="d${j}" maxlength="300" value="${g.dietary ?? ''}"${view.closed ? html` disabled` : html``}></label>`,
+  )
+  return themedShell(
+    theme,
+    slug,
+    'RSVP',
+    html`<h2>${`RSVP for ${view.household_name}`}</h2>
+  ${banner}
+  ${
+    view.events.length === 0
+      ? html`<div class="card"><p>There is nothing to answer yet.</p></div>`
+      : html`<form method="post" action="/t/${slug}/rsvp/${token}">
+    <input type="hidden" name="_csrf" value="${preCsrf}">
+    ${eventCards}
+    <div class="card">${dietary}</div>
+    ${view.closed ? html`` : html`<p><button type="submit">Save our answers</button></p>`}
+  </form>`
+  }`,
+  )
+}
+
