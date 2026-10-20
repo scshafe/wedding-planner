@@ -87,13 +87,22 @@ describe('guest list CSV pages', () => {
     const w = setup()
     expect(w.ui.handle(form('/t/demo/guest-list/import', { _csrf: 'forged', wedding_id: w.ours, csv: FILE, commit: '1' }, w.planner)).status).toBe(403)
     expect(w.ui.handle(get(`/t/demo/guest-list/export?wedding=${w.ours}`, w.planner)).body).not.toContain('Ana')
+    // A real sibling wedding of the same workspace, and one that does not exist: the same not-found, both ways.
+    const api = (method: string, path: string, token?: string, body?: unknown) =>
+      w.api.handle({ method, path, headers: token === undefined ? {} : { authorization: `Bearer ${token}` }, rawBody: body === undefined ? undefined : JSON.stringify(body) })
+    const plannerToken = (api('POST', '/t/demo/sessions', undefined, { role: 'planner' }).body as { token: string }).token
+    const sibling = (api('POST', '/t/demo/weddings', plannerToken, { couple_display_name: 'Sam & Kit', event_date: '2028-07-10' }).body as { wedding: { wedding_id: string } }).wedding.wedding_id
+    expect(sibling).toBeDefined()
     const couple = w.login({ role: 'couple', wedding_id: w.ours })
     const csrf = csrfOf(w.ui.handle(get(`/t/demo?wedding=${w.ours}&tab=guests&import=1`, couple)))
-    const foreign = w.ui.handle(form('/t/demo/guest-list/import', { _csrf: csrf, wedding_id: 'wedding_other', csv: FILE, commit: '1' }, couple))
-    const missing = w.ui.handle(get('/t/demo/guest-list/export?wedding=wedding_other', couple))
-    expect(foreign.status).toBe(404)
-    expect(missing.status).toBe(404)
-    expect(foreign.body).toBe(missing.body)
+    const responses = [sibling, 'wedding_missing'].flatMap((id) => [
+      w.ui.handle(form('/t/demo/guest-list/import', { _csrf: csrf, wedding_id: id, csv: FILE, commit: '1' }, couple)),
+      w.ui.handle(get(`/t/demo/guest-list/export?wedding=${id}`, couple)),
+    ])
+    for (const res of responses) {
+      expect(res.status).toBe(404)
+      expect(res.body).toBe(responses[0]?.body)
+    }
     expect(w.ui.handle(get(`/t/demo/guest-list/export?wedding=${w.ours}`, couple)).status).toBe(200)
     // Signed out: the sign-in page (the console's convention for a 401), never the file.
     expect(w.ui.handle(get(`/t/demo/guest-list/export?wedding=${w.ours}`)).headers['content-type']).not.toContain('text/csv')

@@ -62,6 +62,22 @@ describe('formula neutralization', () => {
     expect(neutralize('Ana')).toBe('Ana')
     expect(unneutralize("'plain")).toBe("'plain") // only a neutralized formula is unwrapped
   })
+
+  it('guards the start of every ;-separated piece too (Excel in ;-separated locales splits cells at ;)', () => {
+    for (const [cell, safe] of [
+      ['x;=WEBSERVICE(B2&A3)', "x;'=WEBSERVICE(B2&A3)"],
+      ['a; +1', "a; '+1"],
+      ['a;"=cmd"', `a;"'=cmd"`],
+      ['=a;-b', "'=a;'-b"],
+      ['no nuts; gluten free', 'no nuts; gluten free'],
+    ] as const) {
+      expect(neutralize(cell)).toBe(safe)
+      expect(unneutralize(neutralize(cell))).toBe(cell)
+    }
+    const out = toGuestCsv(view([household('h1', 'H')], [guest('g1', 'h1', 'A', 'B', { phone: 'x;=WEBSERVICE(B2&A3)', tags: ['family', '-x'] })]))
+    expect(out).toContain("x;'=WEBSERVICE(B2&A3)")
+    expect(out).toContain('"family, -x"') // tags join with commas: one quoted cell, no ;-piece to split off
+  })
 })
 
 describe('toGuestCsv', () => {
@@ -73,7 +89,7 @@ describe('toGuestCsv', () => {
     expect(out.startsWith(`\uFEFF${HEADER}\r\n`)).toBe(true)
     expect(out.split('\r\n')).toEqual([
       `\uFEFF${HEADER}`,
-      `The Rivera family,"1 Main St, Springfield",Ana,Rivera,partner_one,family; vip,yes,,,,'+1 555 0100`,
+      `The Rivera family,"1 Main St, Springfield",Ana,Rivera,partner_one,"family, vip",yes,,,,'+1 555 0100`,
       'The Rivera family,"1 Main St, Springfield",Sam,,both,,no,Ana Rivera,,,',
       '',
     ])
@@ -105,6 +121,54 @@ describe('planGuestImport', () => {
       { row: 1, message: 'The header needs at least the household and first_name columns.' },
     ])
     expect(planGuestImport(EMPTY, '').problems).toEqual([{ row: 1, message: 'The CSV is empty.' }])
+    expect(planGuestImport(EMPTY, 'household,first_name\n"open').problems).toEqual([{ row: 1, message: 'The CSV has a quoted cell that is never closed.' }])
+  })
+
+  it('stays fast on a list built to make name matching slow (no scan per row)', () => {
+    // 1000 households, each with a host named "A B" who may bring a plus-one; 2000 plus-one rows naming "A B".
+    const households = Array.from({ length: 1000 }, (_, i) => household(`h${i}`, `H${i}`))
+    const guests = households.map((h, i) => guest(`g${i}`, h.household_id, 'A', 'B', { plus_one_allowed: true }))
+    const rows = Array.from({ length: 2000 }, (_, i) => `Nowhere,,P${i},,,,,A B,,,`)
+    const started = performance.now()
+    const plan = planGuestImport(view(households, guests), csv(...rows))
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(plan.problems.filter((p) => p.row > 1)).toHaveLength(2000)
+  })
+
+  it('checks what will be stored: trimmed after the apostrophe, no control characters, a bounded host name', () => {
+    const plan = planGuestImport(EMPTY, csv(`H,,A,,,,,,,,'\tab`, `'\tX,,B,,,,,,,,`, 'X,,C,,,,,,,,', `H,,"D\nE",,,,,,,,`, `H,,F,,,,,${'n'.repeat(162)},,,`))
+    expect(plan.problems).toEqual([
+      { row: 2, message: 'phone must be 3 to 40 characters' },
+      { row: 5, message: 'a cell holds a line break or another control character' },
+      { row: 6, message: 'plus_one_of must be at most 161 characters' },
+    ])
+    expect(plan.rows.map((r) => r.household)).toEqual(['X', 'X'])
+    expect(plan.households_created).toBe(1)
+  })
+
+  it('refuses what it cannot resolve to one household or one host', () => {
+    const twoSmiths = view([household('h1', 'Smith'), household('h2', 'smith')], [guest('g1', 'h1', 'Bob', ''), guest('g2', 'h2', 'Carl', '')])
+    expect(planGuestImport(twoSmiths, csv('Smith,,Bob,,,,,,vegan,,')).problems).toEqual([
+      { row: 2, message: 'more than one household on the list is named "Smith"; rename one on the guest list page' },
+    ])
+    const twoMarys = view([household('h1', 'S')], [guest('g1', 'h1', 'Mary Ann', 'Smith', { plus_one_allowed: true }), guest('g2', 'h1', 'Mary', 'Ann Smith')])
+    expect(planGuestImport(twoMarys, csv('S,,Pat,,,,,Mary Ann Smith,,,')).problems).toEqual([
+      { row: 2, message: 'more than one guest in "S" is named "Mary Ann Smith"' },
+    ])
+  })
+
+  it('a column left out keeps what the list has; a blank free-text cell clears it', () => {
+    const list = view(
+      [household('h1', 'Rivera')],
+      [guest('g1', 'h1', 'Ana', 'Rivera', { side: 'partner_one', tags: ['family'], plus_one_allowed: true, dietary: 'vegan', email: 'ana@example.test', phone: '555 0100' })],
+    )
+    const kept = planGuestImport(list, 'household,first_name,last_name\nRivera,Ana,Rivera\n')
+    expect(kept.problems).toEqual([])
+    expect(kept.rows[0]).toMatchObject({ side: 'partner_one', tags: ['family'], plus_one_allowed: true, dietary: 'vegan', email: 'ana@example.test', phone: '555 0100' })
+    const cleared = planGuestImport(list, 'household,first_name,last_name,side,plus_one_allowed,tags,dietary,email,phone\nRivera,Ana,Rivera,,,,,,\n')
+    expect(cleared.rows[0]).toMatchObject({ side: 'partner_one', plus_one_allowed: true, tags: [] })
+    expect(cleared.rows[0]?.dietary).toBeUndefined()
+    expect(cleared.rows[0]?.email).toBeUndefined()
   })
 
   it('reports every bad row by its line number (the header is line 1), and plans nothing to apply', () => {

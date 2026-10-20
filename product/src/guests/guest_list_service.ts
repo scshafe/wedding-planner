@@ -138,6 +138,7 @@ export class GuestListService {
   /** Add to `households` (the wedding's current households, kept current here). */
   #addHousehold(context: TenantContext, wedding_id: string, input: HouseholdInput, households: Household[]): Household {
     if (households.length >= this.limits.households) this.#limit()
+    refuseControlCharacters(input.name, input.address)
     const household: Household = {
       household_id: this.ids.next('household'),
       tenant_id: context.tenant_id,
@@ -163,6 +164,7 @@ export class GuestListService {
   }
 
   #updateHousehold(context: TenantContext, existing: Household, input: HouseholdInput): Household {
+    refuseControlCharacters(input.name, input.address)
     const updated: Household = {
       household_id: existing.household_id,
       tenant_id: existing.tenant_id,
@@ -335,6 +337,7 @@ export class GuestListService {
 
   /** The editable fields of a guest, normalized. A plus-one never has their own allowance. */
   #fields(input: GuestInput, isPlusOne: boolean) {
+    refuseControlCharacters(input.first_name, input.last_name, input.dietary, input.email, input.phone, ...(input.tags ?? []))
     if (input.email !== undefined && input.email.trim().length > 0 && !isEmailAddress(input.email.trim())) {
       throw new ProductError('PRODUCT.BAD_REQUEST', 'That email address is not valid.', {})
     }
@@ -377,6 +380,15 @@ export class GuestListService {
 
   #limit(): never {
     throw new ProductError('PRODUCT.LIMIT_REACHED', 'This wedding has reached the guest list limit.', {})
+  }
+}
+
+/** Names, notes and numbers never hold a line break or another control character (PRODUCT.BAD_REQUEST). */
+function refuseControlCharacters(...values: readonly (string | undefined)[]): void {
+  for (const value of values) {
+    if (value !== undefined && [...value].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) {
+      throw new ProductError('PRODUCT.BAD_REQUEST', 'A name, note or number may not hold a line break or control character.', {})
+    }
   }
 }
 

@@ -1,4 +1,4 @@
-import type { Household, WeddingGuest } from '@wedding-planner/shared'
+import type { WeddingGuest } from '@wedding-planner/shared'
 
 import { isEmailAddress } from '../email/email_port'
 import { ProductError } from '../product_error'
@@ -41,7 +41,7 @@ export const GUEST_CSV_COLUMNS = [
 type Column = (typeof GUEST_CSV_COLUMNS)[number]
 
 /** Bounds on an import. */
-export const GUEST_CSV_LIMITS = Object.freeze({ characters: 500_000, rows: 2000 })
+export const GUEST_CSV_LIMITS = Object.freeze({ characters: 300_000, rows: 2000 })
 
 /** A problem found in an import, by 1-based line number of the data row (the header is line 1). */
 export interface ImportProblem {
@@ -79,14 +79,19 @@ export interface ImportPlan {
 
 // ------------------------------------------------------------------ export
 
-/** Prefix a cell a spreadsheet would evaluate as a formula. */
+/**
+ * Prefix a cell a spreadsheet would evaluate as a formula. Excel in a `;`-separated locale (most of Europe) splits a
+ * cell at `;`, so the start of every `;` piece (after spaces and quotes) is guarded the same way.
+ */
 export function neutralize(cell: string): string {
-  return /^[=+\-@\t\r]/.test(cell) ? `'${cell}` : cell
+  const start = /^[=+\-@\t\r]/.test(cell) ? `'${cell}` : cell
+  return start.replace(/;(\s*"*\s*)(?=[=+\-@\t\r])/g, ";$1'")
 }
 
 /** Undo {@link neutralize} on import, so an exported file round-trips. */
 export function unneutralize(cell: string): string {
-  return /^'[=+\-@\t\r]/.test(cell) ? cell.slice(1) : cell
+  const start = /^'[=+\-@\t\r]/.test(cell) ? cell.slice(1) : cell
+  return start.replace(/;(\s*"*\s*)'(?=[=+\-@\t\r])/g, ';$1')
 }
 
 function quote(cell: string): string {
@@ -108,7 +113,7 @@ export function toGuestCsv(view: GuestListView): string {
       first_name: guest.first_name,
       last_name: guest.last_name,
       side: guest.side,
-      tags: guest.tags.join('; '),
+      tags: guest.tags.join(', '),
       plus_one_allowed: guest.plus_one_allowed ? 'yes' : 'no',
       plus_one_of: host === undefined ? '' : fullName(host),
       dietary: guest.dietary ?? '',
@@ -170,62 +175,105 @@ export function planGuestImport(view: GuestListView, text: string, limits = { ho
   const problems: ImportProblem[] = []
   const fail = (message: string): ImportPlan => ({ rows: [], problems: [{ row: 1, message }], creates: 0, updates: 0, households_created: 0 })
   if (text.length > GUEST_CSV_LIMITS.characters) return fail(`The CSV is larger than ${GUEST_CSV_LIMITS.characters} characters.`)
-  const table = parseCsv(text).filter((r) => r.some((c) => c.trim().length > 0))
+  let parsed: string[][]
+  try {
+    parsed = parseCsv(text)
+  } catch {
+    return fail('The CSV has a quoted cell that is never closed.')
+  }
+  const table = parsed.filter((r) => r.some((c) => c.trim().length > 0))
   const [header, ...data] = table
   if (header === undefined) return fail('The CSV is empty.')
   if (data.length > GUEST_CSV_LIMITS.rows) return fail(`The CSV has more than ${GUEST_CSV_LIMITS.rows} rows.`)
   const index = new Map<Column, number>()
   header.forEach((name, position) => {
-    const key = name.trim().toLowerCase().replace(/\s+/g, '_') as Column
-    if ((GUEST_CSV_COLUMNS as readonly string[]).includes(key) && !index.has(key)) index.set(key, position)
+    const column = name.trim().toLowerCase().replace(/\s+/g, '_') as Column
+    if ((GUEST_CSV_COLUMNS as readonly string[]).includes(column) && !index.has(column)) index.set(column, position)
   })
   if (!index.has('household') || !index.has('first_name')) return fail('The header needs at least the household and first_name columns.')
 
-  const householdByName = new Map(view.households.map((h) => [h.name.toLowerCase(), h]))
+  // The current list, indexed once: every lookup below is O(1), whatever the file holds (no scan per row).
+  const householdById = new Map(view.households.map((h) => [h.household_id, h]))
+  const householdsByName = new Map<string, number>()
+  for (const h of view.households) householdsByName.set(h.name.toLowerCase(), (householdsByName.get(h.name.toLowerCase()) ?? 0) + 1)
   const guestByKey = new Map<string, WeddingGuest>()
+  const ambiguousKeys = new Set<string>()
+  const hostsOnList = new Map<string, WeddingGuest[]>()
+  const plusOneOfHost = new Map<string, WeddingGuest>()
+  const guestById = new Map(view.guests.map((g) => [g.guest_id, g]))
   for (const g of view.guests) {
-    const h = view.households.find((x) => x.household_id === g.household_id) as Household
-    guestByKey.set(key(h.name, g.first_name, g.last_name), g)
+    const h = householdById.get(g.household_id)
+    if (h === undefined) continue
+    const k = key(h.name, g.first_name, g.last_name)
+    if (guestByKey.has(k)) ambiguousKeys.add(k)
+    else guestByKey.set(k, g)
+    if (g.plus_one_of === undefined) push(hostsOnList, hostKey(h.name, fullName(g)), g)
+    else plusOneOfHost.set(g.plus_one_of, g)
   }
 
   const planned: PlannedGuest[] = []
   const seen = new Set<string>()
   data.forEach((cells, position) => {
     const row = position + 2
-    const get = (column: Column): string => {
+    // A column missing from the header is `undefined` (an update leaves that field as it is); a present cell is
+    // trimmed, un-neutralized, and trimmed again (so the plan sees exactly what the service will store).
+    const get = (column: Column): string | undefined => {
       const at = index.get(column)
-      return at === undefined ? '' : unneutralize((cells[at] ?? '').trim())
+      return at === undefined ? undefined : unneutralize((cells[at] ?? '').trim()).trim()
     }
     const rowProblems: string[] = []
-    const household = get('household')
-    const first_name = get('first_name')
-    const last_name = get('last_name')
+    const values = GUEST_CSV_COLUMNS.map((c) => get(c) ?? '')
+    if (values.some(hasControlCharacter)) rowProblems.push('a cell holds a line break or another control character')
+    const household = get('household') ?? ''
+    const first_name = get('first_name') ?? ''
+    const last_name = get('last_name') ?? ''
     if (household.length === 0 || household.length > 120) rowProblems.push('household must be 1 to 120 characters')
+    if ((householdsByName.get(household.toLowerCase()) ?? 0) > 1) rowProblems.push(`more than one household on the list is named "${household}"; rename one on the guest list page`)
     if (first_name.length === 0 || first_name.length > 80) rowProblems.push('first_name must be 1 to 80 characters')
     if (last_name.length > 80) rowProblems.push('last_name must be at most 80 characters')
-    const side = parseSide(get('side'))
+    const k = key(household, first_name, last_name)
+    if (ambiguousKeys.has(k)) rowProblems.push('more than one guest on the list matches this row')
+    if (seen.has(k)) rowProblems.push('the same person appears twice in this household')
+    seen.add(k)
+    const existing = guestByKey.get(k)
+
+    // Enumerations: a blank or missing cell is the default on a new guest and unchanged on an update.
+    const sideCell = get('side') ?? ''
+    const side = sideCell.length === 0 ? (existing?.side ?? 'both') : parseSide(sideCell)
     if (side === undefined) rowProblems.push('side must be partner_one, partner_two or both')
-    const allowed = parseYesNo(get('plus_one_allowed'))
+    const allowedCell = get('plus_one_allowed') ?? ''
+    const allowed = allowedCell.length === 0 ? (existing?.plus_one_allowed ?? false) : parseYesNo(allowedCell)
     if (allowed === undefined) rowProblems.push('plus_one_allowed must be yes or no')
-    const tags = [...new Set(get('tags').split(/[;,]/).map((t) => t.trim().toLowerCase()).filter((t) => t.length > 0))]
+    // Free text: a missing column keeps the current value; a present blank cell clears it.
+    const tagsCell = get('tags')
+    const tags =
+      tagsCell === undefined
+        ? [...(existing?.tags ?? [])]
+        : [...new Set(tagsCell.split(/[;,]/).map((t) => t.trim().toLowerCase()).filter((t) => t.length > 0))]
     if (tags.length > 20 || tags.some((t) => t.length > 32)) rowProblems.push('at most 20 tags of up to 32 characters')
-    const address = get('address')
-    const dietary = get('dietary')
-    const email = get('email')
-    const phone = get('phone')
+    const address = get('address') ?? ''
+    const dietary = get('dietary') ?? existing?.dietary ?? ''
+    const email = get('email') ?? existing?.email ?? ''
+    const phone = get('phone') ?? existing?.phone ?? ''
     if (address.length > 300) rowProblems.push('address must be at most 300 characters')
     if (dietary.length > 300) rowProblems.push('dietary must be at most 300 characters')
     if (email.length > 0 && !isEmailAddress(email)) rowProblems.push('email is not a valid address')
     if (phone.length > 0 && (phone.length < 3 || phone.length > 40)) rowProblems.push('phone must be 3 to 40 characters')
-    const plus_one_of = get('plus_one_of')
-    const k = key(household, first_name, last_name)
-    if (seen.has(k)) rowProblems.push('the same person appears twice in this household')
-    seen.add(k)
+    const plusOfCell = get('plus_one_of')
+    if ((plusOfCell ?? '').length > 161) rowProblems.push('plus_one_of must be at most 161 characters')
+
+    // Who is a plus-one, and whose, is set on the list page: a row matching an existing guest keeps it as it is.
+    if (existing !== undefined && plusOfCell !== undefined) {
+      const host = existing.plus_one_of === undefined ? undefined : guestById.get(existing.plus_one_of)
+      if ((host === undefined ? '' : fullName(host).toLowerCase()) !== plusOfCell.toLowerCase()) {
+        rowProblems.push(`${fullName({ first_name, last_name })} is already on the list; change who is a plus-one on the guest list page`)
+      }
+    }
+    const isNewPlusOne = existing === undefined && (plusOfCell ?? '').length > 0
     if (rowProblems.length > 0) {
       problems.push({ row, message: rowProblems.join('; ') })
       return
     }
-    const existing = guestByKey.get(k)
     planned.push({
       row,
       action: existing === undefined ? 'create' : 'update',
@@ -235,8 +283,8 @@ export function planGuestImport(view: GuestListView, text: string, limits = { ho
       last_name,
       side: side as GuestSide,
       tags,
-      plus_one_allowed: plus_one_of.length > 0 ? false : (allowed as boolean),
-      ...(plus_one_of.length === 0 ? {} : { plus_one_of }),
+      plus_one_allowed: isNewPlusOne || existing?.plus_one_of !== undefined ? false : (allowed as boolean),
+      ...(isNewPlusOne ? { plus_one_of: plusOfCell as string } : {}),
       ...(dietary.length === 0 ? {} : { dietary }),
       ...(email.length === 0 ? {} : { email }),
       ...(phone.length === 0 ? {} : { phone }),
@@ -253,54 +301,47 @@ export function planGuestImport(view: GuestListView, text: string, limits = { ho
     addressOf.set(p.household.toLowerCase(), p.address)
   }
 
-  // Who is a plus-one, and whose, is set on the list page: an import may create a plus-one, but a row matching an
-  // existing guest must keep their plus-one status (and host) as it is.
-  const guestById = new Map(view.guests.map((g) => [g.guest_id, g]))
+  // A new plus-one names exactly one host (`First Last`) in the same household — a row of the file or a guest on
+  // the list — who may bring one and has none yet. Hosts in the file are indexed once, like the list.
+  const hostsInFile = new Map<string, PlannedGuest[]>()
   for (const p of planned) {
-    const existing = p.guest_id === undefined ? undefined : guestById.get(p.guest_id)
-    if (existing === undefined) continue
-    const host = existing.plus_one_of === undefined ? undefined : guestById.get(existing.plus_one_of)
-    if ((host === undefined ? '' : fullName(host).toLowerCase()) !== (p.plus_one_of ?? '').toLowerCase()) {
-      problems.push({ row: p.row, message: `${fullName(p)} is already on the list; change who is a plus-one on the guest list page` })
-    }
+    const isPlusOne = p.plus_one_of !== undefined || (p.guest_id !== undefined && guestById.get(p.guest_id)?.plus_one_of !== undefined)
+    if (!isPlusOne) push(hostsInFile, hostKey(p.household, fullName(p)), p)
   }
-
-  // Plus-ones: the host is named `First Last` in the same household, in the file or already on the list, allows a
-  // plus-one, and ends up with at most one.
-  const hostsTaken = new Map<string, number>()
+  const plusOnesPerHost = new Map<string, number>()
   for (const p of planned) {
     if (p.plus_one_of === undefined) continue
-    const hostName = p.plus_one_of.toLowerCase()
-    const inFile = planned.find((h) => h.plus_one_of === undefined && sameHousehold(h.household, p.household) && fullName(h).toLowerCase() === hostName)
-    const onList = view.guests.find(
-      (g) =>
-        g.plus_one_of === undefined &&
-        fullName(g).toLowerCase() === hostName &&
-        view.households.some((h) => h.household_id === g.household_id && sameHousehold(h.name, p.household)),
-    )
+    const k = hostKey(p.household, p.plus_one_of)
+    const fromFile = hostsInFile.get(k) ?? []
+    const covered = new Set(fromFile.flatMap((h) => (h.guest_id === undefined ? [] : [h.guest_id])))
+    const fromList = (hostsOnList.get(k) ?? []).filter((g) => !covered.has(g.guest_id))
+    const candidates = fromFile.length + fromList.length
+    if (candidates > 1) {
+      problems.push({ row: p.row, message: `more than one guest in "${p.household}" is named "${p.plus_one_of}"` })
+      continue
+    }
+    const inFile = fromFile[0]
+    const onList = fromList[0]
+    const hostId = inFile?.guest_id ?? onList?.guest_id
     const allows = inFile !== undefined ? inFile.plus_one_allowed : onList?.plus_one_allowed
     if (allows !== true) {
       problems.push({ row: p.row, message: `the plus-one's host "${p.plus_one_of}" is not in this household or may not bring a plus-one` })
       continue
     }
-    const hostKey = `${p.household.toLowerCase()}\u0000${hostName}`
-    hostsTaken.set(hostKey, (hostsTaken.get(hostKey) ?? 0) + 1)
-    const existingPlusOne = onList === undefined ? undefined : view.guests.find((g) => g.plus_one_of === onList.guest_id)
-    const sameAsExisting = existingPlusOne !== undefined && existingPlusOne.guest_id === p.guest_id
-    if ((hostsTaken.get(hostKey) ?? 0) > 1 || (existingPlusOne !== undefined && !sameAsExisting)) {
+    plusOnesPerHost.set(k, (plusOnesPerHost.get(k) ?? 0) + 1)
+    if ((plusOnesPerHost.get(k) ?? 0) > 1 || (hostId !== undefined && plusOneOfHost.has(hostId))) {
       problems.push({ row: p.row, message: `"${p.plus_one_of}" already has a plus-one` })
     }
   }
 
   // A row that takes a host's allowance away while their plus-one is on the list.
   for (const p of planned) {
-    if (p.guest_id === undefined || p.plus_one_allowed) continue
-    if (view.guests.some((g) => g.plus_one_of === p.guest_id)) {
+    if (p.guest_id !== undefined && !p.plus_one_allowed && plusOneOfHost.has(p.guest_id) && guestById.get(p.guest_id)?.plus_one_of === undefined) {
       problems.push({ row: p.row, message: `${fullName(p)} has a plus-one on the list; keep plus_one_allowed yes` })
     }
   }
 
-  const newHouseholds = new Set(planned.map((p) => p.household.toLowerCase()).filter((name) => !householdByName.has(name)))
+  const newHouseholds = new Set(planned.map((p) => p.household.toLowerCase()).filter((name) => !householdsByName.has(name)))
   const creates = planned.filter((p) => p.action === 'create').length
   if (view.households.length + newHouseholds.size > limits.households) problems.push({ row: 1, message: 'the import would exceed the household limit' })
   if (view.guests.length + creates > limits.guests) problems.push({ row: 1, message: 'the import would exceed the guest limit' })
@@ -313,12 +354,27 @@ export function planGuestImport(view: GuestListView, text: string, limits = { ho
   }
 }
 
-function key(household: string, first: string, last: string): string {
-  return `${household.toLowerCase()}\u0000${first.toLowerCase()}\u0000${last.toLowerCase()}`
+/** C0 controls and DEL: never in a stored name, note or number (and `\u0000` is the match keys' delimiter). */
+function hasControlCharacter(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i)
+    if (code < 0x20 || code === 0x7f) return true
+  }
+  return false
 }
 
-function sameHousehold(a: string, b: string): boolean {
-  return a.toLowerCase() === b.toLowerCase()
+function push<K, V>(map: Map<K, V[]>, k: K, value: V): void {
+  const list = map.get(k)
+  if (list === undefined) map.set(k, [value])
+  else list.push(value)
+}
+
+function hostKey(household: string, name: string): string {
+  return `${household.toLowerCase()}\u0000${name.toLowerCase()}`
+}
+
+function key(household: string, first: string, last: string): string {
+  return `${household.toLowerCase()}\u0000${first.toLowerCase()}\u0000${last.toLowerCase()}`
 }
 
 function fullName(g: { readonly first_name: string; readonly last_name: string }): string {

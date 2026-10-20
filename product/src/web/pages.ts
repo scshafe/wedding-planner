@@ -1366,14 +1366,14 @@ export function renderGuestImport(
   <h2>Import guests from CSV</h2>
   <div class="card">
     <p class="note">Paste a spreadsheet saved as CSV. The first line names the columns: household and first_name are required;
-    address, last_name, side (partner_one, partner_two or both), tags (separated by ;), plus_one_allowed (yes or no),
+    address, last_name, side (partner_one, partner_two or both), tags (separated by commas), plus_one_allowed (yes or no),
     plus_one_of (the host's full name, same household), dietary, email and phone are optional. A row that matches a guest
-    already on the list (same household, first and last name) updates them. A downloaded CSV can be edited and imported
-    back.</p>
+    already on the list (same household, first and last name) updates them: a column left out keeps what the list has,
+    and a blank note, email, phone or tags cell clears it. A downloaded CSV can be edited and imported back.</p>
     <form method="post" action="/t/${slug}/guest-list/import">${csrfField(csrfToken)}
       <input type="hidden" name="wedding_id" value="${w}">
       <label for="csv">CSV</label>
-      <textarea id="csv" name="csv" rows="12" style="width:100%" maxlength="500000" required>${csv}</textarea>
+      <textarea id="csv" name="csv" rows="12" style="width:100%" maxlength="300000" required>${csv}</textarea>
       <p><button type="submit">Preview</button></p>
     </form>
   </div>

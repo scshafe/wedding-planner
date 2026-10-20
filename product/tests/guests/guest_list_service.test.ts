@@ -184,6 +184,10 @@ describe('GuestListService', () => {
     expect(codeOf(() => w.list.addGuest(w.ctx, w.planner, w.ours, { household_id: h.household_id, first_name: 'A', side: 'both', email: 'nope' }))).toBe(
       'PRODUCT.BAD_REQUEST',
     )
+    for (const bad of ['A\nB', 'A\u0000', 'A\u007f']) {
+      expect(codeOf(() => w.list.addGuest(w.ctx, w.planner, w.ours, { household_id: h.household_id, first_name: bad, side: 'both' }))).toBe('PRODUCT.BAD_REQUEST')
+    }
+    expect(codeOf(() => w.list.updateHousehold(w.ctx, w.planner, w.ours, h.household_id, { name: 'One\r\nTwo' }))).toBe('PRODUCT.BAD_REQUEST')
     const tags = Array.from({ length: 21 }, (_, i) => `t${i}`)
     expect(codeOf(() => w.list.addGuest(w.ctx, w.planner, w.ours, { household_id: h.household_id, first_name: 'A', side: 'both', tags }))).toBe(
       'PRODUCT.BAD_REQUEST',

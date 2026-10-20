@@ -95,7 +95,7 @@ describe('/t/:slug/weddings/:id/{guest-list,households,guests}', () => {
     expect((w.call('GET', `/t/demo/weddings/${w.ours}/guest-list`, w.couple).body as { counts: { guests: number } }).counts.guests).toBe(2)
     expect(w.call('POST', `/t/demo/weddings/${w.theirs}/guest-list/import`, w.couple, { csv, commit: true })).toEqual(NOT_FOUND)
     expect(w.call('POST', `/t/demo/weddings/${w.ours}/guest-list/import`, w.couple, { csv: 7 }).status).toBe(400)
-    expect(w.call('POST', `/t/demo/weddings/${w.ours}/guest-list/import`, w.couple, { csv: 'household,first_name\n"open' }).status).toBe(400)
+    expect(w.call('POST', `/t/demo/weddings/${w.ours}/guest-list/import`, w.couple, { csv: 'household,first_name\n"open' }).body).toMatchObject({ applied: false, problems: [{ row: 1 }] })
     expect(w.call('GET', `/t/demo/weddings/${w.ours}/guest-list/import`, w.couple).status).toBe(405)
   })
 

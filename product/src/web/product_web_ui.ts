@@ -758,8 +758,12 @@ export class ProductWebUi {
         commit: form.get('commit') === '1',
       }),
     )
-    if (res.status !== 200) return this.#renderNonData(slug, res.status)
-    const result = res.body as GuestImportResult
+    if (res.status === 401 || res.status === 403 || res.status === 404) return this.#renderNonData(slug, res.status)
+    // Anything else that refused the import (a list changed since the preview, a bound): show it, keep the text.
+    const result: GuestImportResult =
+      res.status === 200
+        ? (res.body as GuestImportResult)
+        : { applied: false, problems: [{ row: 1, message: 'The import could not be applied. Preview it again.' }], creates: 0, updates: 0, households_created: 0 }
     if (result.applied) return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=guests&notice=imported`)
     const weddingRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${encodeURIComponent(weddingId)}`, token))
     const wedding = readWedding(weddingRes.body)
