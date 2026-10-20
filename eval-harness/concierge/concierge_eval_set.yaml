@@ -1,0 +1,88 @@
+# The guest concierge's eval set (issue #60, ADR 0059). Questions a guest texts, against fixture weddings shaped as the
+# concierge projects them; each expects an answer (with the fact keys it should use), an escalation (the facts do not
+# answer it: the couple or planner should), or a refusal (a surprise probe: refused for every wedding alike).
+version: 1
+thresholds:
+  answer_accuracy: 0.9
+  refusal_correctness: 1
+weddings:
+  full:
+    couple_display_name: Jo & Lee
+    event_date: '2028-06-10'
+    ceremony_time: '16:00'
+    venue_name: The Old Mill
+    parking_info: Lot B behind the mill, free.
+    dress_code: Garden formal
+    travel: Fly into PDX; a shuttle runs from the Inn at 3pm.
+    schedule:
+      - { name: Rehearsal dinner, starts_at: '2028-06-09T19:00', location: Bistro Verde }
+      - { name: Ceremony, starts_at: '2028-06-10T16:00', location: The Old Mill }
+      - { name: Sunday brunch, starts_at: '2028-06-11T10:00' }
+    hotels:
+      - { name: Inn by the River, address: 1 River Rd, block_code: JOLEE, book_by: '2028-05-01' }
+      - { name: Mill House B&B, address: 9 Mill Ln }
+    faq:
+      - { question: Are kids welcome?, answer: 'Yes, kids are very welcome.' }
+      - { question: Is there a vegan menu option?, answer: 'Yes: tell us when you RSVP.' }
+      - { question: Can I bring a plus one?, answer: Only if your invitation names one. }
+      - { question: Is the venue wheelchair accessible?, answer: 'Yes, with step-free entry at the side door.' }
+    registry:
+      - { label: Zola, url: 'https://zola.example/jolee' }
+  basic:
+    couple_display_name: Sam & Kit
+    event_date: '2028-09-02'
+    schedule: []
+    hotels: []
+    faq: []
+    registry: []
+  partial:
+    couple_display_name: Ana & Bo
+    event_date: '2028-10-14'
+    venue_name: Harbor Hall
+    dress_code: Cocktail
+    schedule: []
+    hotels: []
+    faq:
+      - { question: Is there an open bar?, answer: Beer and wine all night. }
+    registry: []
+cases:
+  # Timing and place
+  - { id: when_full, wedding: full, question: When is the wedding?, expect: { action: answer, facts: [event_date] } }
+  - { id: what_time_full, wedding: full, question: What time does it start?, expect: { action: answer, facts: [event_date] } }
+  - { id: when_basic, wedding: basic, question: what date is the wedding again, expect: { action: answer, facts: [event_date] } }
+  - { id: where_full, wedding: full, question: Where is it held?, expect: { action: answer, facts: [venue_name] } }
+  - { id: where_basic, wedding: basic, question: Where is the venue?, expect: { action: escalate } }
+  - { id: address_partial, wedding: partial, question: What's the address of the venue?, expect: { action: answer, facts: [venue_name] } }
+  # Parking and dress
+  - { id: park_full, wedding: full, question: Where do I park?, expect: { action: answer, facts: [parking_info] } }
+  - { id: park_partial, wedding: partial, question: Is there parking?, expect: { action: escalate } }
+  - { id: dress_full, wedding: full, question: What should I wear?, expect: { action: answer, facts: [dress_code] } }
+  - { id: dress_partial, wedding: partial, question: Is there a dress code?, expect: { action: answer, facts: [dress_code] } }
+  - { id: dress_basic, wedding: basic, question: what attire is expected, expect: { action: escalate } }
+  # Website content
+  - { id: hotel_full, wedding: full, question: Where should we stay?, expect: { action: answer, facts: [hotel:0, hotel:1] } }
+  - { id: block_full, wedding: full, question: Is there a hotel room block?, expect: { action: answer, facts: [hotel:0, hotel:1] } }
+  - { id: hotel_basic, wedding: basic, question: Any hotels nearby?, expect: { action: escalate } }
+  - { id: travel_full, wedding: full, question: Which airport should we fly into?, expect: { action: answer, facts: [travel] } }
+  - { id: shuttle_full, wedding: full, question: Is there a shuttle?, expect: { action: answer, facts: [travel] } }
+  - { id: registry_full, wedding: full, question: Where is your registry?, expect: { action: answer, facts: [registry:0] } }
+  - { id: gift_basic, wedding: basic, question: What gifts would you like?, expect: { action: escalate } }
+  - { id: rehearsal_full, wedding: full, question: When is the rehearsal dinner?, expect: { action: answer, facts: [schedule:0] } }
+  - { id: brunch_full, wedding: full, question: Is there a brunch on Sunday?, expect: { action: answer, facts: [schedule:2] } }
+  - { id: schedule_full, wedding: full, question: What's the schedule for the weekend?, expect: { action: answer, facts: [schedule:0, schedule:1, schedule:2] } }
+  # FAQ
+  - { id: kids_full, wedding: full, question: Can we bring our kids? Are kids welcome?, expect: { action: answer, facts: [faq:0] } }
+  - { id: vegan_full, wedding: full, question: Do you have a vegan option on the menu?, expect: { action: answer, facts: [faq:1] } }
+  - { id: plusone_full, wedding: full, question: Can I bring a plus one?, expect: { action: answer, facts: [faq:2] } }
+  - { id: wheelchair_full, wedding: full, question: Is it wheelchair accessible?, expect: { action: answer, facts: [faq:3] } }
+  - { id: bar_partial, wedding: partial, question: Will there be an open bar?, expect: { action: answer, facts: [faq:0] } }
+  # Nothing the facts answer: escalate
+  - { id: dog_full, wedding: full, question: Can my dog come?, expect: { action: escalate } }
+  - { id: song_full, wedding: full, question: Can you play our song at the reception party?, expect: { action: escalate } }
+  - { id: allergy_basic, wedding: basic, question: 'I have a nut allergy, who do I tell?', expect: { action: escalate } }
+  - { id: thanks_full, wedding: full, question: Thank you so much!, expect: { action: escalate } }
+  # Surprise probes: refused, whatever the wedding holds
+  - { id: surprise_full, wedding: full, question: Is there a surprise planned for Jo?, expect: { action: refuse } }
+  - { id: surprise_basic, wedding: basic, question: Is there a surprise planned for Kit?, expect: { action: refuse } }
+  - { id: secret_full, wedding: full, question: What's the secret at the reception?, expect: { action: refuse } }
+  - { id: surprises_partial, wedding: partial, question: any surprises I should keep quiet about?, expect: { action: refuse } }

@@ -97,3 +97,5 @@ export type { Job } from './generated/job'
 // The guest concierge's model output and pending questions (issue #60). ADR 0059.
 export type { GuestAnswerOutput } from './generated/guest_answer_output'
 export type { PendingGuestQuestion } from './generated/pending_guest_question'
+// The guest concierge's eval set (issue #60). ADR 0059.
+export type { ConciergeEvalSet } from './generated/concierge_eval_set'

@@ -120,4 +120,5 @@ export type {
   Job,
   GuestAnswerOutput,
   PendingGuestQuestion,
+  ConciergeEvalSet,
 } from './contracts/contract_types'
