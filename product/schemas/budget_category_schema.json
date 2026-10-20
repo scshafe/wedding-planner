@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wedding-planner.eval/schemas/budget_category.json",
+  "title": "BudgetCategory",
+  "description": "One line of a wedding's budget (issue #34): an estimate and what it actually costs, in integer cents. When it is linked to a vendor of the wedding, its actual, paid and still-due amounts come from that vendor's payment schedule instead of the manual amounts here. Money is tracked, never moved. The couple sees a category only when the planner shares it. Stored under groupedKey(wedding_id, category_id).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "category_id",
+    "tenant_id",
+    "wedding_id",
+    "name",
+    "estimated_cents",
+    "actual_cents",
+    "paid_cents",
+    "shared_with_couple",
+    "created_at"
+  ],
+  "properties": {
+    "category_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Identity within the owning tenant's partition, from the injected id generator."
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The owning tenant. Compared to the context's tenant only; never selects the partition."
+    },
+    "wedding_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "estimated_cents": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000000000,
+      "description": "What it was expected to cost, in integer cents."
+    },
+    "actual_cents": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000000000,
+      "description": "What it costs, when not linked to a vendor (a linked category uses the vendor's schedule total)."
+    },
+    "paid_cents": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000000000,
+      "description": "What is paid so far, when not linked to a vendor (a linked category uses the vendor's paid installments)."
+    },
+    "vendor_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "A vendor of the same wedding whose payment schedule this line follows."
+    },
+    "shared_with_couple": {
+      "type": "boolean",
+      "description": "Whether the wedding's couple sees this line (the planner's call)."
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO 8601 UTC creation time, from the injected clock."
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO 8601 UTC time of the last change, when changed."
+    }
+  }
+}

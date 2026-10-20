@@ -17,6 +17,7 @@ import type { BillingActivityEntry } from '../billing/billing_activity'
 import type { GuestEventRsvp, HouseholdRsvpView, WeddingEventCounts, WeddingEventsView } from '../wedding_events/wedding_event_service'
 import type { ChecklistView, DueAcrossWeddings, DueTask } from '../checklist/checklist_service'
 import { VENDOR_CATEGORIES, type VendorsView } from '../vendors/vendor_service'
+import type { BudgetLine, BudgetView } from '../budget/budget_service'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -1046,7 +1047,7 @@ export function renderDetail(
     <p>Status: <span class="status">${wedding.status}</span></p>
     <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=guests">Guest list →</a></p>
     ${checklistLine}
-    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=vendors">Vendors →</a></p>
+    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=vendors">Vendors →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=budget">Budget →</a></p>
     <p class="note">Wedding id: <code>${wedding.wedding_id}</code> · created ${wedding.created_at}</p>
     <p class="note">Active strategy: <a href="/t/${slug}/strategy">the platform’s data-optimized planning defaults</a> (applied to every wedding in this workspace).</p>
   </div>
@@ -1990,6 +1991,84 @@ export function renderVendors(theme: Tenant['theme'], slug: string, wedding: Wed
     view.can_manage
       ? html`<div class="card"><h3>Add a vendor</h3>
     <form method="post" action="/t/${slug}/vendors/vendor-add">${hidden({ wedding_id: w })}${vendorFields('new')}<p><button type="submit">Add vendor</button></p></form></div>`
+      : html``
+  }`,
+    'wedding',
+  )
+}
+
+export type BudgetNotice = 'saved' | 'removed' | 'invalid' | 'forbidden' | 'conflict'
+
+const BUDGET_NOTICES: Readonly<Record<BudgetNotice, string>> = Object.freeze({
+  saved: 'Saved.',
+  removed: 'Removed.',
+  invalid: 'That could not be saved. Check the name and the amounts (like 1250.00).',
+  forbidden: 'Only the planner manages the budget.',
+  conflict: 'This budget is full.',
+})
+
+/**
+ * A wedding's budget (issue #34): the totals, the next payments, and each line — a line linked to a vendor follows
+ * that vendor's payment schedule. The planner gets the forms; the couple sees the shared lines and their totals.
+ */
+export function renderBudget(theme: Tenant['theme'], slug: string, wedding: Wedding, view: BudgetView, csrfToken: string, notice?: BudgetNotice): string {
+  const w = wedding.wedding_id
+  const banner = notice === undefined ? html`` : html`<p class="note">${BUDGET_NOTICES[notice]}</p>`
+  const hidden = (fields: Record<string, string>) => html`${csrfField(csrfToken)}${Object.entries(fields).map(([k, v]) => html`<input type="hidden" name="${k}" value="${v}">`)}`
+  const t = view.totals
+  const fields = (prefix: string, line?: BudgetLine) => {
+    const c = line?.category
+    return html`<label for="${prefix}_name">Line</label>
+      <input id="${prefix}_name" name="name" maxlength="80" required value="${c?.name ?? ''}">
+      <label for="${prefix}_estimated">Estimate</label>
+      <input id="${prefix}_estimated" name="estimated" inputmode="decimal" required value="${c === undefined ? '' : amountText(c.estimated_cents)}">
+      <label for="${prefix}_vendor">Follows a vendor's payment schedule <span class="note">(optional)</span></label>
+      <select id="${prefix}_vendor" name="vendor_id"><option value="">No vendor: I enter the amounts</option>${view.vendors.map((v) =>
+        v.vendor_id === c?.vendor_id ? html`<option value="${v.vendor_id}" selected>${v.business_name}</option>` : html`<option value="${v.vendor_id}">${v.business_name}</option>`,
+      )}</select>
+      <label for="${prefix}_actual">Actual <span class="note">(without a vendor)</span></label>
+      <input id="${prefix}_actual" name="actual" inputmode="decimal" value="${c === undefined ? '' : amountText(c.actual_cents)}">
+      <label for="${prefix}_paid">Paid <span class="note">(without a vendor)</span></label>
+      <input id="${prefix}_paid" name="paid" inputmode="decimal" value="${c === undefined ? '' : amountText(c.paid_cents)}">
+      <label><input type="checkbox" name="shared_with_couple" value="true"${c?.shared_with_couple === true ? html` checked` : html``}> Shared with the couple</label>`
+  }
+  const row = (l: BudgetLine) => html`<li><strong>${l.category.name}</strong>
+      <span class="note">${`estimate ${dollars(l.category.estimated_cents)} · actual ${dollars(l.actual_cents)} · paid ${dollars(l.paid_cents)} · still due ${dollars(l.due_cents)}`}${l.vendor_name === undefined ? '' : ` · follows ${l.vendor_name}`}${l.vendor_missing ? ' · its vendor was removed' : ''}${view.can_manage && !l.category.shared_with_couple ? ' · not shared' : ''}</span>
+      ${
+        view.can_manage
+          ? html`<details><summary>Edit or remove</summary>
+        <form method="post" action="/t/${slug}/budget/budget-update">${hidden({ wedding_id: w, category_id: l.category.category_id })}${fields(`b_${l.category.category_id}`, l)}<p><button type="submit">Save line</button></p></form>
+        <form method="post" action="/t/${slug}/budget/budget-remove">${hidden({ wedding_id: w, category_id: l.category.category_id })}<button type="submit">Remove the line</button></form>
+      </details>`
+          : html``
+      }</li>`
+  return signedInShell(
+    theme,
+    slug,
+    'Budget',
+    html`<p><a href="/t/${slug}?wedding=${w}">← ${wedding.couple_display_name}</a></p>
+  <h2>Budget</h2>
+  ${banner}
+  <div class="card"><h3>Where we are</h3>
+    <p>${`Estimated ${dollars(t.estimated_cents)} · actual ${dollars(t.actual_cents)} · paid ${dollars(t.paid_cents)} · still due ${dollars(t.due_cents)}`}</p>
+    ${t.actual_cents > t.estimated_cents ? html`<p class="note" style="color:#b00">${`${dollars(t.actual_cents - t.estimated_cents)} over the estimate.`}</p>` : html``}
+    ${view.can_manage ? html`` : html`<p class="note">These are the lines the planner shares with you.</p>`}
+  </div>
+  <div class="card"><h3>Next payments</h3>
+    ${
+      view.next_payments.length === 0
+        ? html`<p class="note">No payments waiting.</p>`
+        : html`<ul>${view.next_payments.map(
+            (p) => html`<li><span${p.overdue ? html` style="color:#b00"` : html``}>${`${p.due_date}${p.overdue ? ' (overdue)' : ''}`}</span> ${`${p.category_name} — ${p.label}: ${dollars(p.amount_cents)}`}</li>`,
+          )}</ul>`
+    }
+    <p class="note">Money is tracked here, never paid through the app.</p>
+  </div>
+  ${view.lines.length === 0 ? html`<p class="note">${view.can_manage ? 'No budget lines yet.' : 'The planner has not shared any budget lines yet.'}</p>` : html`<div class="card"><ul>${view.lines.map(row)}</ul></div>`}
+  ${
+    view.can_manage
+      ? html`<div class="card"><h3>Add a line</h3>
+    <form method="post" action="/t/${slug}/budget/budget-add">${hidden({ wedding_id: w })}${fields('new')}<p><button type="submit">Add line</button></p></form></div>`
       : html``
   }`,
     'wedding',

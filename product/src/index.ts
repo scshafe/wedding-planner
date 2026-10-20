@@ -342,6 +342,17 @@ export {
   type TaskStatus,
 } from './checklist/checklist_service'
 export { CHECKLIST_TEMPLATE, type ChecklistOffset, type ChecklistTemplateItem, dateBefore, daysBetween, shiftDate } from './checklist/checklist_template'
+// A wedding's budget, lines optionally following a vendor's schedule (issue #34, ADR 0052).
+export {
+  BUDGET_LIMITS,
+  type BudgetCategoryInput,
+  type BudgetLine,
+  BudgetService,
+  type BudgetTotals,
+  type BudgetView,
+  NEXT_PAYMENTS_LISTED,
+  type NextPayment,
+} from './budget/budget_service'
 // A wedding's vendors and their payment schedules, in integer cents (issue #33, ADR 0051).
 export {
   centsFromText,

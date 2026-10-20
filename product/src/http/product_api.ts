@@ -14,6 +14,7 @@ import { publicAccountView } from '../accounts/account_store'
 import type { InvitedRole } from '../accounts/invitation_store'
 import type { MembershipService } from '../accounts/membership_service'
 import type { RateLimiter } from '../accounts/rate_limiter'
+import type { BudgetCategoryInput, BudgetService } from '../budget/budget_service'
 import type { ChecklistService, TaskInput } from '../checklist/checklist_service'
 import {
   type InstallmentInput,
@@ -182,6 +183,8 @@ export interface WeddingHandlerDeps {
   readonly checklist?: ChecklistService
   /** Issue #33: the wedding's vendors and payment schedules. Absent ⇒ the sub-routes are not mounted. */
   readonly vendors?: VendorService
+  /** Issue #34: the wedding's budget. Absent ⇒ the sub-routes are not mounted. */
+  readonly budget?: BudgetService
 }
 
 /** Issue #30: what the public household RSVP route needs — the link resolver, the answers, the dietary note, a limiter. */
@@ -349,6 +352,8 @@ export interface ProductApiDeps {
   readonly checklist?: ChecklistService
   /** Issue #33: each wedding's vendors, under /t/:slug/weddings/:id/vendors. */
   readonly vendors?: VendorService
+  /** Issue #34: each wedding's budget, under /t/:slug/weddings/:id/budget. */
+  readonly budget?: BudgetService
   /**
    * Issue #13: where a request that ends in a 500 is recorded (code + location, never data), and what the operator
    * reads at /admin/errors. Absent ⇒ nothing is recorded (fixtures).
@@ -460,6 +465,7 @@ export class ProductApi {
       ...(deps.householdRsvp === undefined ? {} : { rsvpLinks: deps.householdRsvp.links }),
       ...(deps.checklist === undefined ? {} : { checklist: deps.checklist }),
       ...(deps.vendors === undefined ? {} : { vendors: deps.vendors }),
+      ...(deps.budget === undefined ? {} : { budget: deps.budget }),
     }
     this.#householdRsvp = deps.householdRsvp
     this.#checklist = deps.checklist
@@ -882,6 +888,10 @@ function dispatchWeddings(
     throw methodNotAllowed()
   }
   const weddingId = segments[3]
+  // /t/:slug/weddings/:weddingId/budget[/:id] (issue #34).
+  if (deps.budget !== undefined && weddingId !== undefined && segments[4] === 'budget' && segments.length <= 6) {
+    return dispatchBudget(context, principal, req, weddingId, segments[5], deps.budget)
+  }
   // /t/:slug/weddings/:weddingId/vendors[/:id[/installments/:installmentId]] (issue #33).
   if (deps.vendors !== undefined && weddingId !== undefined && segments[4] === 'vendors' && segments.length <= 8) {
     return dispatchVendors(context, principal, req, weddingId, segments.slice(4), deps.vendors)
@@ -1077,6 +1087,54 @@ function dispatchChecklist(
   }
   if (req.method === 'DELETE') return { status: 200, body: { removed: checklist.removeTask(context, principal, weddingId, id) } }
   throw methodNotAllowed()
+}
+
+/**
+ * The budget routes of one wedding (issue #34). The wedding's boundary first; the planner's capability before a body
+ * is parsed (the couple only reads the lines the planner shares).
+ */
+function dispatchBudget(
+  context: TenantContext,
+  principal: Principal,
+  req: ApiRequest,
+  weddingId: string,
+  categoryId: string | undefined,
+  budget: BudgetService,
+): ApiResponse {
+  budget.assertReach(context, principal, weddingId)
+  if (categoryId === undefined && req.method === 'GET') return { status: 200, body: budget.view(context, principal, weddingId) }
+  if (principal.role !== 'planner') throw forbidden()
+  if (categoryId === undefined) {
+    if (req.method !== 'POST') throw methodNotAllowed()
+    return { status: 201, body: { category: budget.addCategory(context, principal, weddingId, budgetInput(req)) } }
+  }
+  if (req.method === 'PUT') return { status: 200, body: { category: budget.updateCategory(context, principal, weddingId, categoryId, budgetInput(req)) } }
+  if (req.method === 'DELETE') return { status: 200, body: { removed: budget.removeCategory(context, principal, weddingId, categoryId) } }
+  throw methodNotAllowed()
+}
+
+/** A budget line body: `{name, estimated_cents, actual_cents?, paid_cents?, vendor_id?, shared_with_couple?}`. */
+function budgetInput(req: ApiRequest): BudgetCategoryInput {
+  const body = parseObjectBody(req.rawBody)
+  const amount = (key: string, required: boolean): number | undefined => {
+    const value = body[key]
+    if (value === undefined && !required) return undefined
+    if (typeof value !== 'number') throw new ProductError('PRODUCT.BAD_REQUEST', `${key} must be a whole number of cents.`, {})
+    return value
+  }
+  const shared = body.shared_with_couple
+  if (shared !== undefined && typeof shared !== 'boolean') throw new ProductError('PRODUCT.BAD_REQUEST', 'shared_with_couple must be true or false.', {})
+  const actual = amount('actual_cents', false)
+  const paid = amount('paid_cents', false)
+  const vendor = optionalString(body, 'vendor_id')
+  return {
+    name: requireString(body, 'name'),
+    estimated_cents: amount('estimated_cents', true) as number,
+    ...(actual === undefined ? {} : { actual_cents: actual }),
+    ...(paid === undefined ? {} : { paid_cents: paid }),
+    ...(vendor === undefined ? {} : { vendor_id: vendor }),
+    ...(shared === undefined ? {} : { shared_with_couple: shared }),
+  }
 }
 
 /**

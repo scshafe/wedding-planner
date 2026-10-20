@@ -64,4 +64,5 @@
 - [Household RSVP page](household-rsvp-page.md) — #30 / ADR 0049: link stored as hash, shown once; HouseholdRsvpGrant (no principal); answers via the one writer; closed in its own collection
 - [Wedding checklist](wedding-checklist.md) — #31 / ADR 0050: template applied by persisted key; today = clock UTC date; couple ticks only its own; date move offers a shift
 - [Vendors per wedding](vendors-per-wedding.md) — #33 / ADR 0051: installments in integer cents with stable ids; couple sees shared only, no notes; assertPlainText
+- [Budget per wedding](budget-per-wedding.md) — #34 / ADR 0052: linked lines computed from the vendor schedule; couple sees shared lines only, never an unshared vendor
 - [Guest list CSV](guest-list-csv.md) — #28 / ADR 0047: export neutralizes formulas; import plans every row, applies all-or-nothing, matches by household + name
