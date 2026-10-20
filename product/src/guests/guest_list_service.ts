@@ -299,9 +299,8 @@ export class GuestListService {
     const householdList = [...view.households]
     const guestList = [...view.guests]
     const households = new Map(view.households.map((h) => [h.name.toLowerCase(), h]))
-    const householdNameById = new Map(view.households.map((h) => [h.household_id, h.name.toLowerCase()]))
-    const guestIds = new Map<string, string>()
-    for (const g of view.guests) guestIds.set(personKey(householdNameById.get(g.household_id) ?? '', g), g.guest_id)
+    // The guests this import creates, by the row that creates them (a new plus-one's host may be one of them).
+    const createdByRow = new Map<number, string>()
     // Hosts and everyone else first, then plus-ones (whose hosts may be created by the same import).
     const ordered = [...plan.rows.filter((r) => r.plus_one_of === undefined), ...plan.rows.filter((r) => r.plus_one_of !== undefined)]
     for (const row of ordered) {
@@ -327,9 +326,10 @@ export class GuestListService {
       if (row.guest_id !== undefined) {
         this.#updateGuest(context, wedding_id, row.guest_id, input, guestList)
       } else {
-        const host = row.plus_one_of === undefined ? undefined : guestIds.get(`${row.household.toLowerCase()}\u0000${row.plus_one_of.toLowerCase()}`)
+        // The host the plan resolved: never a fresh name lookup, so the preview and the import agree.
+        const host = row.host_guest_id ?? (row.host_row === undefined ? undefined : createdByRow.get(row.host_row))
         const created = this.#addGuest(context, wedding_id, { ...input, ...(host === undefined ? {} : { plus_one_of: host }) }, guestList)
-        guestIds.set(personKey(row.household.toLowerCase(), row), created.guest_id)
+        createdByRow.set(row.row, created.guest_id)
       }
     }
     return { applied: true, ...summary }
@@ -392,10 +392,6 @@ function refuseControlCharacters(...values: readonly (string | undefined)[]): vo
   }
 }
 
-/** `household\0first last`, lowercased: how an import names a host (`plus_one_of` is the host's full name). */
-function personKey(household_lower: string, g: { readonly first_name: string; readonly last_name: string }): string {
-  return `${household_lower}\u0000${`${g.first_name} ${g.last_name}`.trim().toLowerCase()}`
-}
 
 /** `{ [key]: value }` for a non-empty trimmed value, else `{}` (an optional field is absent, never empty). */
 function optional<K extends string>(key: K, value: string | undefined): { [P in K]?: string } {

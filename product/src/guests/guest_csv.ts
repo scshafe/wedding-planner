@@ -60,8 +60,12 @@ export interface PlannedGuest {
   readonly side: GuestSide
   readonly tags: readonly string[]
   readonly plus_one_allowed: boolean
-  /** The host's `First Last`, for a plus-one row. */
+  /** The host's `First Last`, for a new plus-one. */
   readonly plus_one_of?: string
+  /** The host the plan resolved for a new plus-one: a guest on the list ... */
+  readonly host_guest_id?: string
+  /** ... or the row of the file that creates them (the apply step uses exactly this, never a name lookup). */
+  readonly host_row?: number
   readonly dietary?: string
   readonly email?: string
   readonly phone?: string
@@ -85,13 +89,14 @@ export interface ImportPlan {
  */
 export function neutralize(cell: string): string {
   const start = /^[=+\-@\t\r]/.test(cell) ? `'${cell}` : cell
-  return start.replace(/;(\s*"*\s*)(?=[=+\-@\t\r])/g, ";$1'")
+  // One character class (not `\s*"*\s*`): linear on a long run of spaces, never a regex blow-up.
+  return start.replace(/;([\s"]*)(?=[=+\-@\t\r])/g, ";$1'")
 }
 
 /** Undo {@link neutralize} on import, so an exported file round-trips. */
 export function unneutralize(cell: string): string {
   const start = /^'[=+\-@\t\r]/.test(cell) ? cell.slice(1) : cell
-  return start.replace(/;(\s*"*\s*)'(?=[=+\-@\t\r])/g, ';$1')
+  return start.replace(/;([\s"]*)'(?=[=+\-@\t\r])/g, ';$1')
 }
 
 function quote(cell: string): string {
@@ -219,10 +224,17 @@ export function planGuestImport(view: GuestListView, text: string, limits = { ho
     // trimmed, un-neutralized, and trimmed again (so the plan sees exactly what the service will store).
     const get = (column: Column): string | undefined => {
       const at = index.get(column)
-      return at === undefined ? undefined : unneutralize((cells[at] ?? '').trim()).trim()
+      if (at === undefined) return undefined
+      const cell = cells[at] ?? ''
+      // No stored field is longer than 300 characters: a longer cell is a problem, never transformed.
+      return cell.length > MAX_CELL ? TOO_LONG : unneutralize(cell.trim()).trim()
     }
     const rowProblems: string[] = []
     const values = GUEST_CSV_COLUMNS.map((c) => get(c) ?? '')
+    if (values.includes(TOO_LONG)) {
+      problems.push({ row, message: `a cell is longer than ${MAX_CELL} characters` })
+      return
+    }
     if (values.some(hasControlCharacter)) rowProblems.push('a cell holds a line break or another control character')
     const household = get('household') ?? ''
     const first_name = get('first_name') ?? ''
@@ -309,6 +321,7 @@ export function planGuestImport(view: GuestListView, text: string, limits = { ho
     if (!isPlusOne) push(hostsInFile, hostKey(p.household, fullName(p)), p)
   }
   const plusOnesPerHost = new Map<string, number>()
+  const resolvedHost = new Map<number, { readonly host_guest_id: string } | { readonly host_row: number }>()
   for (const p of planned) {
     if (p.plus_one_of === undefined) continue
     const k = hostKey(p.household, p.plus_one_of)
@@ -328,6 +341,7 @@ export function planGuestImport(view: GuestListView, text: string, limits = { ho
       problems.push({ row: p.row, message: `the plus-one's host "${p.plus_one_of}" is not in this household or may not bring a plus-one` })
       continue
     }
+    resolvedHost.set(p.row, hostId !== undefined ? { host_guest_id: hostId } : { host_row: (inFile as PlannedGuest).row })
     plusOnesPerHost.set(k, (plusOnesPerHost.get(k) ?? 0) + 1)
     if ((plusOnesPerHost.get(k) ?? 0) > 1 || (hostId !== undefined && plusOneOfHost.has(hostId))) {
       problems.push({ row: p.row, message: `"${p.plus_one_of}" already has a plus-one` })
@@ -346,13 +360,18 @@ export function planGuestImport(view: GuestListView, text: string, limits = { ho
   if (view.households.length + newHouseholds.size > limits.households) problems.push({ row: 1, message: 'the import would exceed the household limit' })
   if (view.guests.length + creates > limits.guests) problems.push({ row: 1, message: 'the import would exceed the guest limit' })
   return {
-    rows: planned,
+    rows: planned.map((p) => ({ ...p, ...resolvedHost.get(p.row) })),
     problems: problems.sort((a, b) => a.row - b.row),
     creates,
     updates: planned.length - creates,
     households_created: newHouseholds.size,
   }
 }
+
+/** The longest cell an import reads (the longest stored field is 300 characters). */
+const MAX_CELL = 300
+/** The marker `get` returns for a cell over {@link MAX_CELL} (a control character, so it can never be real data). */
+const TOO_LONG = '\u0000too long'
 
 /** C0 controls and DEL: never in a stored name, note or number (and `\u0000` is the match keys' delimiter). */
 function hasControlCharacter(value: string): boolean {

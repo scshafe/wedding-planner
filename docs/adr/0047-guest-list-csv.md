@@ -23,7 +23,9 @@ with commas (one quoted cell) and split on commas or semicolons.
 The file is opened in Excel or Sheets, so any cell starting with `=`, `+`, `-`, `@`, tab or CR is written with a
 leading `'` (OWASP's advice). That includes phone numbers like `+1 555…`; a spreadsheet hides the apostrophe and
 shows the text. Excel in a `;`-separated locale (most of Europe) splits a cell at `;`, so the start of every `;`
-piece, after spaces and quotes, is guarded the same way (`x;=cmd` is written `x;'=cmd`). Import strips exactly
+piece, after spaces and quotes, is guarded the same way (`x;=cmd` is written `x;'=cmd`). The guard is one character
+class (`;[\s"]*`), linear on any input: the re-review found that two adjacent `\s*` groups took seconds on a long run
+of spaces. An import refuses a cell longer than 300 characters (the longest stored field) before transforming it. Import strips exactly
 those apostrophes again, so an exported file round-trips. The download is
 `text/csv; charset=utf-8` with a BOM and CRLF (what the spreadsheet programs expect), `attachment`, `no-store` and
 `nosniff`. It is named by the wedding id, never by the couple's names.
@@ -44,7 +46,8 @@ plan inside the request's transaction, so a failure part-way also writes nothing
 - **Cells are checked as stored:** trimmed, un-neutralized and trimmed again. A cell holding a line break or another
   control character is a problem; the service refuses those characters in names, notes and numbers too.
 - **Plus-ones:** an import may create a plus-one. The host must be exactly one person of that name in the same
-  household (in the file or already on the list), be allowed a plus-one, and end up with at most one. A row matching an existing guest must keep that
+  household (in the file or already on the list), be allowed a plus-one, and end up with at most one. The plan
+  records the host it resolved, and the import links exactly that host, so the preview and the import never disagree. A row matching an existing guest must keep that
   guest's plus-one status and host; changing who is a plus-one is done on the list page, where the rules are
   visible. A row may not take away an allowance while the host's plus-one is listed.
 - **Households:** a new household name creates one. An address on a row sets the household's address, and rows of

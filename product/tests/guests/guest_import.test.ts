@@ -96,6 +96,18 @@ describe('GuestListService.importGuests', () => {
     expect(view.households[0]?.address).toBe('2 Elm St')
   })
 
+  it('links a new plus-one to the host the preview resolved, even when a plus-one on the list has the same name', () => {
+    const w = world()
+    const lee = w.list.addHousehold(w.ctx, w.planner, w.ours, { name: 'Lee' })
+    const ann = w.list.addGuest(w.ctx, w.planner, w.ours, { household_id: lee.household_id, first_name: 'Ann', last_name: 'Lee', side: 'both', plus_one_allowed: true })
+    const bo = w.list.addGuest(w.ctx, w.planner, w.ours, { household_id: lee.household_id, first_name: 'Bo', last_name: 'Lee', side: 'both', plus_one_allowed: true })
+    w.list.addGuest(w.ctx, w.planner, w.ours, { first_name: 'Ann', last_name: 'Lee', side: 'both', plus_one_of: bo.guest_id }) // Bo's plus-one, also "Ann Lee"
+    const file = [HEADER, 'Lee,,Pat,,,,,Ann Lee,,,'].join('\n')
+    expect(w.list.importGuests(w.ctx, w.planner, w.ours, file, false)).toMatchObject({ applied: false, problems: [], creates: 1 })
+    expect(w.list.importGuests(w.ctx, w.planner, w.ours, file, true)).toMatchObject({ applied: true })
+    expect(w.list.view(w.ctx, w.planner, w.ours).guests.find((g) => g.first_name === 'Pat')?.plus_one_of).toBe(ann.guest_id)
+  })
+
   it('the couple imports into its own wedding; another wedding is the masked NOT_FOUND, and stays untouched', () => {
     const w = world()
     expect(w.list.importGuests(w.ctx, w.couple, w.ours, FILE, true)).toMatchObject({ applied: true })

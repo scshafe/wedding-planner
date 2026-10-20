@@ -124,6 +124,18 @@ describe('planGuestImport', () => {
     expect(planGuestImport(EMPTY, 'household,first_name\n"open').problems).toEqual([{ row: 1, message: 'The CSV has a quoted cell that is never closed.' }])
   })
 
+  it('stays linear on a long run of spaces after a ; (no regex blow-up), and refuses an over-long cell', () => {
+    const cell = `x;${' '.repeat(300_000)}y`
+    let started = performance.now()
+    expect(neutralize(cell)).toBe(cell)
+    expect(unneutralize(cell)).toBe(cell)
+    expect(performance.now() - started).toBeLessThan(200)
+    started = performance.now()
+    const plan = planGuestImport(EMPTY, csv(`H,,A,,,,,,${' '.repeat(5)}x;${' '.repeat(290_000)}y,,`))
+    expect(performance.now() - started).toBeLessThan(500)
+    expect(plan.problems).toEqual([{ row: 2, message: 'a cell is longer than 300 characters' }])
+  })
+
   it('stays fast on a list built to make name matching slow (no scan per row)', () => {
     // 1000 households, each with a host named "A B" who may bring a plus-one; 2000 plus-one rows naming "A B".
     const households = Array.from({ length: 1000 }, (_, i) => household(`h${i}`, `H${i}`))
