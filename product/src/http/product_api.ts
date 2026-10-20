@@ -14,6 +14,7 @@ import { publicAccountView } from '../accounts/account_store'
 import type { InvitedRole } from '../accounts/invitation_store'
 import type { MembershipService } from '../accounts/membership_service'
 import type { FeedbackService } from '../feedback/feedback_service'
+import type { GuestInput, GuestListService, GuestSide } from '../guests/guest_list_service'
 import type { ErrorLog } from '../operability/error_log'
 import type { GuestAuthorizer } from '../auth/guest_authorizer'
 import type { OperatorCredentialStore } from '../auth/operator_credential'
@@ -151,6 +152,8 @@ export const REPLY_BODY_MAX_LENGTH = 2000
 export interface WeddingHandlerDeps {
   readonly weddings: WeddingRepository
   readonly authorizer: WeddingAuthorizer
+  /** Issue #27: the wedding's guest list (households + guests). Absent ⇒ the sub-routes are not mounted. */
+  readonly guestList?: GuestListService
 }
 
 /** The narrow bag handed to the operator-gated /admin handlers — DELIBERATELY excludes the operator store. */
@@ -300,6 +303,8 @@ export interface ProductApiDeps {
   readonly membership?: MembershipService
   /** Issue #12: in-app feedback (submit for signed-in planners and couples; the operator reads). */
   readonly feedback?: FeedbackService
+  /** Issue #27: each wedding's guest list, under /t/:slug/weddings/:id/{guest-list,households,guests}. */
+  readonly guestList?: GuestListService
   /**
    * Issue #13: where a request that ends in a 500 is recorded (code + location, never data), and what the operator
    * reads at /admin/errors. Absent ⇒ nothing is recorded (fixtures).
@@ -401,7 +406,11 @@ export class ProductApi {
     this.#messaging = deps.messaging
     this.#escalations = deps.escalations
     this.#billing = deps.billing
-    this.#handlerDeps = { weddings: deps.weddings, authorizer: deps.authorizer }
+    this.#handlerDeps = {
+      weddings: deps.weddings,
+      authorizer: deps.authorizer,
+      ...(deps.guestList === undefined ? {} : { guestList: deps.guestList }),
+    }
     this.#guests = deps.guests
     this.#adminDeps = {
       onboarding: deps.onboarding,
@@ -715,9 +724,11 @@ export class ProductApi {
 /** Map a WeddingPlannerError to a code-free response. The ONLY place codes become statuses. */
 function errorToResponse(error: WeddingPlannerError): ApiResponse {
   switch (error.code) {
+    // NOT_FOUND (issue #27 on): a resource that is absent OR outside the principal's reach — one masked 404.
     case 'PRODUCT.UNKNOWN_TENANT':
     case 'PRODUCT.TENANT_NOT_USABLE':
     case 'PRODUCT.ROUTE_NOT_FOUND':
+    case 'PRODUCT.NOT_FOUND':
       return RESP_NOT_FOUND
     // NO_OPERATOR / NO_WEBHOOK_CREDENTIAL: an /admin or inbound-webhook request with no/unknown credential —
     // the same constant 401 as a missing tenant session, so auth-failure on any of the three non-anonymous
@@ -757,12 +768,15 @@ function errorToResponse(error: WeddingPlannerError): ApiResponse {
     case 'PRODUCT.SIMULATED_LOGIN_DISABLED':
       return RESP_BAD_REQUEST
     // ACCOUNT_EXISTS: an honest 409 to the TRUSTED operator (owner setup), like DUPLICATE_SLUG. The issue #11 team
-    // conflicts are honest 409s to the trusted planner / owner of the same workspace.
+    // conflicts are honest 409s to the trusted planner / owner of the same workspace, and the issue #27 list conflicts
+    // (a second plus-one, the list's size bound) to the trusted planner / couple of the wedding.
     case 'PRODUCT.ACCOUNT_EXISTS':
     case 'PRODUCT.MEMBER_EXISTS':
     case 'PRODUCT.INVITATION_EXISTS':
     case 'PRODUCT.CANNOT_REMOVE_SELF':
     case 'PRODUCT.CANNOT_REMOVE_OWNER':
+    case 'PRODUCT.PLUS_ONE_EXISTS':
+    case 'PRODUCT.LIMIT_REACHED':
       return RESP_CONFLICT
     // FORGED_CONTEXT / FORGED_PRINCIPAL / CROSS_TENANT_WRITE / anything else: an internal invariant
     // violation a real request can never construct — a 500 bug, never a normal client path, never leaked.
@@ -798,7 +812,94 @@ function dispatchWeddings(
     if (req.method === 'PUT') return handleUpdate(context, principal, req, weddingId, deps)
     throw methodNotAllowed()
   }
+  // /t/:slug/weddings/:weddingId/{guest-list | households[/:id] | guests[/:id]} (issue #27).
+  const weddingId = segments[3]
+  if (deps.guestList !== undefined && weddingId !== undefined && (segments.length === 5 || segments.length === 6)) {
+    return dispatchGuestList(context, principal, req, weddingId, segments.slice(4), deps.guestList)
+  }
   throw routeNotFound()
+}
+
+/**
+ * The guest-list routes of one wedding (issue #27). The service applies the wedding's boundary (planner: any wedding;
+ * couple: its own) and masks everything else as not found.
+ */
+function dispatchGuestList(
+  context: TenantContext,
+  principal: Principal,
+  req: ApiRequest,
+  weddingId: string,
+  rest: readonly string[],
+  guestList: GuestListService,
+): ApiResponse {
+  const [resource, id] = rest
+  if (resource === 'guest-list' && id === undefined) {
+    if (req.method !== 'GET') throw methodNotAllowed()
+    return { status: 200, body: guestList.view(context, principal, weddingId) }
+  }
+  if (resource === 'households') {
+    if (id === undefined) {
+      if (req.method !== 'POST') throw methodNotAllowed()
+      return { status: 201, body: { household: guestList.addHousehold(context, principal, weddingId, householdInput(req)) } }
+    }
+    if (req.method === 'PUT') {
+      return { status: 200, body: { household: guestList.updateHousehold(context, principal, weddingId, id, householdInput(req)) } }
+    }
+    if (req.method === 'DELETE') return { status: 200, body: { removed: guestList.removeHousehold(context, principal, weddingId, id) } }
+    throw methodNotAllowed()
+  }
+  if (resource === 'guests') {
+    if (id === undefined) {
+      if (req.method !== 'POST') throw methodNotAllowed()
+      return { status: 201, body: { guest: guestList.addGuest(context, principal, weddingId, guestInput(req, true)) } }
+    }
+    if (req.method === 'PUT') {
+      return { status: 200, body: { guest: guestList.updateGuest(context, principal, weddingId, id, guestInput(req, false)) } }
+    }
+    if (req.method === 'DELETE') return { status: 200, body: { removed: guestList.removeGuest(context, principal, weddingId, id) } }
+    throw methodNotAllowed()
+  }
+  throw routeNotFound()
+}
+
+/** A household body: `{name, address?}`. */
+function householdInput(req: ApiRequest): { name: string; address?: string } {
+  const body = parseObjectBody(req.rawBody)
+  const address = optionalString(body, 'address')
+  return { name: requireString(body, 'name'), ...(address === undefined ? {} : { address }) }
+}
+
+/** A guest body. `plus_one_of` is honored only on creation. Field shapes are re-checked by the contract. */
+function guestInput(req: ApiRequest, creating: boolean): GuestInput {
+  const body = parseObjectBody(req.rawBody)
+  const side = body.side
+  if (side !== 'partner_one' && side !== 'partner_two' && side !== 'both') {
+    throw new ProductError('PRODUCT.BAD_REQUEST', 'side must be partner_one, partner_two or both.', {})
+  }
+  const tags = body.tags
+  if (tags !== undefined && (!Array.isArray(tags) || tags.some((t) => typeof t !== 'string'))) {
+    throw new ProductError('PRODUCT.BAD_REQUEST', 'tags must be a list of strings.', {})
+  }
+  const allowed = body.plus_one_allowed
+  if (allowed !== undefined && typeof allowed !== 'boolean') {
+    throw new ProductError('PRODUCT.BAD_REQUEST', 'plus_one_allowed must be true or false.', {})
+  }
+  const pick = (key: string): { [k: string]: string } => {
+    const value = optionalString(body, key)
+    return value === undefined ? {} : { [key]: value }
+  }
+  return {
+    first_name: requireString(body, 'first_name'),
+    side: side as GuestSide,
+    ...pick('household_id'),
+    ...pick('last_name'),
+    ...pick('dietary'),
+    ...pick('email'),
+    ...pick('phone'),
+    ...(creating ? pick('plus_one_of') : {}),
+    ...(tags === undefined ? {} : { tags: tags as string[] }),
+    ...(allowed === undefined ? {} : { plus_one_allowed: allowed }),
+  }
 }
 
 function handleList(context: TenantContext, principal: Principal, deps: WeddingHandlerDeps): ApiResponse {

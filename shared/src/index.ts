@@ -99,4 +99,6 @@ export type {
   GuestEscalation,
   EscalationResolution,
   EscalationReply,
+  Household,
+  WeddingGuest,
 } from './contracts/contract_types'

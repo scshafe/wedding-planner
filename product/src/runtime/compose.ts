@@ -15,6 +15,7 @@ import { PasswordHasher, PRODUCTION_SCRYPT_COST, type ScryptCost } from '../acco
 import { RateLimiter } from '../accounts/rate_limiter'
 import { BillingLedger } from '../billing/billing_ledger'
 import { FeedbackService } from '../feedback/feedback_service'
+import { GuestListService } from '../guests/guest_list_service'
 import { ErrorLog } from '../operability/error_log'
 import { SimulatedEmailAdapter } from '../email/simulated_email_adapter'
 import { ProductApi } from '../http/product_api'
@@ -276,6 +277,8 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     accounts,
     membership,
     tenants,
+    // Each wedding's guest list (issue #27): households and guests, behind the wedding's boundary.
+    guestList: new GuestListService(tenants, weddings, authorizer, clock, ids, store),
     // In-app feedback (issue #12): stored in the shared store, read by the operator at /admin/feedback.
     feedback: new FeedbackService(clock, ids, limiter, store),
     // Operability (issue #13): 500s are recorded (code + location, never data); /healthz names the build.

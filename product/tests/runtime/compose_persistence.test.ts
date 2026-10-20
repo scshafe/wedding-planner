@@ -112,6 +112,12 @@ describe('durable storage — data written before a restart is read back after i
       api1.handle(req('POST', '/t/demo/escalations', { token, body: { escalation_id: escalationId, status: 'resolved' } }))
         .body,
     ).toEqual({ resolved: true })
+    // A guest list (issue #27): a household and a guest on the new wedding.
+    const household = api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/households`, { token, body: { name: 'The Rivera family' } }))
+    const householdId = (household.body as { household: { household_id: string } }).household.household_id
+    expect(
+      api1.handle(req('POST', `/t/demo/weddings/${newWeddingId}/guests`, { token, body: { household_id: householdId, first_name: 'Ana', side: 'both' } })).status,
+    ).toBe(201)
     const provisioned = api1.handle(
       req('POST', '/admin/tenants', {
         token: OP,

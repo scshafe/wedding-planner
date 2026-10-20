@@ -1,7 +1,17 @@
-import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Tenant, Wedding } from '@wedding-planner/shared'
+import type {
+  EscalationReply,
+  EscalationResolution,
+  Guest,
+  GuestEscalation,
+  Household,
+  Tenant,
+  Wedding,
+  WeddingGuest,
+} from '@wedding-planner/shared'
 
 import type { TeamView } from '../accounts/membership_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
+import type { GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
 import type { StrategyGuidance } from '../strategy/strategy_guidance'
@@ -985,6 +995,7 @@ export function renderDetail(
     <p>Date: <strong>${wedding.event_date}</strong></p>
     ${logistics}
     <p>Status: <span class="status">${wedding.status}</span></p>
+    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=guests">Guest list →</a></p>
     <p class="note">Wedding id: <code>${wedding.wedding_id}</code> · created ${wedding.created_at}</p>
     <p class="note">Active strategy: <a href="/t/${slug}/strategy">the platform’s data-optimized planning defaults</a> (applied to every wedding in this workspace).</p>
   </div>
@@ -1171,6 +1182,183 @@ export function renderFeedbackThanks(theme: Tenant['theme'], slug: string): stri
     'Thank you',
     html`<div class="card"><h2>Thank you</h2><p>Your feedback was sent.</p><p><a href="/t/${slug}">← Back to your workspace</a></p></div>`,
     'other',
+  )
+}
+
+/** Notices on the guest list after an action (issue #27). */
+export type GuestListNotice = 'saved' | 'removed' | 'invalid' | 'conflict'
+
+const GUEST_LIST_NOTICES: Readonly<Record<GuestListNotice, string>> = Object.freeze({
+  saved: 'Saved.',
+  removed: 'Removed.',
+  invalid: 'That could not be saved. Check the fields (names are required; an email must look like one).',
+  conflict: 'That is not possible right now (a guest already has a plus-one, or the list is full).',
+})
+
+const SIDE_LABELS: Readonly<Record<WeddingGuest['side'], string>> = Object.freeze({
+  partner_one: 'Partner one',
+  partner_two: 'Partner two',
+  both: 'Both',
+})
+
+/** The side select, preselected. */
+function sideOptions(selected: WeddingGuest['side'] = 'both'): SafeHtml[] {
+  return (Object.keys(SIDE_LABELS) as WeddingGuest['side'][]).map((side) =>
+    side === selected
+      ? html`<option value="${side}" selected>${SIDE_LABELS[side]}</option>`
+      : html`<option value="${side}">${SIDE_LABELS[side]}</option>`,
+  )
+}
+
+/** The guest fields of the add and edit forms. */
+function guestFields(prefix: string, guest?: WeddingGuest): SafeHtml {
+  return html`<label for="${prefix}_first">First name</label>
+      <input id="${prefix}_first" name="first_name" maxlength="80" required value="${guest?.first_name ?? ''}">
+      <label for="${prefix}_last">Last name</label>
+      <input id="${prefix}_last" name="last_name" maxlength="80" value="${guest?.last_name ?? ''}">
+      <label for="${prefix}_side">Side</label>
+      <select id="${prefix}_side" name="side">${sideOptions(guest?.side)}</select>
+      <label for="${prefix}_tags">Tags <span class="note">(comma-separated)</span></label>
+      <input id="${prefix}_tags" name="tags" maxlength="400" value="${(guest?.tags ?? []).join(', ')}">
+      <label for="${prefix}_dietary">Dietary needs</label>
+      <input id="${prefix}_dietary" name="dietary" maxlength="300" value="${guest?.dietary ?? ''}">
+      <label for="${prefix}_email">Email</label>
+      <input id="${prefix}_email" name="email" type="email" maxlength="254" value="${guest?.email ?? ''}">
+      <label for="${prefix}_phone">Phone</label>
+      <input id="${prefix}_phone" name="phone" maxlength="40" value="${guest?.phone ?? ''}">`
+}
+
+/**
+ * A wedding's guest list (issue #27): counts, every household with its guests, and the forms to add, edit and remove
+ * (collapsible, no script). Every value is escaped; contact details appear only here, for the planner and the couple.
+ */
+export function renderGuestList(
+  theme: Tenant['theme'],
+  slug: string,
+  wedding: Wedding,
+  list: GuestListView,
+  csrfToken: string,
+  notice?: GuestListNotice,
+): string {
+  const w = wedding.wedding_id
+  const banner = notice === undefined ? html`` : html`<p class="note">${GUEST_LIST_NOTICES[notice]}</p>`
+  const hidden = (fields: Record<string, string>): SafeHtml[] =>
+    Object.entries(fields).map(([name, value]) => html`<input type="hidden" name="${name}" value="${value}">`)
+  const guestLine = (g: WeddingGuest): SafeHtml => {
+    const host = g.plus_one_of === undefined ? undefined : list.guests.find((x) => x.guest_id === g.plus_one_of)
+    const hasPlusOne = list.guests.some((x) => x.plus_one_of === g.guest_id)
+    const details = [
+      SIDE_LABELS[g.side],
+      ...(host === undefined ? [] : [`plus-one of ${host.first_name}`]),
+      ...(g.plus_one_allowed ? [hasPlusOne ? 'has a plus-one' : 'may bring a plus-one'] : []),
+      ...(g.tags.length === 0 ? [] : [g.tags.join(', ')]),
+      ...(g.dietary === undefined ? [] : [`dietary: ${g.dietary}`]),
+      ...(g.email === undefined ? [] : [g.email]),
+      ...(g.phone === undefined ? [] : [g.phone]),
+    ].join(' · ')
+    return html`<li><strong>${g.first_name} ${g.last_name}</strong> <span class="note">${details}</span>
+      <a href="/t/${slug}?wedding=${w}&amp;tab=guests&amp;guest=${g.guest_id}">Edit</a>
+      <form class="inline" method="post" action="/t/${slug}/guest-list/guest-remove">${csrfField(csrfToken)}${hidden({ wedding_id: w, guest_id: g.guest_id })}<button type="submit">Remove</button></form>
+      ${
+        g.plus_one_allowed && !hasPlusOne
+          ? html`<details><summary>Add their plus-one</summary>
+        <form method="post" action="/t/${slug}/guest-list/guest-add">${csrfField(csrfToken)}${hidden({ wedding_id: w, plus_one_of: g.guest_id, side: g.side })}
+          <label>First name <input name="first_name" maxlength="80" required></label>
+          <label>Last name <input name="last_name" maxlength="80"></label>
+          <button type="submit">Add plus-one</button>
+        </form></details>`
+          : html``
+      }</li>`
+  }
+  const households = list.households.map((h: Household) => {
+    const members = list.guests.filter((g) => g.household_id === h.household_id)
+    return html`<div class="card">
+    <h3>${h.name}</h3>
+    ${h.address === undefined ? html`` : html`<p class="note">${h.address}</p>`}
+    <ul>${members.map(guestLine)}</ul>
+    <details><summary>Add a guest to this household</summary>
+      <form method="post" action="/t/${slug}/guest-list/guest-add">${csrfField(csrfToken)}${hidden({ wedding_id: w, household_id: h.household_id })}
+        ${guestFields(`add_${h.household_id}`)}
+        <label><input type="checkbox" name="plus_one_allowed" value="true"> May bring a plus-one</label>
+        <p><button type="submit">Add guest</button></p>
+      </form></details>
+    <details><summary>Edit or remove this household</summary>
+      <form method="post" action="/t/${slug}/guest-list/household-update">${csrfField(csrfToken)}${hidden({ wedding_id: w, household_id: h.household_id })}
+        <label>Name <input name="name" maxlength="120" required value="${h.name}"></label>
+        <label>Mailing address <input name="address" maxlength="300" value="${h.address ?? ''}"></label>
+        <p><button type="submit">Save household</button></p>
+      </form>
+      <form method="post" action="/t/${slug}/guest-list/household-remove">${csrfField(csrfToken)}${hidden({ wedding_id: w, household_id: h.household_id })}
+        <button type="submit">Remove the household and its guests</button>
+      </form></details>
+  </div>`
+  })
+  const c = list.counts
+  return signedInShell(
+    theme,
+    slug,
+    'Guest list',
+    html`<p><a href="/t/${slug}?wedding=${w}">← ${wedding.couple_display_name}</a></p>
+  <h2>Guest list</h2>
+  ${banner}
+  <div class="card">
+    <p><strong>${`${c.guests} guest(s)`}</strong> in ${`${c.households} household(s)`} · ${`${c.plus_ones} plus-one(s)`}</p>
+    <p class="note">${`Partner one: ${c.by_side.partner_one} · Partner two: ${c.by_side.partner_two} · Both: ${c.by_side.both}`}</p>
+  </div>
+  <div class="card">
+    <h3>Add a household</h3>
+    <form method="post" action="/t/${slug}/guest-list/household-add">${csrfField(csrfToken)}${hidden({ wedding_id: w })}
+      <label for="h_name">Name <span class="note">(e.g. "The Rivera family")</span></label>
+      <input id="h_name" name="name" maxlength="120" required>
+      <label for="h_address">Mailing address <span class="note">(optional)</span></label>
+      <input id="h_address" name="address" maxlength="300">
+      <p><button type="submit">Add household</button></p>
+    </form>
+  </div>
+  ${households}`,
+    'wedding',
+  )
+}
+
+/** Edit one guest (issue #27). A plus-one stays in their host's household. */
+export function renderGuestEdit(
+  theme: Tenant['theme'],
+  slug: string,
+  wedding: Wedding,
+  guest: WeddingGuest,
+  households: readonly Household[],
+  csrfToken: string,
+  invalid = false,
+): string {
+  const w = wedding.wedding_id
+  const householdField =
+    guest.plus_one_of === undefined
+      ? html`<label for="e_household">Household</label>
+      <select id="e_household" name="household_id">${households.map((h) =>
+        h.household_id === guest.household_id
+          ? html`<option value="${h.household_id}" selected>${h.name}</option>`
+          : html`<option value="${h.household_id}">${h.name}</option>`,
+      )}</select>
+      <label><input type="checkbox" name="plus_one_allowed" value="true"${guest.plus_one_allowed ? html` checked` : html``}> May bring a plus-one</label>`
+      : html`<p class="note">A plus-one stays in their host's household.</p>`
+  return signedInShell(
+    theme,
+    slug,
+    'Edit guest',
+    html`<p><a href="/t/${slug}?wedding=${w}&amp;tab=guests">← Guest list</a></p>
+  <div class="card">
+    <h2>Edit guest</h2>
+    ${invalid ? html`<p class="note" style="color:#b00">${GUEST_LIST_NOTICES.invalid}</p>` : html``}
+    <form method="post" action="/t/${slug}/guest-list/guest-update">
+      ${csrfField(csrfToken)}
+      <input type="hidden" name="wedding_id" value="${w}">
+      <input type="hidden" name="guest_id" value="${guest.guest_id}">
+      ${guestFields('e', guest)}
+      ${householdField}
+      <p><button type="submit">Save guest</button></p>
+    </form>
+  </div>`,
+    'wedding',
   )
 }
 
