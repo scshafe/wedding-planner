@@ -49,6 +49,7 @@ export type ContractKey =
   | 'wedding_task'
   | 'checklist_date_move'
   | 'wedding_vendor'
+  | 'budget_category'
 
 export interface ContractDefinition {
   /** Stable friendly key, e.g. 'grade_report'. */
@@ -248,6 +249,12 @@ export const CONTRACT_DEFINITIONS: readonly ContractDefinition[] = [
     key: 'wedding_vendor',
     schemaId: `${SCHEMA_ID_PREFIX}/wedding_vendor.json`,
     repoRelativePath: 'product/schemas/wedding_vendor_schema.json',
+    domain: 'product',
+  },
+  {
+    key: 'budget_category',
+    schemaId: `${SCHEMA_ID_PREFIX}/budget_category.json`,
+    repoRelativePath: 'product/schemas/budget_category_schema.json',
     domain: 'product',
   },
 ] as const

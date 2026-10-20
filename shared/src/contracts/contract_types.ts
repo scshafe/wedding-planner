@@ -78,3 +78,5 @@ export type { WeddingTask } from './generated/wedding_task'
 export type { ChecklistDateMove } from './generated/checklist_date_move'
 // One vendor of a wedding, with its payment schedule in integer cents (issue #33). ADR 0051.
 export type { WeddingVendor } from './generated/wedding_vendor'
+// One line of a wedding's budget, optionally following a vendor's payment schedule (issue #34). ADR 0052.
+export type { BudgetCategory } from './generated/budget_category'

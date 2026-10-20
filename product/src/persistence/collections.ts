@@ -15,6 +15,7 @@ import type {
   WeddingTask,
   ChecklistDateMove,
   WeddingVendor,
+  BudgetCategory,
 } from '@wedding-planner/shared'
 
 import type { AccountEmailIndex, UserAccount } from '../accounts/account_store'
@@ -108,4 +109,6 @@ export const COLLECTIONS = Object.freeze({
   checklistDateMove: collection<ChecklistDateMove>('checklist_date_move', 'tenant', 'checklist_date_move'),
   /** Key groupedKey(wedding_id, vendor_id): a wedding's vendors and their payment schedules (issue #33). */
   weddingVendor: collection<WeddingVendor>('wedding_vendor', 'tenant', 'wedding_vendor'),
+  /** Key groupedKey(wedding_id, category_id): a wedding's budget lines (issue #34). */
+  budgetCategory: collection<BudgetCategory>('budget_category', 'tenant', 'budget_category'),
 })

@@ -108,4 +108,5 @@ export type {
   WeddingTask,
   ChecklistDateMove,
   WeddingVendor,
+  BudgetCategory,
 } from './contracts/contract_types'

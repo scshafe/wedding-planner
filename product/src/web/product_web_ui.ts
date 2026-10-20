@@ -4,6 +4,7 @@ import type { TeamView } from '../accounts/membership_service'
 import type { GuestEventRsvp, HouseholdAnswer, HouseholdRsvpView, WeddingEventsView } from '../wedding_events/wedding_event_service'
 import type { ChecklistView, DueAcrossWeddings } from '../checklist/checklist_service'
 import { centsFromText, VENDOR_LIMITS, type VendorsView } from '../vendors/vendor_service'
+import type { BudgetView } from '../budget/budget_service'
 import { toGuestCsv } from '../guests/guest_csv'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
@@ -42,6 +43,8 @@ import {
   renderHouseholdRsvp,
   renderChecklist,
   renderVendors,
+  renderBudget,
+  type BudgetNotice,
   type VendorsNotice,
   BLANK_INSTALLMENT_ROWS,
   renderDueTasks,
@@ -252,6 +255,11 @@ export class ProductWebUi {
       if (segments.length === 4 && segments[2] === 'rsvp' && this.#accounts !== undefined) {
         return slug === undefined ? GENERIC_404 : this.#householdRsvp(req, slug, segments[3] ?? '')
       }
+      // /t/:slug/budget/<action> (issue #34) — the budget FORM posts (CSRF-protected).
+      if (segments.length === 4 && segments[2] === 'budget' && req.method === 'POST') {
+        if (slug === undefined) return GENERIC_404
+        return this.#budgetAction(req, slug, segments[3] ?? '')
+      }
       // /t/:slug/vendors/<action> (issue #33) — the vendor FORM posts (CSRF-protected).
       if (segments.length === 4 && segments[2] === 'vendors' && req.method === 'POST') {
         if (slug === undefined) return GENERIC_404
@@ -342,6 +350,8 @@ export class ProductWebUi {
     const weddingId = queryParam(req.path, 'wedding')
     // ?wedding=ID&tab=guests (issue #27): the wedding's guest list (or one guest's edit page with &guest=ID).
     if (weddingId !== undefined && queryParam(req.path, 'tab') === 'guests') return this.#guestListPage(req, slug, weddingId)
+    // ?wedding=ID&tab=budget (issue #34): the wedding's budget.
+    if (weddingId !== undefined && queryParam(req.path, 'tab') === 'budget') return this.#budgetPage(req, slug, weddingId)
     // ?wedding=ID&tab=vendors (issue #33): the wedding's vendors and what is due next.
     if (weddingId !== undefined && queryParam(req.path, 'tab') === 'vendors') return this.#vendorsPage(req, slug, weddingId)
     // ?wedding=ID&tab=checklist (issue #31): the wedding's checklist.
@@ -865,6 +875,58 @@ export class ProductWebUi {
     const notice =
       res.status === 200 || res.status === 201 ? (action === 'event-remove' ? 'removed' : 'saved') : res.status === 409 ? 'conflict' : 'invalid'
     return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=events&notice=${notice}`)
+  }
+
+  /** GET /t/:slug?wedding=ID&tab=budget (issue #34) — the wedding, then its budget; any non-200 takes the masking. */
+  #budgetPage(req: ApiRequest, slug: string, weddingId: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const id = encodeURIComponent(weddingId)
+    const weddingRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}`, token))
+    if (weddingRes.status !== 200) return this.#renderNonData(slug, weddingRes.status)
+    const budgetRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${id}/budget`, token))
+    if (budgetRes.status !== 200) return this.#renderNonData(slug, budgetRes.status)
+    const theme = this.#themes.resolveActiveTheme(slug)
+    const csrf = this.#csrf.issueCsrf(token)
+    const wedding = readWedding(weddingRes.body)
+    if (theme === undefined || wedding === undefined) return GENERIC_404
+    if (csrf === undefined) return ERROR_500
+    const raw = queryParam(req.path, 'notice')
+    const notice = (['saved', 'removed', 'invalid', 'forbidden', 'conflict'] as const).find((n) => n === raw)
+    return htmlResult(200, renderBudget(theme, slug, wedding, budgetRes.body as BudgetView, csrf, notice))
+  }
+
+  /** POST /t/:slug/budget/<action> (issue #34) — CSRF first, then the JSON route of the form's wedding; a notice back. */
+  #budgetAction(req: ApiRequest, slug: string, action: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    const value = (name: string): string => (form.get(name) ?? '').trim()
+    const weddingId = value('wedding_id')
+    const base = `/t/${slug}/weddings/${encodeURIComponent(weddingId)}/budget`
+    const category = encodeURIComponent(value('category_id'))
+    const call = (method: string, path: string, body?: unknown) => this.#api.handle(bearerJson(method, path, token, body ?? {}))
+    const money = (name: string): number => (value(name).length === 0 ? 0 : (centsFromText(value(name)) ?? -1))
+    const lineBody = () => ({
+      name: value('name'),
+      estimated_cents: money('estimated'),
+      actual_cents: money('actual'),
+      paid_cents: money('paid'),
+      shared_with_couple: value('shared_with_couple') === 'true',
+      ...(value('vendor_id').length === 0 ? {} : { vendor_id: value('vendor_id') }),
+    })
+    const res =
+      action === 'budget-add'
+        ? call('POST', base, lineBody())
+        : action === 'budget-update'
+          ? call('PUT', `${base}/${category}`, lineBody())
+          : action === 'budget-remove'
+            ? call('DELETE', `${base}/${category}`)
+            : undefined
+    if (res === undefined) return GENERIC_404
+    if (res.status === 404 || res.status === 401) return this.#renderNonData(slug, res.status)
+    const notice: BudgetNotice =
+      res.status === 200 || res.status === 201 ? (action === 'budget-remove' ? 'removed' : 'saved') : res.status === 403 ? 'forbidden' : res.status === 409 ? 'conflict' : 'invalid'
+    return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=budget&notice=${notice}`)
   }
 
   /** GET /t/:slug?wedding=ID&tab=vendors (issue #33) — the wedding, then its vendors; any non-200 takes the masking. */
