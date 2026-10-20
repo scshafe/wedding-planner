@@ -1,7 +1,8 @@
 import type { EscalationReply, EscalationResolution, Guest, GuestEscalation, Wedding } from '@wedding-planner/shared'
 
 import type { TeamView } from '../accounts/membership_service'
-import type { GuestListView } from '../guests/guest_list_service'
+import { toGuestCsv } from '../guests/guest_csv'
+import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import type { BillingActivityEntry } from '../billing/billing_activity'
 import type { BillingSummary } from '../billing/billing_summary'
 import { constantTimeEqual, type CsrfGuard } from '../auth/csrf_guard'
@@ -32,6 +33,7 @@ import {
   renderFeedbackThanks,
   renderForgot,
   renderGuestEdit,
+  renderGuestImport,
   renderGuestList,
   type GuestListNotice,
   renderGuests,
@@ -218,6 +220,12 @@ export class ProductWebUi {
 
       // /t/:slug/guest-list/<action> (issue #27) — the guest-list FORM posts (CSRF-protected), distinct from the
       // JSON routes under /t/:slug/weddings/:id/. Slug masked to 404 before any cookie read / CSRF verdict.
+      if (segments.length === 4 && segments[2] === 'guest-list' && segments[3] === 'export' && req.method === 'GET') {
+        return slug === undefined ? GENERIC_404 : this.#guestListExport(req, slug)
+      }
+      if (segments.length === 4 && segments[2] === 'guest-list' && segments[3] === 'import' && req.method === 'POST') {
+        return slug === undefined ? GENERIC_404 : this.#guestListImport(req, slug)
+      }
       if (segments.length === 4 && segments[2] === 'guest-list' && req.method === 'POST') {
         if (slug === undefined) return GENERIC_404
         return this.#guestListAction(req, slug, segments[3] ?? '')
@@ -699,6 +707,7 @@ export class ProductWebUi {
     if (theme === undefined || wedding === undefined) return GENERIC_404
     if (csrf === undefined) return ERROR_500
     const list = listRes.body as GuestListView
+    if (queryParam(req.path, 'import') === '1') return htmlResult(status, renderGuestImport(theme, slug, wedding, csrf, ''))
     const guestId = queryParam(req.path, 'guest')
     if (guestId !== undefined) {
       const guest = list.guests.find((g) => g.guest_id === guestId)
@@ -706,8 +715,58 @@ export class ProductWebUi {
       return htmlResult(status, renderGuestEdit(theme, slug, wedding, guest, list.households, csrf, editProblem))
     }
     const raw = queryParam(req.path, 'notice')
-    const notice = (['saved', 'removed', 'invalid', 'conflict'] as const).find((n) => n === raw)
+    const notice = (['saved', 'removed', 'invalid', 'conflict', 'imported'] as const).find((n) => n === raw)
     return htmlResult(status, renderGuestList(theme, slug, wedding, list, csrf, notice))
+  }
+
+  /**
+   * GET /t/:slug/guest-list/export?wedding=ID (issue #28) — the guest list as a CSV download, built from the same
+   * pipeline read as the page (so the same boundary and masking). Named by the wedding id, never the couple's names;
+   * `no-store`, formula cells neutralized (guest_csv.ts).
+   */
+  #guestListExport(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const weddingId = queryParam(req.path, 'wedding') ?? ''
+    const res = this.#api.handle(bearerGet(`/t/${slug}/weddings/${encodeURIComponent(weddingId)}/guest-list`, token))
+    if (res.status !== 200) return this.#renderNonData(slug, res.status)
+    const filename = /^[A-Za-z0-9_-]{1,128}$/.test(weddingId) ? `guest-list-${weddingId}.csv` : 'guest-list.csv'
+    return {
+      status: 200,
+      headers: {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': `attachment; filename="${filename}"`,
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      },
+      body: toGuestCsv(res.body as GuestListView),
+    }
+  }
+
+  /**
+   * POST /t/:slug/guest-list/import (issue #28) — CSRF first; `commit=1` imports, anything else previews. A preview,
+   * or an import with problems, re-renders the import page with the result; an applied import lands on the list.
+   */
+  #guestListImport(req: ApiRequest, slug: string): HttpResult {
+    const token = readSessionCookie(req.headers.cookie)
+    const form = parseForm(req.rawBody)
+    if (!this.#csrf.verifyCsrf(token, form.get('_csrf') ?? undefined)) return this.#renderNonData(slug, 403)
+    const weddingId = form.get('wedding_id') ?? ''
+    const csv = form.get('csv') ?? ''
+    const res = this.#api.handle(
+      bearerJson('POST', `/t/${slug}/weddings/${encodeURIComponent(weddingId)}/guest-list/import`, token, {
+        csv,
+        commit: form.get('commit') === '1',
+      }),
+    )
+    if (res.status !== 200) return this.#renderNonData(slug, res.status)
+    const result = res.body as GuestImportResult
+    if (result.applied) return redirect(303, `/t/${slug}?wedding=${encodeURIComponent(weddingId)}&tab=guests&notice=imported`)
+    const weddingRes = this.#api.handle(bearerGet(`/t/${slug}/weddings/${encodeURIComponent(weddingId)}`, token))
+    const wedding = readWedding(weddingRes.body)
+    const theme = this.#themes.resolveActiveTheme(slug)
+    const csrf = this.#csrf.issueCsrf(token)
+    if (weddingRes.status !== 200 || wedding === undefined || theme === undefined || csrf === undefined) return GENERIC_404
+    return htmlResult(result.problems.length > 0 ? 400 : 200, renderGuestImport(theme, slug, wedding, csrf, csv, result))
   }
 
   /**

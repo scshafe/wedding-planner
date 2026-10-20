@@ -840,6 +840,14 @@ function dispatchGuestList(
     if (req.method !== 'GET') throw methodNotAllowed()
     return { status: 200, body: guestList.view(context, principal, weddingId) }
   }
+  // POST …/guest-list/import {csv, commit} (issue #28): a plan (and, with commit and no problems, the import).
+  if (resource === 'guest-list' && id === 'import') {
+    if (req.method !== 'POST') throw methodNotAllowed()
+    const body = parseObjectBody(req.rawBody)
+    const csv = body.csv
+    if (typeof csv !== 'string') throw new ProductError('PRODUCT.BAD_REQUEST', "Field 'csv' must be a string.", {})
+    return { status: 200, body: guestList.importGuests(context, principal, weddingId, csv, body.commit === true) }
+  }
   if (resource === 'households') {
     if (id === undefined) {
       if (req.method !== 'POST') throw methodNotAllowed()

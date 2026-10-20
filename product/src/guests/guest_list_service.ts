@@ -3,6 +3,7 @@ import { type Clock, getSchemaRegistry, type Household, type IdGenerator, type W
 import type { Principal } from '../auth/principal'
 import type { WeddingAuthorizer } from '../auth/wedding_authorizer'
 import { isEmailAddress } from '../email/email_port'
+import { type ImportProblem, planGuestImport } from './guest_csv'
 import { COLLECTIONS } from '../persistence/collections'
 import { groupedKey, type RecordStore } from '../persistence/record_store'
 import { ProductError } from '../product_error'
@@ -60,6 +61,15 @@ export interface GuestListView {
 export interface HouseholdInput {
   readonly name: string
   readonly address?: string
+}
+
+/** The outcome of an import (issue #28): a plan summary, and whether it was applied. */
+export interface GuestImportResult {
+  readonly applied: boolean
+  readonly problems: readonly ImportProblem[]
+  readonly creates: number
+  readonly updates: number
+  readonly households_created: number
 }
 
 export interface GuestInput {
@@ -122,7 +132,12 @@ export class GuestListService {
 
   addHousehold(context: TenantContext, principal: Principal, wedding_id: string, input: HouseholdInput): Household {
     this.#reach(context, principal, wedding_id)
-    if (this.#householdsOf(context, wedding_id).length >= this.limits.households) this.#limit()
+    return this.#addHousehold(context, wedding_id, input, this.#householdsOf(context, wedding_id))
+  }
+
+  /** Add to `households` (the wedding's current households, kept current here). */
+  #addHousehold(context: TenantContext, wedding_id: string, input: HouseholdInput, households: Household[]): Household {
+    if (households.length >= this.limits.households) this.#limit()
     const household: Household = {
       household_id: this.ids.next('household'),
       tenant_id: context.tenant_id,
@@ -132,6 +147,7 @@ export class GuestListService {
       created_at: this.clock.now(),
     }
     getSchemaRegistry().assertValid<Household>('household', household)
+    households.push(household)
     return this.#households.put(context, household)
   }
 
@@ -143,7 +159,10 @@ export class GuestListService {
     input: HouseholdInput,
   ): Household {
     this.#reach(context, principal, wedding_id)
-    const existing = this.#household(context, wedding_id, household_id)
+    return this.#updateHousehold(context, this.#household(context, wedding_id, household_id), input)
+  }
+
+  #updateHousehold(context: TenantContext, existing: Household, input: HouseholdInput): Household {
     const updated: Household = {
       household_id: existing.household_id,
       tenant_id: existing.tenant_id,
@@ -175,7 +194,11 @@ export class GuestListService {
 
   addGuest(context: TenantContext, principal: Principal, wedding_id: string, input: GuestInput): WeddingGuest {
     this.#reach(context, principal, wedding_id)
-    const guests = this.#guestsOf(context, wedding_id)
+    return this.#addGuest(context, wedding_id, input, this.#guestsOf(context, wedding_id))
+  }
+
+  /** Add to `guests` (the wedding's current guests, kept current here). */
+  #addGuest(context: TenantContext, wedding_id: string, input: GuestInput, guests: WeddingGuest[]): WeddingGuest {
     if (guests.length >= this.limits.guests) this.#limit()
     let household_id = input.household_id ?? ''
     if (input.plus_one_of !== undefined) {
@@ -199,6 +222,7 @@ export class GuestListService {
       created_at: this.clock.now(),
     }
     getSchemaRegistry().assertValid<WeddingGuest>('wedding_guest', guest)
+    guests.push(guest)
     return this.#guests.put(context, guest)
   }
 
@@ -210,19 +234,29 @@ export class GuestListService {
     input: GuestInput,
   ): WeddingGuest {
     this.#reach(context, principal, wedding_id)
-    const existing = this.#guest(context, wedding_id, guest_id)
+    return this.#updateGuest(context, wedding_id, guest_id, input, this.#guestsOf(context, wedding_id))
+  }
+
+  /** Update one of `guests` (the wedding's current guests, kept current here). */
+  #updateGuest(context: TenantContext, wedding_id: string, guest_id: string, input: GuestInput, guests: WeddingGuest[]): WeddingGuest {
+    const at = guests.findIndex((g) => g.guest_id === guest_id)
+    const existing = guests[at]
+    if (existing === undefined) throw new ProductError('PRODUCT.NOT_FOUND', 'No such guest on this wedding.', {})
     const isPlusOne = existing.plus_one_of !== undefined
     // A plus-one stays in their host's household; anyone else may move to another household of the wedding.
     const household_id = isPlusOne ? existing.household_id : (input.household_id ?? existing.household_id)
     if (!isPlusOne) this.#household(context, wedding_id, household_id, 'PRODUCT.BAD_REQUEST')
     const fields = this.#fields(input, isPlusOne)
-    const plusOne = isPlusOne ? undefined : this.#guestsOf(context, wedding_id).find((g) => g.plus_one_of === guest_id)
+    const plusOneAt = isPlusOne ? -1 : guests.findIndex((g) => g.plus_one_of === guest_id)
+    const plusOne = guests[plusOneAt]
     if (!fields.plus_one_allowed && plusOne !== undefined) {
       throw new ProductError('PRODUCT.PLUS_ONE_EXISTS', 'Remove the plus-one before taking the allowance away.', {})
     }
     // A host who moves takes their plus-one along (same transaction): a plus-one is always in their host's household.
     if (plusOne !== undefined && plusOne.household_id !== household_id) {
-      this.#guests.put(context, { ...plusOne, household_id, updated_at: this.clock.now() })
+      const moved = { ...plusOne, household_id, updated_at: this.clock.now() }
+      guests[plusOneAt] = moved
+      this.#guests.put(context, moved)
     }
     const updated: WeddingGuest = {
       guest_id: existing.guest_id,
@@ -235,6 +269,7 @@ export class GuestListService {
       updated_at: this.clock.now(),
     }
     getSchemaRegistry().assertValid<WeddingGuest>('wedding_guest', updated)
+    guests[at] = updated
     return this.#guests.put(context, updated)
   }
 
@@ -247,6 +282,55 @@ export class GuestListService {
       if (other.plus_one_of === guest_id) this.#guests.delete(context, groupedKey(wedding_id, other.guest_id))
     }
     return this.#guests.delete(context, groupedKey(wedding_id, guest_id))
+  }
+
+  /**
+   * Import a CSV (issue #28): plan it against the current list and — only when `commit` is true and the plan has no
+   * problems — apply every row. The request is one store transaction, so a failure part-way applies nothing.
+   */
+  importGuests(context: TenantContext, principal: Principal, wedding_id: string, text: string, commit: boolean): GuestImportResult {
+    const view = this.view(context, principal, wedding_id)
+    const plan = planGuestImport(view, text, this.limits)
+    const summary = { problems: plan.problems, creates: plan.creates, updates: plan.updates, households_created: plan.households_created }
+    if (!commit || plan.problems.length > 0) return { applied: false, ...summary }
+    // One read of the list; the private writers keep these working copies current (no re-listing per row).
+    const householdList = [...view.households]
+    const guestList = [...view.guests]
+    const households = new Map(view.households.map((h) => [h.name.toLowerCase(), h]))
+    const householdNameById = new Map(view.households.map((h) => [h.household_id, h.name.toLowerCase()]))
+    const guestIds = new Map<string, string>()
+    for (const g of view.guests) guestIds.set(personKey(householdNameById.get(g.household_id) ?? '', g), g.guest_id)
+    // Hosts and everyone else first, then plus-ones (whose hosts may be created by the same import).
+    const ordered = [...plan.rows.filter((r) => r.plus_one_of === undefined), ...plan.rows.filter((r) => r.plus_one_of !== undefined)]
+    for (const row of ordered) {
+      let household = households.get(row.household.toLowerCase())
+      if (household === undefined) {
+        household = this.#addHousehold(context, wedding_id, { name: row.household, ...(row.address === undefined ? {} : { address: row.address }) }, householdList)
+        households.set(row.household.toLowerCase(), household)
+      } else if (row.address !== undefined && row.address !== household.address) {
+        household = this.#updateHousehold(context, household, { name: household.name, address: row.address })
+        households.set(row.household.toLowerCase(), household)
+      }
+      const input: GuestInput = {
+        household_id: household.household_id,
+        first_name: row.first_name,
+        last_name: row.last_name,
+        side: row.side,
+        tags: row.tags,
+        plus_one_allowed: row.plus_one_allowed,
+        ...(row.dietary === undefined ? {} : { dietary: row.dietary }),
+        ...(row.email === undefined ? {} : { email: row.email }),
+        ...(row.phone === undefined ? {} : { phone: row.phone }),
+      }
+      if (row.guest_id !== undefined) {
+        this.#updateGuest(context, wedding_id, row.guest_id, input, guestList)
+      } else {
+        const host = row.plus_one_of === undefined ? undefined : guestIds.get(`${row.household.toLowerCase()}\u0000${row.plus_one_of.toLowerCase()}`)
+        const created = this.#addGuest(context, wedding_id, { ...input, ...(host === undefined ? {} : { plus_one_of: host }) }, guestList)
+        guestIds.set(personKey(row.household.toLowerCase(), row), created.guest_id)
+      }
+    }
+    return { applied: true, ...summary }
   }
 
   /** The editable fields of a guest, normalized. A plus-one never has their own allowance. */
@@ -291,17 +375,14 @@ export class GuestListService {
     return household
   }
 
-  #guest(context: TenantContext, wedding_id: string, guest_id: string): WeddingGuest {
-    const guest = guest_id.length === 0 ? undefined : this.#guests.read(context, groupedKey(wedding_id, guest_id))
-    if (guest === undefined || guest.wedding_id !== wedding_id) {
-      throw new ProductError('PRODUCT.NOT_FOUND', 'No such guest on this wedding.', {})
-    }
-    return guest
-  }
-
   #limit(): never {
     throw new ProductError('PRODUCT.LIMIT_REACHED', 'This wedding has reached the guest list limit.', {})
   }
+}
+
+/** `household\0first last`, lowercased: how an import names a host (`plus_one_of` is the host's full name). */
+function personKey(household_lower: string, g: { readonly first_name: string; readonly last_name: string }): string {
+  return `${household_lower}\u0000${`${g.first_name} ${g.last_name}`.trim().toLowerCase()}`
 }
 
 /** `{ [key]: value }` for a non-empty trimmed value, else `{}` (an optional field is absent, never empty). */
