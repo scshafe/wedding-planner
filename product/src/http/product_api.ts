@@ -15,6 +15,7 @@ import type { InvitedRole } from '../accounts/invitation_store'
 import type { MembershipService } from '../accounts/membership_service'
 import type { RateLimiter } from '../accounts/rate_limiter'
 import type { BudgetCategoryInput, BudgetService } from '../budget/budget_service'
+import type { RunOfShowInput, RunOfShowService } from '../run_of_show/run_of_show_service'
 import type { ChecklistService, TaskInput } from '../checklist/checklist_service'
 import {
   type InstallmentInput,
@@ -185,6 +186,8 @@ export interface WeddingHandlerDeps {
   readonly vendors?: VendorService
   /** Issue #34: the wedding's budget. Absent ⇒ the sub-routes are not mounted. */
   readonly budget?: BudgetService
+  /** Issue #45: the wedding's run of show. Absent ⇒ the sub-routes are not mounted. */
+  readonly runOfShow?: RunOfShowService
 }
 
 /** Issue #30: what the public household RSVP route needs — the link resolver, the answers, the dietary note, a limiter. */
@@ -354,6 +357,8 @@ export interface ProductApiDeps {
   readonly vendors?: VendorService
   /** Issue #34: each wedding's budget, under /t/:slug/weddings/:id/budget. */
   readonly budget?: BudgetService
+  /** Issue #45: each wedding's run of show, under /t/:slug/weddings/:id/run-of-show. */
+  readonly runOfShow?: RunOfShowService
   /**
    * Issue #13: where a request that ends in a 500 is recorded (code + location, never data), and what the operator
    * reads at /admin/errors. Absent ⇒ nothing is recorded (fixtures).
@@ -466,6 +471,7 @@ export class ProductApi {
       ...(deps.checklist === undefined ? {} : { checklist: deps.checklist }),
       ...(deps.vendors === undefined ? {} : { vendors: deps.vendors }),
       ...(deps.budget === undefined ? {} : { budget: deps.budget }),
+      ...(deps.runOfShow === undefined ? {} : { runOfShow: deps.runOfShow }),
     }
     this.#householdRsvp = deps.householdRsvp
     this.#checklist = deps.checklist
@@ -888,6 +894,10 @@ function dispatchWeddings(
     throw methodNotAllowed()
   }
   const weddingId = segments[3]
+  // /t/:slug/weddings/:weddingId/run-of-show[/:id] (issue #45).
+  if (deps.runOfShow !== undefined && weddingId !== undefined && segments[4] === 'run-of-show' && segments.length <= 6) {
+    return dispatchRunOfShow(context, principal, req, weddingId, segments[5], deps.runOfShow)
+  }
   // /t/:slug/weddings/:weddingId/budget[/:id] (issue #34).
   if (deps.budget !== undefined && weddingId !== undefined && segments[4] === 'budget' && segments.length <= 6) {
     return dispatchBudget(context, principal, req, weddingId, segments[5], deps.budget)
@@ -1087,6 +1097,52 @@ function dispatchChecklist(
   }
   if (req.method === 'DELETE') return { status: 200, body: { removed: checklist.removeTask(context, principal, weddingId, id) } }
   throw methodNotAllowed()
+}
+
+/**
+ * The run-of-show routes of one wedding (issue #45). The wedding's boundary first; the planner's capability before a
+ * body is parsed (the couple reads the run of show).
+ */
+function dispatchRunOfShow(
+  context: TenantContext,
+  principal: Principal,
+  req: ApiRequest,
+  weddingId: string,
+  itemId: string | undefined,
+  runOfShow: RunOfShowService,
+): ApiResponse {
+  runOfShow.assertReach(context, principal, weddingId)
+  if (itemId === undefined && req.method === 'GET') return { status: 200, body: runOfShow.view(context, principal, weddingId) }
+  if (principal.role !== 'planner') throw forbidden()
+  if (itemId === undefined) {
+    if (req.method !== 'POST') throw methodNotAllowed()
+    return { status: 201, body: { item: runOfShow.addItem(context, principal, weddingId, runOfShowInput(req)) } }
+  }
+  if (req.method === 'PUT') return { status: 200, body: { item: runOfShow.updateItem(context, principal, weddingId, itemId, runOfShowInput(req)) } }
+  if (req.method === 'DELETE') return { status: 200, body: { removed: runOfShow.removeItem(context, principal, weddingId, itemId) } }
+  throw methodNotAllowed()
+}
+
+/** A run-of-show body: `{starts_at, title, owner, ends_at?, location?, owner_vendor_id?, vendor_call_time?, event_id?, notes?}`. */
+function runOfShowInput(req: ApiRequest): RunOfShowInput {
+  const body = parseObjectBody(req.rawBody)
+  const owner = body.owner
+  if (owner !== 'planner' && owner !== 'couple' && owner !== 'vendor') throw new ProductError('PRODUCT.BAD_REQUEST', 'owner must be planner, couple or vendor.', {})
+  const pick = (key: string): { [k: string]: string } => {
+    const value = optionalString(body, key)
+    return value === undefined ? {} : { [key]: value }
+  }
+  return {
+    starts_at: requireString(body, 'starts_at'),
+    title: requireString(body, 'title'),
+    owner,
+    ...pick('ends_at'),
+    ...pick('location'),
+    ...pick('owner_vendor_id'),
+    ...pick('vendor_call_time'),
+    ...pick('event_id'),
+    ...pick('notes'),
+  }
 }
 
 /**

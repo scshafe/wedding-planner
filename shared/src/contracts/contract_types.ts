@@ -80,3 +80,5 @@ export type { ChecklistDateMove } from './generated/checklist_date_move'
 export type { WeddingVendor } from './generated/wedding_vendor'
 // One line of a wedding's budget, optionally following a vendor's payment schedule (issue #34). ADR 0052.
 export type { BudgetCategory } from './generated/budget_category'
+// One item of a wedding's run of show (issue #45). ADR 0053.
+export type { RunOfShowItem } from './generated/run_of_show_item'

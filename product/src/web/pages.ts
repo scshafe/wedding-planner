@@ -10,6 +10,7 @@ import type {
   WeddingGuest,
   WeddingTask,
   WeddingVendor,
+  RunOfShowItem,
 } from '@wedding-planner/shared'
 
 import type { TeamView } from '../accounts/membership_service'
@@ -18,6 +19,7 @@ import type { GuestEventRsvp, HouseholdRsvpView, WeddingEventCounts, WeddingEven
 import type { ChecklistView, DueAcrossWeddings, DueTask } from '../checklist/checklist_service'
 import { VENDOR_CATEGORIES, type VendorsView } from '../vendors/vendor_service'
 import type { BudgetLine, BudgetView } from '../budget/budget_service'
+import type { RunOfShowLine, RunOfShowView } from '../run_of_show/run_of_show_service'
 import type { GuestImportResult, GuestListView } from '../guests/guest_list_service'
 import { FEEDBACK_PAGES, type FeedbackPage } from '../feedback/feedback_service'
 import type { BillingSummary } from '../billing/billing_summary'
@@ -1047,7 +1049,7 @@ export function renderDetail(
     <p>Status: <span class="status">${wedding.status}</span></p>
     <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=guests">Guest list →</a></p>
     ${checklistLine}
-    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=vendors">Vendors →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=budget">Budget →</a></p>
+    <p><a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=vendors">Vendors →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=budget">Budget →</a> · <a href="/t/${slug}?wedding=${wedding.wedding_id}&amp;tab=run-of-show">Run of show →</a></p>
     <p class="note">Wedding id: <code>${wedding.wedding_id}</code> · created ${wedding.created_at}</p>
     <p class="note">Active strategy: <a href="/t/${slug}/strategy">the platform’s data-optimized planning defaults</a> (applied to every wedding in this workspace).</p>
   </div>
@@ -2069,6 +2071,91 @@ export function renderBudget(theme: Tenant['theme'], slug: string, wedding: Wedd
     view.can_manage
       ? html`<div class="card"><h3>Add a line</h3>
     <form method="post" action="/t/${slug}/budget/budget-add">${hidden({ wedding_id: w })}${fields('new')}<p><button type="submit">Add line</button></p></form></div>`
+      : html``
+  }`,
+    'wedding',
+  )
+}
+
+export type RunOfShowNotice = 'saved' | 'removed' | 'invalid' | 'forbidden' | 'conflict'
+
+const RUN_OF_SHOW_NOTICES: Readonly<Record<RunOfShowNotice, string>> = Object.freeze({
+  saved: 'Saved.',
+  removed: 'Removed.',
+  invalid: 'That could not be saved. Check the times (an end after the start), and that a call time goes with a vendor.',
+  forbidden: 'Only the planner manages the run of show.',
+  conflict: 'This run of show is full.',
+})
+
+/** `2028-06-10 16:00`, or `16:00` on the same day as the line before. */
+function showTime(at: string, previous: string | undefined): string {
+  return previous !== undefined && previous.slice(0, 10) === at.slice(0, 10) ? at.slice(11) : at.replace('T', ' ')
+}
+
+/** One line of the timeline, as text: an item, or a vendor's arrival. */
+function showLine(line: RunOfShowLine, previous: string | undefined): SafeHtml {
+  const i = line.item
+  const when = showTime(line.at, previous)
+  if (line.kind === 'arrival') return html`<li><strong>${when}</strong> ${`${line.owner_label} arrives`} <span class="note">${`for ${i.title}`}</span></li>`
+  const extra = [
+    ...(i.ends_at === undefined ? [] : [`until ${showTime(i.ends_at, i.starts_at)}`]),
+    ...(i.location === undefined ? [] : [i.location]),
+    line.owner_label,
+    ...(line.event_name === undefined ? [] : [line.event_name]),
+  ].join(' · ')
+  return html`<li><strong>${when}</strong> ${i.title} <span class="note">${extra}</span>${i.notes === undefined ? html`` : html`<br><span class="note">${i.notes}</span>`}</li>`
+}
+
+/**
+ * A wedding's run of show (issue #45): the day-of timeline in time order, with each vendor's call time as its own
+ * line. `print` gives the timeline alone (no forms), for paper; the planner gets the forms otherwise.
+ */
+export function renderRunOfShow(theme: Tenant['theme'], slug: string, wedding: Wedding, view: RunOfShowView, csrfToken: string, print: boolean, notice?: RunOfShowNotice): string {
+  const w = wedding.wedding_id
+  const timeline = view.lines.length === 0 ? html`<p class="note">Nothing on the run of show yet.</p>` : html`<ul>${view.lines.map((l, n) => showLine(l, n === 0 ? undefined : view.lines[n - 1]?.at))}</ul>`
+  if (print) {
+    return signedInShell(theme, slug, 'Run of show', html`<h2>${`Run of show — ${wedding.couple_display_name}, ${wedding.event_date}`}</h2>${timeline}`, 'wedding')
+  }
+  const hidden = (fields: Record<string, string>) => html`${csrfField(csrfToken)}${Object.entries(fields).map(([k, v]) => html`<input type="hidden" name="${k}" value="${v}">`)}`
+  const fields = (prefix: string, item?: RunOfShowItem) => html`<label for="${prefix}_title">What</label>
+      <input id="${prefix}_title" name="title" maxlength="120" required value="${item?.title ?? ''}">
+      <label for="${prefix}_starts">Starts</label>
+      <input id="${prefix}_starts" name="starts_at" type="datetime-local" required value="${item?.starts_at ?? ''}">
+      <label for="${prefix}_ends">Ends <span class="note">(optional)</span></label>
+      <input id="${prefix}_ends" name="ends_at" type="datetime-local" value="${item?.ends_at ?? ''}">
+      <label for="${prefix}_location">Where <span class="note">(optional)</span></label>
+      <input id="${prefix}_location" name="location" maxlength="200" value="${item?.location ?? ''}">
+      <label for="${prefix}_owner">Who owns it</label>
+      <select id="${prefix}_owner" name="owner_choice"><option value="planner"${item?.owner === 'planner' || item === undefined ? html` selected` : html``}>Planner</option><option value="couple"${item?.owner === 'couple' ? html` selected` : html``}>Couple</option>${view.vendors.map((v) =>
+        item?.owner_vendor_id === v.vendor_id ? html`<option value="vendor:${v.vendor_id}" selected>${v.business_name}</option>` : html`<option value="vendor:${v.vendor_id}">${v.business_name}</option>`,
+      )}</select>
+      <label for="${prefix}_call">Vendor call time <span class="note">(a vendor's item: when they must arrive)</span></label>
+      <input id="${prefix}_call" name="vendor_call_time" type="datetime-local" value="${item?.vendor_call_time ?? ''}">
+      <label for="${prefix}_event">Part of <span class="note">(optional)</span></label>
+      <select id="${prefix}_event" name="event_id"><option value="">No event</option>${view.events.map((e) =>
+        item?.event_id === e.event_id ? html`<option value="${e.event_id}" selected>${e.name}</option>` : html`<option value="${e.event_id}">${e.name}</option>`,
+      )}</select>
+      <label for="${prefix}_notes">Notes <span class="note">(the planner's only)</span></label>
+      <textarea id="${prefix}_notes" name="notes" maxlength="2000" rows="2">${item?.notes ?? ''}</textarea>`
+  const items = view.lines.filter((l) => l.kind === 'item')
+  return signedInShell(
+    theme,
+    slug,
+    'Run of show',
+    html`<p><a href="/t/${slug}?wedding=${w}">← ${wedding.couple_display_name}</a> · <a href="/t/${slug}?wedding=${w}&amp;tab=run-of-show&amp;print=1">Print view</a></p>
+  <h2>Run of show</h2>
+  ${notice === undefined ? html`` : html`<p class="note">${RUN_OF_SHOW_NOTICES[notice]}</p>`}
+  <div class="card">${timeline}</div>
+  ${
+    view.can_manage
+      ? html`${items.map(
+          (l) => html`<details class="card"><summary>${`Edit or remove: ${l.item.title}`}</summary>
+    <form method="post" action="/t/${slug}/run-of-show/show-update">${hidden({ wedding_id: w, item_id: l.item.item_id })}${fields(`s_${l.item.item_id}`, l.item)}<p><button type="submit">Save</button></p></form>
+    <form method="post" action="/t/${slug}/run-of-show/show-remove">${hidden({ wedding_id: w, item_id: l.item.item_id })}<button type="submit">Remove</button></form>
+  </details>`,
+        )}
+  <div class="card"><h3>Add to the run of show</h3>
+    <form method="post" action="/t/${slug}/run-of-show/show-add">${hidden({ wedding_id: w })}${fields('new')}<p><button type="submit">Add</button></p></form></div>`
       : html``
   }`,
     'wedding',

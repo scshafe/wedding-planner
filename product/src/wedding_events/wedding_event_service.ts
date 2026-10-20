@@ -166,7 +166,7 @@ export class WeddingEventService implements GuestListHooks {
     const rsvps = new Map(this.#rsvps.listGroup(context, wedding_id).map((r) => [rsvpId(r.event_id, r.guest_id), r]))
     const answers = new Answers(guests, rsvps)
     return {
-      events: this.#eventsOf(context, wedding_id).map((event) => ({ event, counts: answers.countsFor(event) })),
+      events: this.eventsOf(context, wedding_id).map((event) => ({ event, counts: answers.countsFor(event) })),
       rsvps_closed: this.#closed(context, wedding_id),
     }
   }
@@ -192,7 +192,7 @@ export class WeddingEventService implements GuestListHooks {
     return {
       household_name: household.name,
       guests: members.map((g) => ({ guest_id: g.guest_id, first_name: g.first_name, last_name: g.last_name, ...(g.dietary === undefined ? {} : { dietary: g.dietary }) })),
-      events: this.#eventsOf(context, wedding_id).flatMap((event) => {
+      events: this.eventsOf(context, wedding_id).flatMap((event) => {
         const invited = members.filter((g) => answers.invited(event, g))
         if (invited.length === 0) return []
         return [
@@ -225,7 +225,7 @@ export class WeddingEventService implements GuestListHooks {
     if (this.#closed(context, wedding_id)) throw new ProductError('PRODUCT.RSVPS_CLOSED', 'RSVPs are closed for this wedding.', {})
     const all = this.guests.guestsOf(context, wedding_id)
     const members = new Map(all.filter((g) => g.household_id === household_id).map((g) => [g.guest_id, g]))
-    const events = new Map(this.#eventsOf(context, wedding_id).map((e) => [e.event_id, e]))
+    const events = new Map(this.eventsOf(context, wedding_id).map((e) => [e.event_id, e]))
     const answers = this.#answersOf(context, wedding_id, all, [...members.values()])
     for (const answer of input) {
       const guest = members.get(answer.guest_id)
@@ -260,7 +260,7 @@ export class WeddingEventService implements GuestListHooks {
 
   addEvent(context: TenantContext, principal: Principal, wedding_id: string, input: WeddingEventInput): WeddingEvent {
     this.assertReach(context, principal, wedding_id)
-    if (this.#eventsOf(context, wedding_id).length >= this.limits.events) {
+    if (this.eventsOf(context, wedding_id).length >= this.limits.events) {
       throw new ProductError('PRODUCT.LIMIT_REACHED', 'This wedding has reached the event limit.', {})
     }
     const event: WeddingEvent = {
@@ -313,7 +313,7 @@ export class WeddingEventService implements GuestListHooks {
     this.assertReach(context, principal, wedding_id)
     const guest = this.#guest(context, wedding_id, guest_id)
     const host = guest.plus_one_of === undefined ? undefined : this.guests.guest(context, wedding_id, guest.plus_one_of)
-    return this.#eventsOf(context, wedding_id).map((event) => {
+    return this.eventsOf(context, wedding_id).map((event) => {
       const rsvp = this.#rsvp(context, wedding_id, event.event_id, guest_id)
       const hostRsvp = host === undefined ? undefined : this.#rsvp(context, wedding_id, event.event_id, host.guest_id)
       const invited = effectiveInvitation(event, rsvp, guest.plus_one_of !== undefined, hostRsvp)
@@ -420,7 +420,8 @@ export class WeddingEventService implements GuestListHooks {
     }
   }
 
-  #eventsOf(context: TenantContext, wedding_id: string): WeddingEvent[] {
+  /** The wedding's events, by start time then name. No boundary check: callers have established reach. */
+  eventsOf(context: TenantContext, wedding_id: string): WeddingEvent[] {
     return this.#events
       .listGroup(context, wedding_id)
       .filter((e) => e.wedding_id === wedding_id)

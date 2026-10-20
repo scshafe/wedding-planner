@@ -16,6 +16,7 @@ import { RateLimiter } from '../accounts/rate_limiter'
 import { ChecklistService } from '../checklist/checklist_service'
 import { VendorService } from '../vendors/vendor_service'
 import { BudgetService } from '../budget/budget_service'
+import { RunOfShowService } from '../run_of_show/run_of_show_service'
 import { BillingLedger } from '../billing/billing_ledger'
 import { WeddingEventService } from '../wedding_events/wedding_event_service'
 import { FeedbackService } from '../feedback/feedback_service'
@@ -302,6 +303,8 @@ export function composeProductSurface(config: ComposeProductSurfaceConfig): Comp
     // Each wedding's vendors and payment schedules (issue #33), and its budget (issue #34): tracked, never paid.
     vendors,
     budget: new BudgetService(tenants, weddings, authorizer, vendors, clock, ids, store),
+    // Each wedding's run of show (issue #45): the day-of timeline and vendor call times.
+    runOfShow: new RunOfShowService(tenants, weddings, authorizer, vendors, events, clock, ids, store),
     // In-app feedback (issue #12): stored in the shared store, read by the operator at /admin/feedback.
     feedback: new FeedbackService(clock, ids, limiter, store),
     // Operability (issue #13): 500s are recorded (code + location, never data); /healthz names the build.
