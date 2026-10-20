@@ -179,7 +179,9 @@ describe('only the simulated adapter is composed (owner decision, ADR 0057) — 
 
   it('no source makes an outbound network call, and the model code reads no environment', () => {
     const outbound = /\bfetch\(|node:https|node:http2|node:net|node:tls|\bundici\b|https?\.request\(|https?\.get\(|\bimport\(/
-    expect(sources.filter((path) => outbound.test(readFileSync(path, 'utf8'))).map((p) => relative(ROOT, p))).toEqual([])
+    // Type-only imports (the server's own Socket type) cannot open a connection.
+    const code = (path: string) => readFileSync(path, 'utf8').replace(/^import type .*$/gm, '')
+    expect(sources.filter((path) => outbound.test(code(path))).map((p) => relative(ROOT, p))).toEqual([])
     const model = sources.filter((path) => path.includes(join('src', 'model')))
     expect(model.length).toBeGreaterThan(0)
     expect(model.filter((path) => /process\.env|process\[/.test(readFileSync(path, 'utf8')))).toEqual([])
