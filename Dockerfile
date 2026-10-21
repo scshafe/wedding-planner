@@ -13,7 +13,7 @@
 # ---- Stage 1: builder — install ONLY the production dependency tree --------------------------------------
 # `tsx` is a runtime dependency (the image runs TypeScript directly; the repo emits no JS), so `--omit=dev`
 # still yields a runnable tree while leaving out vitest / eslint / typescript and all test code.
-FROM node:22-slim AS builder
+FROM node:22.23.4-slim AS builder
 WORKDIR /app
 
 # Copy the manifests FIRST for layer caching. `npm ci` in a workspaces repo needs every workspace's
@@ -29,7 +29,7 @@ COPY product/package.json ./product/
 RUN npm ci --omit=dev
 
 # ---- Stage 2: runtime — a slim image with only what the product surface needs to run ---------------------
-FROM node:22-slim AS runtime
+FROM node:22.23.4-slim AS runtime
 ENV NODE_ENV=production
 ENV PORT=8080
 # The build commit /healthz reports (issue #13). Not a secret: `scripts/docker_build.sh` passes the full sha with
