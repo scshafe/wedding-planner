@@ -53,6 +53,6 @@ of collections is `persistence/collections.ts`: names are on-disk format, renami
 **Deploy.** `WP_DATABASE_PATH=/data/wedding-planner.sqlite` on the `./state/app:/data` bind; `state/app` is in
 `stack.toml [backup] paths`; `journal_mode=DELETE` so the one file is the whole state between writes; `WP_REQUIRE_DATABASE`
 in the stack fails the boot without a path. Non-demo boot without `WP_DATABASE_PATH` fails closed. The demo seed runs
-only when there is no tenant. Engines `>=22.13`.
+only when there is no tenant. Engines `>=22.23.4` (raised from `>=22.13` by the 2026-10-21 security update; see [[node-pins-exact-patched]]).
 
 Related: [[deployable-image-composition-root]], [[http-edge-and-intra-tenant-auth]].

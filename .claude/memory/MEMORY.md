@@ -74,3 +74,4 @@
 - [Model jobs and the copilot](model-jobs-and-copilot.md) — #61 / ADR 0058: the outbox queue for model calls (lease, claim check, retries, drain after responses/boot); copilot drafts checked against input, kept via services
 - [Guest concierge](guest-concierge.md) — #60 / ADR 0059: edge refuses or queues; job answers from the allow-listed facts (model picks keys, product words the reply) or escalates; tests must drain
 - [Weekly risk summary](weekly-risk-summary.md) — #62 / ADR 0060: signals → weekly job (enqueued by reading a stale summary) → level + lines worded from the signals; planner only
+- [Node pins are exact patched releases](node-pins-exact-patched.md) — Dockerfile, ci.yml, deploy.yml toolchain and engines move together on a Node security release (deploy builds do not --pull); npm 10 lockfile crash workaround
